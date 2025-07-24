@@ -1,0 +1,58 @@
+version: '3.3'
+
+services:
+  hautoml_nano:
+    image: optivisionlab/hautoml:1.0.0-nano
+    container_name: hautoml_nano_v1
+    network_mode: host
+    command: python automl/demo_gradio.py
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+  
+  hautoml_toolkit:
+    image: optivisionlab/hautoml:1.1.0-toolkit
+    container_name: hautoml_toolkit_v1
+    network_mode: host
+    command: python app.py
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  kafka:
+    image: apache/kafka:latest
+    container_name: kafka
+    network_mode: host
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+  
+  mongo:
+    image: mongo:latest
+    container_name: mongodb
+    network_mode: host
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # environment:
+    #   MONGO_INITDB_ROOT_USERNAME: root
+    #   MONGO_INITDB_ROOT_PASSWORD: example
+
+  hautoml_frontend:
+    image: optivisionlab/hautoml:1.1.1-frontend
+    container_name: hautoml-frontend
+    network_mode: host
+    command: npm run dev
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
