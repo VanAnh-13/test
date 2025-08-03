@@ -51,7 +51,7 @@ def compare_grid_search_methods():
     
     # 2. Custom GridSearchCV from search_algorithm
     custom_start = time.time()
-    best_params, best_score, all_scores = grid_search(param_grid, SVC, X, y, cv=5, metric_sort='accuracy')
+    best_params, best_score, all_scores, *_ = grid_search(param_grid, SVC, X, y, cv=5, metric_sort='accuracy')
     custom_time = time.time() - custom_start
 
     results['custom'] = {
@@ -140,5 +140,4 @@ if __name__ == "__main__":
     compare_grid_search_methods()
     
     print("\nLựa chọn tùy thuộc vào nhu cầu cụ thể của dự án!")
-    
 
