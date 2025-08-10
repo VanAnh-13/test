@@ -132,3 +132,4 @@ def grid_search(param_grid, model_func, data, targets, cv = 5, scoring = None, m
     cv_results_['rank_test_score'] = ranks.tolist()
     
     return best_params, best_score, best_all_scores, cv_results_
+
