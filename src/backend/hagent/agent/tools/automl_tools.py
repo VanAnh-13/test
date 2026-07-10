@@ -200,6 +200,59 @@ async def get_available_models(problem_type: str) -> str:
         return _error(exc)
 
 
+async def _fetch_feature_list(
+    dataset_id: str,
+    *,
+    problem_type: str | None = None,
+    token: str | None = None,
+) -> list[str]:
+    """Best-effort feature list for start_training (v2 then legacy)."""
+    ptype = problem_type or "classification"
+    # v2 features API (preferred)
+    try:
+        result = await _api_get(
+            "/v2/auto/features",
+            params={"id_data": dataset_id, "problem_type": ptype},
+            token=token,
+            use_cache=True,
+        )
+        if isinstance(result, dict):
+            feats = result.get("features") or result.get("list_feature") or []
+            # features may be list[str] or list[dict]
+            names: list[str] = []
+            for f in feats:
+                if isinstance(f, str):
+                    names.append(f)
+                elif isinstance(f, dict):
+                    name = f.get("name") or f.get("feature") or f.get("column")
+                    if name:
+                        names.append(str(name))
+            if names:
+                return names
+    except Exception as exc:
+        logger.debug("v2 features fetch failed: %s", exc)
+
+    # Legacy / dataset info
+    try:
+        result = await _api_get(
+            "/get-data-info",
+            params={"id": dataset_id},
+            token=token,
+            use_cache=True,
+        )
+        if isinstance(result, dict):
+            feats = (
+                result.get("features")
+                or result.get("columns")
+                or result.get("list_feature")
+                or []
+            )
+            return [str(x) for x in feats if x]
+    except Exception as exc:
+        logger.debug("legacy features fetch failed: %s", exc)
+    return []
+
+
 @tool
 async def start_training(
     user_id: str,
@@ -210,41 +263,99 @@ async def start_training(
     metric: str | None = None,
     time_limit: int = 300,
     search_algorithm: str | None = None,
+    list_feature: list[str] | None = None,
     token: str | None = None,
 ) -> str:
-    """Khởi tạo một job training AutoML.
+    """Khởi tạo một job training AutoML (distributed v2 API).
+
+    Calls ``POST /v2/auto/jobs/training`` (Kafka-backed pipeline).
+    Auto-fetches feature list when not provided.
 
     Args:
         user_id: ID người dùng.
         dataset_id: ID dataset để train.
         problem_type: 'classification' hoặc 'regression'.
         target_column: Tên cột mục tiêu (target/label).
-        models: Danh sách tên model muốn thử (None = dùng tất cả).
-        metric: Metric đánh giá (None = dùng mặc định).
+        models: Danh sách tên model muốn thử (None = backend default).
+        metric: Metric đánh giá (None = accuracy/rmse default).
         time_limit: Giới hạn thời gian (giây), mặc định 300s.
         search_algorithm: grid_search | bayesian_search | genetic_algorithm | ...
+        list_feature: Feature columns (optional; auto-resolved if missing).
         token: JWT token (tùy chọn).
 
     Returns:
         Thông tin job đã tạo (bao gồm job_id) dạng JSON string.
     """
     try:
-        training_item: dict[str, Any] = {
-            "problem_type": problem_type,
-            "target_column": target_column,
-            "time_limit": time_limit,
+        # Resolve features (required by InputRequest.config.list_feature)
+        features = list(list_feature or [])
+        if not features:
+            features = await _fetch_feature_list(
+                dataset_id, problem_type=problem_type, token=token
+            )
+        # Never train on the target column itself
+        features = [f for f in features if str(f) != str(target_column)]
+        if not features:
+            return _error(
+                ValueError(
+                    "start_training requires list_feature; "
+                    f"could not resolve features for dataset_id={dataset_id}"
+                )
+            )
+
+        search = search_algorithm or "grid_search"
+        metric_sort = metric or (
+            "accuracy" if str(problem_type).lower() == "classification" else "rmse"
+        )
+
+        body: dict[str, Any] = {
+            "id_data": dataset_id,
+            "id_user": user_id,
+            "config": {
+                "choose": search,
+                "metric_sort": metric_sort,
+                "list_feature": features,
+                "target": target_column,
+                "problem_type": problem_type,
+                "search_algorithm": search,
+                "max_time": int(time_limit or 300),
+            },
         }
         if models:
-            training_item["models"] = models
-        if metric:
-            training_item["metric"] = metric
-        if search_algorithm:
-            training_item["search_algorithm"] = search_algorithm
+            body["config"]["models"] = models
 
+        # Primary: distributed training API (creates job in Mongo + Kafka)
+        try:
+            result = await _api_post(
+                "/v2/auto/jobs/training",
+                data=body,
+                token=token,
+            )
+            return _result(result)
+        except Exception as v2_exc:
+            logger.warning(
+                "v2 /jobs/training failed (%s); trying legacy train endpoint",
+                v2_exc,
+            )
+
+        # Legacy fallback (expects different shape — best effort for older deploys)
+        legacy = {
+            "data": [],
+            "config": {
+                "choose": search,
+                "metric_sort": metric_sort,
+                "list_feature": features,
+                "target": target_column,
+                "problem_type": problem_type,
+                "search_algorithm": search,
+                "max_time": int(time_limit or 300),
+                "models": models or [],
+            },
+        }
         result = await _api_post(
             "/train-from-requestbody-json/",
             params={"userId": user_id, "id_data": dataset_id},
-            data=training_item,
+            data=legacy,
             token=token,
         )
         return _result(result)
@@ -266,7 +377,38 @@ async def get_features(
         token: JWT token (tùy chọn).
     """
     try:
-        # Prefer dataset info endpoint; normalize to features list
+        ptype = problem_type or "classification"
+        # Prefer v2 auto features API
+        try:
+            result = await _api_get(
+                "/v2/auto/features",
+                params={"id_data": dataset_id, "problem_type": ptype},
+                token=token,
+            )
+            if isinstance(result, dict) and (
+                result.get("features") or result.get("list_feature")
+            ):
+                feats = result.get("features") or result.get("list_feature") or []
+                names: list[str] = []
+                for f in feats:
+                    if isinstance(f, str):
+                        names.append(f)
+                    elif isinstance(f, dict):
+                        name = f.get("name") or f.get("feature") or f.get("column")
+                        if name:
+                            names.append(str(name))
+                return _result(
+                    {
+                        "dataset_id": dataset_id,
+                        "features": names or feats,
+                        "problem_type": ptype,
+                        **{k: v for k, v in result.items() if k != "features"},
+                    }
+                )
+        except Exception as exc:
+            logger.debug("v2 get_features failed: %s", exc)
+
+        # Fallback: dataset info
         result = await _api_get(
             "/get-data-info",
             params={"id": dataset_id},

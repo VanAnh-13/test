@@ -101,19 +101,18 @@ def enrich_params(
     if user_token and "token" not in out:
         out["token"] = user_token
 
-    if "dataset_id" not in out:
-        ds = goal.get("dataset_id") or wm.get("active_dataset_id")
-        if not ds:
-            focus = wm.get("focus") or {}
-            if isinstance(focus, dict):
-                ds = focus.get("dataset_id")
-        if ds and action_type in (
-            "get_dataset_info",
-            "get_features",
-            "preview_data",
-            "start_training",
-        ):
-            out["dataset_id"] = ds
+    ds = out.get("dataset_id") or goal.get("dataset_id") or wm.get("active_dataset_id")
+    if not ds:
+        focus = wm.get("focus") or {}
+        if isinstance(focus, dict):
+            ds = focus.get("dataset_id")
+    if ds and "dataset_id" not in out and action_type in (
+        "get_dataset_info",
+        "get_features",
+        "preview_data",
+        "start_training",
+    ):
+        out["dataset_id"] = ds
 
     if action_type == "start_training":
         if "problem_type" not in out and goal.get("problem_type"):
@@ -130,6 +129,14 @@ def enrich_params(
                 out["search_algorithm"] = constraints["search_algorithm"]
             if "models" not in out and constraints.get("models"):
                 out["models"] = constraints["models"]
+            if "list_feature" not in out and constraints.get("list_feature"):
+                out["list_feature"] = constraints["list_feature"]
+        # Pull features from world model when analyze leaf already loaded them
+        if "list_feature" not in out and ds:
+            wm_ds = (wm.get("datasets") or {}).get(str(ds)) or {}
+            feats = wm_ds.get("features") or wm_ds.get("list_feature")
+            if feats:
+                out["list_feature"] = list(feats)
         if "user_id" not in out and user_id:
             out["user_id"] = user_id
 

@@ -160,6 +160,30 @@ jobs:
           docker compose -f src/backend/docker-compose.yaml --profile worker up --build -d
           docker ps -a --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
 
+      - name: Wait for Kafka + create training topic
+        run: |
+          TOPIC="${KAFKA_TOPIC:-example-topic}"
+          for i in $(seq 1 30); do
+            if docker exec kafka-testing /opt/kafka/bin/kafka-topics.sh \
+                --bootstrap-server localhost:9092 --list >/dev/null 2>&1; then
+              echo "Kafka broker ready"
+              docker exec kafka-testing /opt/kafka/bin/kafka-topics.sh \
+                --bootstrap-server localhost:9092 \
+                --create --if-not-exists \
+                --topic "$TOPIC" \
+                --partitions 1 \
+                --replication-factor 1 || true
+              docker exec kafka-testing /opt/kafka/bin/kafka-topics.sh \
+                --bootstrap-server localhost:9092 --list || true
+              exit 0
+            fi
+            echo "Waiting for Kafka... $i/30"
+            sleep 3
+          done
+          echo "Kafka not ready"
+          docker logs kafka-testing 2>&1 | tail -50 || true
+          exit 1
+
       - name: Wait for health endpoints
         run: |
           for i in $(seq 1 60); do

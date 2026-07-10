@@ -311,18 +311,12 @@ async def test_e2e_docker() -> int:
                 f"Best Model: {best_model} | Score: {best_score}"
             )
 
-    # Success criteria: at least one job created (primary), or clear success message
+    # Hard success criterion: at least one training job in AutoML Master.
+    # "Plan status: done" alone is NOT enough (agent may finish hierarchy without jobs).
     if jobs_found:
         print("\n" + "=" * 60)
         print("  ✅ DOCKER FULL SYSTEM E2E TEST PASSED SUCCESSFULLY!")
         print("     (Training job(s) created via DeerFlow agent path)")
-        print("=" * 60)
-        return 0
-
-    if training_success and not _agent_response_is_error(response_msg):
-        print("\n" + "=" * 60)
-        print("  ✅ DOCKER FULL SYSTEM E2E TEST PASSED SUCCESSFULLY!")
-        print("     (Success markers in conversation; jobs may still be queued)")
         print("=" * 60)
         return 0
 
@@ -331,6 +325,11 @@ async def test_e2e_docker() -> int:
     print(f"     Last agent response: {response_msg[:300]}")
     print(f"     Conversation messages: {len(final_messages)}")
     print(f"     Jobs found: {len(jobs_found)}")
+    if "plan status: done" in response_msg.lower() and not jobs_found:
+        print(
+            "     Hint: agent completed planning but start_training did not "
+            "persist a job — check toolkit logs for /v2/auto/jobs/training."
+        )
     print("=" * 60)
     return 1
 

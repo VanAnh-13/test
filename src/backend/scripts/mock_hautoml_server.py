@@ -165,6 +165,15 @@ class MockHandler(BaseHTTPRequestHandler):
             else:
                 self._send_json({"error": f"Dataset not found: {ds_id}"}, 404)
 
+        # v2 features
+        elif path == "/v2/auto/features":
+            self._send_json(
+                {
+                    "features": list(STUDENT_DATASET["features"]),
+                    "target_suggestions": [STUDENT_DATASET["target"]],
+                }
+            )
+
         # Job info (GET variant used by CI e2e)
         elif path == "/get-job-info":
             job_id = params.get("id", [""])[0]
@@ -188,13 +197,38 @@ class MockHandler(BaseHTTPRequestHandler):
                 "total": 1,
             })
 
-        # Start training
-        elif path == "/train-from-requestbody-json/":
-            user_id = params.get("userId", ["ci_user"])[0]
-            dataset_id = params.get("id_data", [""])[0]
-            models = body.get("models", ["RandomForestRegressor", "XGBRegressor", "SVR"])
-            target = body.get("target_column", "G3")
-            problem_type = body.get("problem_type", "regression")
+        # Start training — v2 distributed (canonical) + legacy body
+        elif path in ("/train-from-requestbody-json/", "/v2/auto/jobs/training"):
+            if path == "/v2/auto/jobs/training":
+                user_id = body.get("id_user") or "ci_user"
+                dataset_id = body.get("id_data") or ""
+                cfg = body.get("config") or {}
+                models = cfg.get("models") or [
+                    "RandomForestRegressor",
+                    "XGBRegressor",
+                    "SVR",
+                ]
+                target = cfg.get("target") or "G3"
+                problem_type = cfg.get("problem_type") or "regression"
+            else:
+                user_id = params.get("userId", ["ci_user"])[0]
+                dataset_id = params.get("id_data", [""])[0]
+                cfg = body.get("config") if isinstance(body.get("config"), dict) else body
+                models = (
+                    (cfg or {}).get("models")
+                    or body.get("models")
+                    or ["RandomForestRegressor", "XGBRegressor", "SVR"]
+                )
+                target = (
+                    (cfg or {}).get("target")
+                    or body.get("target_column")
+                    or "G3"
+                )
+                problem_type = (
+                    (cfg or {}).get("problem_type")
+                    or body.get("problem_type")
+                    or "regression"
+                )
 
             job_id = f"job_{uuid.uuid4().hex[:8]}"
 
@@ -212,12 +246,13 @@ class MockHandler(BaseHTTPRequestHandler):
             job_data = {
                 "id": job_id,
                 "job_id": job_id,
+                "status": "success" if path == "/v2/auto/jobs/training" else "completed",
+                "message": "Training job initiated successfully",
                 "user_id": user_id,
                 "dataset_id": dataset_id,
                 "problem_type": problem_type,
                 "target_column": target,
                 "models_requested": models,
-                "status": "completed",
                 "best_model": best_model,
                 "best_score": round(best_score, 4),
                 "model_results": model_results,
@@ -226,7 +261,7 @@ class MockHandler(BaseHTTPRequestHandler):
                 "finished_at": "2024-06-24T10:05:00Z",
                 "training_time_seconds": 300,
             }
-            active_jobs[job_id] = job_data
+            active_jobs[job_id] = {**job_data, "status": "completed"}
 
             self._send_json(job_data)
             print(f"  ✓ Training started: {job_id} | models={models} | best={best_model}")

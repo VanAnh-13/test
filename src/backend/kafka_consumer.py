@@ -26,15 +26,51 @@ load_dotenv()
 # KHAI BÁO BIÉN PRODUCER
 producer_instance: AIOKafkaProducer | None = None
 
+async def _ensure_topic(bootstrap: str, topic: str) -> None:
+    """Create training topic if missing (CI/docker often starts with empty cluster)."""
+    try:
+        from aiokafka.admin import AIOKafkaAdminClient, NewTopic
+
+        admin = AIOKafkaAdminClient(bootstrap_servers=bootstrap)
+        await admin.start()
+        try:
+            existing = await admin.list_topics()
+            if topic not in existing:
+                await admin.create_topics(
+                    [NewTopic(name=topic, num_partitions=1, replication_factor=1)]
+                )
+                print(f"[Kafka] Created topic '{topic}'")
+            else:
+                print(f"[Kafka] Topic '{topic}' already exists")
+        finally:
+            await admin.close()
+    except Exception as exc:
+        # Non-fatal: broker may auto-create on first produce
+        print(f"[Kafka] Topic ensure skipped/failed ({topic}): {exc}")
+
+
 async def start_producer():
     global producer_instance
-    producer_instance = AIOKafkaProducer(
-        bootstrap_servers=os.getenv('KAFKA_SERVER', 'localhost:9092'),
-        value_serializer=lambda v: json.dumps(v).encode('utf-8')
-    )
+    bootstrap = os.getenv('KAFKA_SERVER', 'localhost:9092')
+    topic = os.getenv('KAFKA_TOPIC', 'example-topic')
 
-    await producer_instance.start()
-    print("[Kafka Producer] Started")
+    # Retry bootstrap briefly — GroupCoordinatorNotAvailableError is common at boot
+    last_err = None
+    for attempt in range(1, 16):
+        try:
+            await _ensure_topic(bootstrap, topic)
+            producer_instance = AIOKafkaProducer(
+                bootstrap_servers=bootstrap,
+                value_serializer=lambda v: json.dumps(v).encode('utf-8')
+            )
+            await producer_instance.start()
+            print(f"[Kafka Producer] Started (bootstrap={bootstrap}, topic={topic})")
+            return
+        except Exception as exc:
+            last_err = exc
+            print(f"[Kafka Producer] start attempt {attempt}/15 failed: {exc}")
+            await asyncio.sleep(2)
+    raise RuntimeError(f"Kafka producer failed to start: {last_err}")
 
 
 async def stop_producer():
