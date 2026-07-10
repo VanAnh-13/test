@@ -87,34 +87,117 @@ def _detect_metric(text: str) -> Optional[str]:
     return None
 
 
+# Words that must never be treated as a target column name
+_TARGET_STOPWORDS = frozenset(
+    {
+        "column",
+        "col",
+        "cột",
+        "cot",
+        "là",
+        "la",
+        "is",
+        "the",
+        "a",
+        "an",
+        "with",
+        "với",
+        "voi",
+        "and",
+        "or",
+        "of",
+        "for",
+        "to",
+        "on",
+        "dataset",
+        "model",
+        "metric",
+    }
+)
+
+
 def _detect_target_column(text: str) -> Optional[str]:
-    # patterns: target X, cột mục tiêu X, target_column=X
+    """
+    Extract target/label column from natural language.
+
+    Supports CI/E2E prompts like:
+      - target column là 'Revenue'
+      - target column is Revenue
+      - target_column=Revenue
+      - cột mục tiêu Revenue
+    """
     patterns = [
-        r"target(?:_column)?\s*[:=]\s*['\"]?([A-Za-z0-9_]+)['\"]?",
-        r"cột\s+mục\s+tiêu\s*[:=]?\s*['\"]?([A-Za-z0-9_]+)['\"]?",
-        r"target\s+['\"]?([A-Za-z0-9_]+)['\"]?",
-        r"nhãn\s+['\"]?([A-Za-z0-9_]+)['\"]?",
+        # target column là/is/=/: Name  (must come before bare "target X")
+        r"target\s*[_ ]?\s*column\s*(?:là|is|=|:)?\s*['\"]?([A-Za-z_][A-Za-z0-9_]*)['\"]?",
+        r"target(?:_column)?\s*[:=]\s*['\"]?([A-Za-z_][A-Za-z0-9_]*)['\"]?",
+        r"cột\s+mục\s+tiêu\s*(?:là|is|=|:)?\s*['\"]?([A-Za-z_][A-Za-z0-9_]*)['\"]?",
+        r"cot\s+muc\s+tieu\s*(?:là|is|=|:)?\s*['\"]?([A-Za-z_][A-Za-z0-9_]*)['\"]?",
+        r"nhãn\s*(?:là|is|=|:)?\s*['\"]?([A-Za-z_][A-Za-z0-9_]*)['\"]?",
+        r"label\s*(?:column)?\s*(?:là|is|=|:)?\s*['\"]?([A-Za-z_][A-Za-z0-9_]*)['\"]?",
+        # bare: target Revenue (reject stopwords like "column")
+        r"\btarget\s+['\"]?([A-Za-z_][A-Za-z0-9_]*)['\"]?",
+    ]
+    for p in patterns:
+        m = re.search(p, text, re.IGNORECASE)
+        if m:
+            name = m.group(1)
+            if name.lower() not in _TARGET_STOPWORDS:
+                return name
+    return None
+
+
+def _detect_dataset_id(text: str, known_ids: Optional[list[str]] = None) -> Optional[str]:
+    """
+    Extract dataset id from NL.
+
+    Supports:
+      - known ids present in text
+      - dataset ID <id> / dataset_id=<id>
+      - Mongo ObjectId (24 hex chars)
+    """
+    if known_ids:
+        for did in known_ids:
+            if did and did in text:
+                return did
+
+    patterns = [
+        r"dataset(?:\s*id|_id)?\s*[:=]\s*['\"]?([A-Za-z0-9_\-]+)['\"]?",
+        r"dataset\s+id\s+['\"]?([A-Za-z0-9_\-]+)['\"]?",
+        r"dataset\s+ID\s+['\"]?([A-Za-z0-9_\-]+)['\"]?",
+        r"id\s+dataset\s+['\"]?([A-Za-z0-9_\-]+)['\"]?",
+        r"dataset_id\s+['\"]?([A-Za-z0-9_\-]+)['\"]?",
+        r"trên\s+dataset\s+(?:id\s+)?['\"]?([A-Za-z0-9_\-]+)['\"]?",
     ]
     for p in patterns:
         m = re.search(p, text, re.IGNORECASE)
         if m:
             return m.group(1)
-    return None
 
-
-def _detect_dataset_id(text: str, known_ids: Optional[list[str]] = None) -> Optional[str]:
-    if known_ids:
-        for did in known_ids:
-            if did and did in text:
-                return did
-    m = re.search(
-        r"dataset(?:_id)?\s*[:=]\s*['\"]?([A-Za-z0-9_\-]+)['\"]?",
-        text,
-        re.IGNORECASE,
-    )
+    # Mongo ObjectId (common HAutoML dataset ids)
+    m = re.search(r"\b([a-fA-F0-9]{24})\b", text)
     if m:
         return m.group(1)
     return None
+
+
+def _detect_models(text: str) -> list[str]:
+    """Extract ML model names mentioned in the prompt (order-preserving, unique)."""
+    # Prefer explicit CamelCase *Classifier/*Regressor and common short names
+    found: list[str] = []
+    patterns = [
+        r"\b([A-Z][A-Za-z0-9]*(?:Classifier|Regressor|ClassifierCV))\b",
+        r"\b(XGB(?:Classifier|Regressor)?)\b",
+        r"\b(SVC|SVR|LGBMClassifier|LGBMRegressor|CatBoostClassifier|CatBoostRegressor)\b",
+        r"\b(RandomForest(?:Classifier|Regressor)?)\b",
+        r"\b(LogisticRegression|LinearRegression|Ridge|Lasso|ElasticNet)\b",
+    ]
+    for p in patterns:
+        for m in re.finditer(p, text):
+            name = m.group(1)
+            # normalize bare RandomForest → leave as stated
+            if name not in found:
+                found.append(name)
+    return found
 
 
 def _detect_time_limit(text: str) -> Optional[int]:
@@ -140,6 +223,10 @@ def parse_goal(
     time_limit = _detect_time_limit(text)
     if time_limit is not None:
         constraints["time_limit"] = time_limit
+
+    models = _detect_models(text)
+    if models:
+        constraints["models"] = models
 
     goal: GoalSpec = {
         "goal_type": goal_type,

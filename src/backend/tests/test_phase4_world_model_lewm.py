@@ -265,6 +265,25 @@ class TestGoalAndConstraints:
         assert g.get("target_column") == "target"
         assert g.get("constraints", {}).get("time_limit") == 300
 
+    def test_parse_goal_docker_e2e_prompt(self):
+        """Exact CI Docker E2E prompt style (Vietnamese + Mongo ObjectId)."""
+        ds = "6a509cdc2bc66674d0756065"
+        g = parse_goal(
+            f"Hãy train một model classification trên dataset ID {ds} "
+            f"với target column là 'Revenue', dùng 3 thuật toán: "
+            f"RandomForestClassifier, XGBClassifier, SVC. "
+            f"Dùng metric là accuracy."
+        )
+        assert g["goal_type"] == "train"
+        assert g.get("dataset_id") == ds
+        assert g.get("target_column") == "Revenue"
+        assert g.get("problem_type") == "classification"
+        assert g.get("metric") == "accuracy"
+        models = (g.get("constraints") or {}).get("models") or []
+        assert "RandomForestClassifier" in models
+        assert "XGBClassifier" in models
+        assert "SVC" in models
+
     def test_simple_query(self):
         assert is_simple_query("xin chào", ["xin chào", "hello"])
         assert not is_simple_query("train model classification")

@@ -155,6 +155,12 @@ class AutoMLState(TypedDict):
     hierarchy: NotRequired[dict | None]
     """GoalHierarchy dict (subgoals + index)."""
 
+    hierarchy_status: NotRequired[str | None]
+    """running | done | failed — required for hierarchy_route (LangGraph drops unknown keys)."""
+
+    hierarchy_train_active: NotRequired[bool | None]
+    """True while train-leaf campaign is still monitoring (alias of _hierarchy_train_active)."""
+
     # ── Memory context (DeerFlow memory module) ──────────
     memory_context: NotRequired[str | None]
     """Long-term memory đã inject vào prompt."""

@@ -134,6 +134,13 @@ async def _call_agent(
         else:
             msg = error_messages.get("generic", str(exc))
 
+        # Surface a short exception tail for CI/log correlation (keep user message clean)
+        detail = str(exc).strip().replace("\n", " ")
+        if detail and detail not in msg:
+            if len(detail) > 240:
+                detail = detail[:240] + "…"
+            msg = f"{msg} ({type(exc).__name__}: {detail})"
+
         return {
             "message": f"⚠️ {msg}",
             "sources": [],
@@ -172,6 +179,22 @@ async def agent_run(
     # Prefer world_state from bridge context when provided
     if isinstance(req.context, dict) and req.context.get("world_state"):
         world_model = req.context.get("world_state") or world_model
+
+    # Seed world_model from structured chat context (dataset_id etc.) so
+    # hierarchy/campaign can run even before tools hydrate WM.
+    if isinstance(req.context, dict):
+        world_model = dict(world_model or {"user_id": str(user_id), "datasets": {}, "jobs": {}})
+        ctx_ds = req.context.get("dataset_id")
+        if ctx_ds:
+            datasets = dict(world_model.get("datasets") or {})
+            if ctx_ds not in datasets:
+                datasets[ctx_ds] = {
+                    "id": ctx_ds,
+                    "name": req.context.get("dataset_name") or ctx_ds,
+                    "target": req.context.get("target_column"),
+                }
+            world_model["datasets"] = datasets
+            world_model["active_dataset_id"] = ctx_ds
 
     result = await _call_agent(
         message=req.message,

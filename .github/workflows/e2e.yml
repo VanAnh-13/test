@@ -187,6 +187,14 @@ jobs:
         run: |
           python src/backend/scripts/e2e_docker_test.py 2>&1 | tee e2e_docker_output.txt
 
+      - name: Dump bridge + toolkit logs after E2E
+        if: always()
+        run: |
+          mkdir -p e2e_logs
+          docker logs hagent_bridge_testing 2>&1 | tail -200 | tee e2e_logs/bridge.log || true
+          docker logs toolkit-testing 2>&1 | tail -300 | tee e2e_logs/toolkit.log || true
+          docker logs hautoml-woker-1-testing 2>&1 | tail -100 | tee e2e_logs/worker.log || true
+
       - name: Upload E2E logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -194,6 +202,7 @@ jobs:
           name: e2e-logs-${{ github.run_id }}
           path: |
             e2e_docker_output.txt
+            e2e_logs/
           if-no-files-found: ignore
 
       - name: Dump compose logs on failure

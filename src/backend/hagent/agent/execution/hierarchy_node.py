@@ -176,6 +176,23 @@ async def _run_evaluate_leaf(state: AutoMLState, leaf_goal: dict) -> Dict[str, A
     }
 
 
+def _train_active(state: AutoMLState) -> bool:
+    """Whether a train-leaf campaign is mid-flight (supports legacy underscore key)."""
+    return bool(
+        state.get("hierarchy_train_active")
+        or state.get("_hierarchy_train_active")
+    )
+
+
+def _max_hierarchy_ticks() -> int:
+    try:
+        from hagent.bridge.config import get_hierarchy_config
+
+        return int(get_hierarchy_config().get("max_ticks", 40))
+    except Exception:
+        return 40
+
+
 async def _run_train_leaf(state: AutoMLState, leaf_goal: dict) -> Dict[str, Any]:
     """Drive campaign ticks until train leaf completes."""
     # Isolate leaf goal for campaign
@@ -186,9 +203,11 @@ async def _run_train_leaf(state: AutoMLState, leaf_goal: dict) -> Dict[str, Any]
     }
     cstatus = state.get("campaign_status")
     # If previous campaign done from earlier root, start fresh for this leaf
-    if cstatus in ("done", "failed") and not state.get("_hierarchy_train_active"):
+    if cstatus in ("done", "failed") and not _train_active(state):
         leaf_state = {**leaf_state, "campaign": None, "campaign_status": None}
 
+    # Safety cap inside train leaf (campaign_node has its own; hierarchy path needs this too)
+    train_ticks = int(state.get("campaign_tick") or 0) + 1
     campaign = await ensure_campaign(leaf_state)
     campaign = await campaign_step(
         campaign,
@@ -197,11 +216,32 @@ async def _run_train_leaf(state: AutoMLState, leaf_goal: dict) -> Dict[str, Any]
         world_model=state.get("world_model"),
     )
 
+    try:
+        from hagent.bridge.config import get_campaign_config
+
+        max_monitor = int(get_campaign_config().get("max_monitor_ticks", 50))
+    except Exception:
+        max_monitor = 50
+
+    if campaign.status == "monitoring" and train_ticks >= max_monitor:
+        for v in campaign.variants:
+            if v.status in ("pending", "submitted", "running"):
+                v.status = "failed"
+                v.error = v.error or f"hierarchy train timeout after {max_monitor} ticks"
+        campaign = await campaign_step(
+            campaign,
+            user_id=state.get("user_id"),
+            user_token=state.get("user_token"),
+            world_model=state.get("world_model"),
+        )
+
+    train_active = campaign.status not in ("done", "failed")
     update: Dict[str, Any] = {
         "campaign": campaign.to_dict(),
         "campaign_status": campaign.status,
-        "_hierarchy_train_active": campaign.status
-        not in ("done", "failed"),
+        "campaign_tick": train_ticks,
+        "hierarchy_train_active": train_active,
+        "_hierarchy_train_active": train_active,  # back-compat for any readers
     }
 
     if campaign.status == "done":
@@ -239,6 +279,7 @@ async def _run_train_leaf(state: AutoMLState, leaf_goal: dict) -> Dict[str, Any]
                     f"score={best.best_score if best else None}"
                 ),
                 "tools": ["start_training", "get_job_info"],
+                "hierarchy_train_active": False,
                 "_hierarchy_train_active": False,
             }
         )
@@ -248,6 +289,7 @@ async def _run_train_leaf(state: AutoMLState, leaf_goal: dict) -> Dict[str, Any]
                 "done": True,
                 "failed": True,
                 "summary": "campaign failed",
+                "hierarchy_train_active": False,
                 "_hierarchy_train_active": False,
             }
         )
@@ -265,7 +307,36 @@ async def hierarchy_node(state: AutoMLState) -> dict:
     """LangGraph node: adaptive hierarchical controller."""
     events = list(state.get("execution_events") or [])
     cost = dict(state.get("cost_metrics") or {})
-    cost["hierarchy_ticks"] = int(cost.get("hierarchy_ticks") or 0) + 1
+    ticks = int(cost.get("hierarchy_ticks") or 0) + 1
+    cost["hierarchy_ticks"] = ticks
+
+    # Global safety: never loop forever (LangGraph would hit recursion limit)
+    max_ticks = _max_hierarchy_ticks()
+    if ticks > max_ticks:
+        events.append(
+            {
+                "type": "hierarchy_timeout",
+                "ticks": ticks,
+                "max_ticks": max_ticks,
+            }
+        )
+        return {
+            "messages": [
+                AIMessage(
+                    content=(
+                        f"Hierarchy timeout after {ticks} ticks "
+                        f"(max={max_ticks}). Stopping."
+                    )
+                )
+            ],
+            "hierarchy": state.get("hierarchy"),
+            "hierarchy_status": "failed",
+            "plan_status": "failed",
+            "execution_events": events,
+            "cost_metrics": cost,
+            "current_phase": "respond",
+            "hierarchy_train_active": False,
+        }
 
     hier = ensure_hierarchy(state)
     # Re-apply skips with latest WM / evaluation each tick
@@ -461,8 +532,18 @@ def hierarchy_route(state: AutoMLState) -> str:
     status = state.get("hierarchy_status")
     if status in ("done", "failed"):
         return "synthesize"
-    if status == "running" or state.get("hierarchy"):
-        # Continue hierarchy loop
-        if status != "done":
-            return "hierarchy"
+
+    # Fallback: if status was dropped, inspect hierarchy progress
+    hier = state.get("hierarchy")
+    if isinstance(hier, dict):
+        try:
+            idx = int(hier.get("current_index") or 0)
+            n = len(hier.get("subgoals") or [])
+            if n and idx >= n:
+                return "synthesize"
+        except Exception:
+            pass
+
+    if status == "running" or hier:
+        return "hierarchy"
     return "synthesize"
