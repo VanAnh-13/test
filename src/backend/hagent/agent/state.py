@@ -9,7 +9,13 @@ Reference: deerflow/agents/thread_state.py
 
 from __future__ import annotations
 
-from typing import Annotated, Any, NotRequired, TypedDict
+from typing import Annotated, Any, TypedDict
+
+try:
+    # Python 3.11+
+    from typing import NotRequired
+except ImportError:  # Python 3.10 (toolkit Docker image)
+    from typing_extensions import NotRequired  # type: ignore[assignment]
 
 try:
     from langgraph.graph.message import add_messages
