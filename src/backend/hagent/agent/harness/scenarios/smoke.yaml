@@ -1,0 +1,53 @@
+# Smoke pack for CI graph + offline harness
+scenarios:
+  - id: smoke_train_glass
+    name: Smoke train glass (WM has features → hierarchy skip analyze)
+    tags: [smoke, train, tabular]
+    message: "Train classification dataset ds_glass target Type metric f1"
+    user_id: eval_user
+    world_model_fixture: glass_wm
+    goal:
+      goal_type: train
+      dataset_id: ds_glass
+      target_column: Type
+      problem_type: classification
+      metric: f1
+    expect:
+      success: true
+      goal_type: train
+      has_job: true
+      tools_called_min: 1
+      tools_include: [start_training]
+      route_in: [hierarchy, campaign, train]
+      max_elapsed_seconds: 60
+
+  - id: smoke_analyze_glass
+    name: Smoke analyze glass features
+    tags: [smoke, analyze, tabular]
+    message: "Phân tích dataset ds_glass, xem features"
+    user_id: eval_user
+    world_model_fixture: glass_wm
+    goal:
+      goal_type: analyze
+      dataset_id: ds_glass
+    expect:
+      success: true
+      goal_type: analyze
+      has_job: false
+      tools_called_min: 1
+      max_elapsed_seconds: 30
+
+  - id: smoke_list
+    name: Smoke list datasets
+    tags: [smoke, list]
+    message: "Liệt kê dataset của tôi"
+    user_id: eval_user
+    world_model_fixture: glass_wm
+    goal:
+      goal_type: list
+    expect:
+      success: true
+      goal_type: list
+      has_job: false
+      tools_called_min: 0
+      max_elapsed_seconds: 15

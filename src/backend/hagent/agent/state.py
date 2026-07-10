@@ -11,7 +11,18 @@ from __future__ import annotations
 
 from typing import Annotated, Any, NotRequired, TypedDict
 
-from langgraph.graph.message import add_messages
+try:
+    from langgraph.graph.message import add_messages
+except ImportError:  # pragma: no cover — unit tests without langgraph
+    def add_messages(left, right):  # type: ignore[misc]
+        """Minimal list merge reducer fallback."""
+        if left is None:
+            left = []
+        if right is None:
+            return list(left)
+        if not isinstance(right, list):
+            right = [right]
+        return list(left) + list(right)
 
 
 # ── Sub-state fragments (kiểu DeerFlow) ─────────────────
@@ -85,6 +96,64 @@ class AutoMLState(TypedDict):
     # ── World Model snapshot ─────────────────────────────
     world_model: NotRequired[dict | None]
     """Snapshot từ WorldStateStore — tất cả datasets + jobs đã biết."""
+
+    # ── Phase-4 planning / LeWM latent ───────────────────
+    user_requirements: NotRequired[dict | None]
+    """Structured requirements / GoalSpec."""
+
+    goal: NotRequired[dict | None]
+    """Active GoalSpec for latent planning."""
+
+    plans: NotRequired[list | None]
+    """Candidate PlanResult dicts from CEM-lite."""
+
+    selected_plan: NotRequired[dict | None]
+    """Best plan chosen for execution."""
+
+    plan_verification: NotRequired[dict | None]
+    """Hard/soft verification report."""
+
+    revision_count: NotRequired[int | None]
+    """Number of plan revisions so far."""
+
+    latent: NotRequired[dict | None]
+    """Last LatentState dict z_t."""
+
+    surprise: NotRequired[dict | None]
+    """Last SurpriseResult dict."""
+
+    cost_metrics: NotRequired[dict | None]
+    """n_llm_calls / plans_generated / elapsed etc."""
+
+    # ── Plan execution loop ──────────────────────────────
+    plan_step_index: NotRequired[int | None]
+    """Index of next step in selected_plan.steps."""
+
+    plan_status: NotRequired[str | None]
+    """ready | executing | need_revise | done | failed | aborted."""
+
+    last_step_error: NotRequired[str | None]
+    """Last executor error for reviser."""
+
+    execution_log: NotRequired[list | None]
+    """Per-step execution records."""
+
+    execution_events: NotRequired[list | None]
+    """Structured events for SSE (plan/step/surprise/revise)."""
+
+    # ── Phase 6 multi-candidate campaign ─────────────────
+    campaign: NotRequired[dict | None]
+    """Campaign dict (variants, jobs, comparison)."""
+
+    campaign_status: NotRequired[str | None]
+    """building | submitting | monitoring | comparing | done | failed."""
+
+    campaign_tick: NotRequired[int | None]
+    """Monitor loop counter (caps infinite polling)."""
+
+    # ── Phase 7 hierarchy ────────────────────────────────
+    hierarchy: NotRequired[dict | None]
+    """GoalHierarchy dict (subgoals + index)."""
 
     # ── Memory context (DeerFlow memory module) ──────────
     memory_context: NotRequired[str | None]

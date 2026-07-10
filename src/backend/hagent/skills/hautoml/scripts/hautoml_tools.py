@@ -471,6 +471,28 @@ def cmd_list_jobs_paginated(args):
     _handle_response(resp)
 
 
+def cmd_cancel_job(args):
+    """Hủy / force-stop job (best-effort across API variants)."""
+    job_id = args.job_id
+    token = _resolve_token(args.token)
+    headers = _headers(token)
+    # Try v2 cancel then legacy
+    resp = _post(
+        f"{HAUTOML_BASE_URL}/v2/auto/{job_id}/cancel",
+        headers=headers,
+        json_data={},
+        timeout=30,
+    )
+    if getattr(resp, "status_code", 500) >= 400:
+        resp = _post(
+            f"{HAUTOML_BASE_URL}/cancel-job",
+            headers=headers,
+            params={"id": job_id},
+            timeout=30,
+        )
+    _handle_response(resp)
+
+
 def cmd_batch_predict(args):
     """Chạy batch prediction bằng file CSV/Excel (API v2)."""
     file_path = args.file_path
@@ -652,6 +674,11 @@ def main():
     p.add_argument("--file-path", required=True, help="Đường dẫn file CSV/Excel")
     p.add_argument("--token", required=True, help="JWT access token")
 
+    # cancel_job
+    p = subparsers.add_parser("cancel_job", help="Hủy job training/prediction")
+    p.add_argument("--job-id", required=True, help="ID job")
+    p.add_argument("--token", required=True, help="JWT access token")
+
     # delete_dataset — MỚI
     p = subparsers.add_parser("delete_dataset", help="Xóa dataset")
     p.add_argument("--dataset-id", required=True, help="ID dataset")
@@ -679,6 +706,7 @@ def main():
         "start_training": cmd_start_training,
         "activate_model": cmd_activate_model,
         "batch_predict": cmd_batch_predict,
+        "cancel_job": cmd_cancel_job,
         "delete_dataset": cmd_delete_dataset,
         "get_world_state": cmd_get_world_state,
     }

@@ -27,11 +27,16 @@ async def sse_stream(
     """
     SSE stream wrapper cho DeerFlow-AutoML agent.
 
-    Yields SSE-formatted strings:
+    Yields SSE-formatted strings (Phase 5 enriched):
+        data: {"type": "route", "agent": "plan_executor"}\n\n
+        data: {"type": "phase", "phase": "execute|revise"}\n\n
+        data: {"type": "plan", "plan_id": "...", "steps": [...]}\n\n
+        data: {"type": "plan_event", "event": {...}}\n\n
+        data: {"type": "surprise", "surprise": {...}}\n\n
         data: {"type": "token", "content": "..."}\n\n
         data: {"type": "tool_call", "tool": "...", "args": {...}}\n\n
         data: {"type": "tool_result", "tool": "...", "output": "..."}\n\n
-        data: {"type": "done", "response": "..."}\n\n
+        data: {"type": "done", "response": "...", "cost_metrics": {...}}\n\n
 
     Usage in FastAPI:
         from fastapi.responses import StreamingResponse

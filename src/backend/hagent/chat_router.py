@@ -65,10 +65,25 @@ class HealthResponse(BaseModel):
 
 
 async def _load_world_model(db: AsyncDatabase, user_id: str) -> dict | None:
-    """Load World Model snapshot cho user."""
+    """Load World Model snapshot cho user (unified store API)."""
     try:
+        from hagent.bridge.config import get_world_state_config
         from hagent.world.state_store import WorldStateStore
-        store = WorldStateStore(db)
+
+        ws_cfg = get_world_state_config()
+        # AsyncDatabase exposes .client and .name
+        client = getattr(db, "client", None)
+        db_name = getattr(db, "name", None) or "hagent"
+        if client is None:
+            logger.debug("World Model: db has no client")
+            return None
+        store = WorldStateStore(
+            client=client,
+            db_name=db_name,
+            collection_name=ws_cfg["collection_name"],
+            ttl_seconds=ws_cfg["ttl_seconds"],
+        )
+        await store.ensure(str(user_id))
         return await store.get_snapshot(str(user_id))
     except Exception as exc:
         logger.debug("Không load được World Model: %s", exc)
@@ -130,6 +145,49 @@ async def _call_agent(
 
 
 # ─── Endpoints ───────────────────────────────────────────
+
+
+@router.post("/agent-run", response_model=ChatResponse)
+async def agent_run(
+    req: ChatRequest,
+    request: Request,
+    db: AsyncDatabase = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Internal DeerFlow invoke for HAgent Bridge.
+
+    Runs LangGraph multi-agent only — does NOT write conversation history
+    (Bridge owns conversation store). Use this from docker bridge service.
+    """
+    user_id = current_user["_id"]
+    conversation_id = req.conversation_id or uuid.uuid4().hex
+    auth_header = request.headers.get("Authorization", "")
+    user_token = (
+        auth_header.replace("Bearer ", "")
+        if auth_header.startswith("Bearer ")
+        else ""
+    )
+    world_model = await _load_world_model(db, str(user_id))
+    # Prefer world_state from bridge context when provided
+    if isinstance(req.context, dict) and req.context.get("world_state"):
+        world_model = req.context.get("world_state") or world_model
+
+    result = await _call_agent(
+        message=req.message,
+        user_token=user_token,
+        user_id=str(user_id),
+        world_model=world_model,
+    )
+    return ChatResponse(
+        message=result["message"],
+        conversation_id=conversation_id,
+        sources=result.get("sources", []),
+        suggestions=result.get("suggestions", []),
+        tool_outputs=result.get("tool_outputs", []),
+        provider=result.get("provider", "deerflow-automl"),
+        model=result.get("model", "multi-agent"),
+    )
 
 
 @router.post("/", response_model=ChatResponse)

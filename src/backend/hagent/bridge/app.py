@@ -86,9 +86,11 @@ async def lifespan(app: FastAPI):
     await app.state.world_state_store.ensure_indexes()
     logger.info("WorldStateStore đã khởi tạo ✓")
 
+    runtime = os.getenv("HAGENT_RUNTIME_MODE", "deerflow")
     logger.info(
-        "HAgent Bridge khởi chạy trên port %d — Chỉ dùng HAgent Gateway",
-        bridge_cfg["port"]
+        "HAgent Bridge khởi chạy trên port %d — runtime=%s",
+        bridge_cfg["port"],
+        runtime,
     )
 
     yield
@@ -128,23 +130,86 @@ hagent_bridge.add_middleware(
 # ─── Hàm gọi LLM ───────────────────────────────────────
 
 
-async def _call_hagent_gateway(
+async def _call_deerflow_runtime(
+    message: str,
+    *,
+    user_token: str | None = None,
+    user_id: str | None = None,
+    session_id: str | None = None,
+    context_extra: dict | None = None,
+) -> dict:
+    """
+    DeerFlow-AutoML path: Bridge → toolkit /api/v1/chat/agent-run (LangGraph).
+
+    Conversation history is owned by Bridge; toolkit only runs the agent graph.
+    """
+    hautoml_cfg = get_hautoml_config()
+    base = hautoml_cfg["base_url"].rstrip("/")
+    # Allow override for split deployments
+    agent_url = os.getenv(
+        "HAGENT_DEERFLOW_URL",
+        f"{base}/api/v1/chat/agent-run",
+    )
+    context = {
+        "user_token": user_token or "",
+        "user_id": user_id or "",
+        "hautoml_url": base,
+    }
+    if context_extra:
+        context.update(context_extra)
+
+    payload = {
+        "message": message,
+        "conversation_id": session_id or user_id or "hagent_session",
+        "context": context,
+    }
+    headers = {"Content-Type": "application/json"}
+    if user_token:
+        headers["Authorization"] = f"Bearer {user_token}"
+
+    try:
+        async with httpx.AsyncClient(timeout=300) as client:
+            resp = await client.post(agent_url, json=payload, headers=headers)
+            if resp.status_code == 200:
+                data = resp.json()
+                return {
+                    "message": data.get("message", data.get("response", "")),
+                    "sources": data.get("sources", []),
+                    "suggestions": data.get("suggestions", []),
+                    "provider": data.get("provider", "deerflow-automl"),
+                    "model": data.get("model", "multi-agent"),
+                    "tool_outputs": data.get("tool_outputs", []),
+                    "campaign": data.get("campaign"),
+                    "hierarchy": data.get("hierarchy"),
+                    "cost_metrics": data.get("cost_metrics"),
+                }
+            logger.warning("DeerFlow runtime HTTP %d: %s", resp.status_code, resp.text)
+            return _error_response(
+                f"Lỗi DeerFlow runtime (HTTP {resp.status_code})"
+            )
+    except httpx.ConnectError:
+        logger.warning("Không kết nối được DeerFlow tại %s", agent_url)
+        return _error_response(f"Mất kết nối tới DeerFlow runtime tại {agent_url}")
+    except Exception as e:
+        logger.error("Lỗi DeerFlow runtime: %s", e)
+        return _error_response(f"Lỗi truy vấn DeerFlow: {str(e)}")
+
+
+async def _call_openclaw_gateway(
     message: str,
     history: list[dict] | None = None,
     user_token: str | None = None,
     user_id: str | None = None,
     session_id: str | None = None,
-    context_extra: dict | None = None
+    context_extra: dict | None = None,
 ) -> dict:
-    """
-    Gửi tin nhắn tới HAgent Gateway qua webhook API.
-    """
+    """Legacy OpenClaw gateway path (profile openclaw)."""
     hooks_cfg = get_hooks_config()
     hautoml_cfg = get_hautoml_config()
     from .config import get_gateway_config
+
     gw_cfg = get_gateway_config()
     gateway_url = f"http://{gw_cfg['host']}:{gw_cfg['port']}"
-    import os
     gateway_url = os.getenv("HAGENT_GATEWAY_URL", gateway_url)
 
     payload = {
@@ -158,9 +223,8 @@ async def _call_hagent_gateway(
     }
     if history:
         payload["history"] = history
-
     if context_extra:
-        payload['context'].update(context_extra)
+        payload["context"].update(context_extra)
 
     try:
         async with httpx.AsyncClient(timeout=300) as client:
@@ -180,17 +244,48 @@ async def _call_hagent_gateway(
                     "suggestions": data.get("suggestions", []),
                     "provider": "hagent",
                     "model": "hagent-agent",
-                    "tool_outputs": data.get("tool_outputs", [])
+                    "tool_outputs": data.get("tool_outputs", []),
                 }
             logger.warning("Gateway trả về %d: %s", resp.status_code, resp.text)
             return _error_response(f"Lỗi HAgent Gateway (HTTP {resp.status_code})")
-
     except httpx.ConnectError:
         logger.warning("Không kết nối được Gateway tại %s", gateway_url)
         return _error_response(f"Mất kết nối tới HAgent Gateway tại {gateway_url}")
     except Exception as e:
         logger.error("Lỗi khi gọi Gateway: %s", e)
         return _error_response(f"Lỗi truy vấn HAgent Gateway: {str(e)}")
+
+
+async def _call_hagent_gateway(
+    message: str,
+    history: list[dict] | None = None,
+    user_token: str | None = None,
+    user_id: str | None = None,
+    session_id: str | None = None,
+    context_extra: dict | None = None,
+) -> dict:
+    """
+    Runtime switch:
+      HAGENT_RUNTIME_MODE=deerflow (default) → LangGraph on toolkit
+      HAGENT_RUNTIME_MODE=openclaw           → legacy OpenClaw gateway
+    """
+    mode = (os.getenv("HAGENT_RUNTIME_MODE") or "deerflow").strip().lower()
+    if mode in ("openclaw", "gateway", "legacy"):
+        return await _call_openclaw_gateway(
+            message,
+            history=history,
+            user_token=user_token,
+            user_id=user_id,
+            session_id=session_id,
+            context_extra=context_extra,
+        )
+    return await _call_deerflow_runtime(
+        message,
+        user_token=user_token,
+        user_id=user_id,
+        session_id=session_id,
+        context_extra=context_extra,
+    )
 
 
 def _error_response(msg: str) -> dict:
@@ -575,19 +670,31 @@ async def chat_with_file(
 
 @hagent_bridge.get("/api/v1/chat/health", response_model=HealthResponse)
 async def health_check():
-    """Kiểm tra kết nối tới HAgent Gateway và HAutoML backend."""
-    import os
+    """Kiểm tra DeerFlow runtime (toolkit) hoặc OpenClaw gateway + HAutoML."""
     from .config import get_gateway_config
-    gw_cfg = get_gateway_config()
-    gateway_url = os.getenv("HAGENT_GATEWAY_URL", f"http://{gw_cfg['host']}:{gw_cfg['port']}")
-    hautoml_cfg = get_hautoml_config()
 
-    # Kiểm tra HAgent Gateway
+    hautoml_cfg = get_hautoml_config()
+    base = hautoml_cfg["base_url"].rstrip("/")
+    mode = (os.getenv("HAGENT_RUNTIME_MODE") or "deerflow").strip().lower()
+
+    # Kiểm tra agent runtime
     hagent_ok = False
     try:
         async with httpx.AsyncClient(timeout=5) as client:
-            resp = await client.get(f"{gateway_url}/health")
-            hagent_ok = resp.status_code == 200
+            if mode in ("openclaw", "gateway", "legacy"):
+                gw_cfg = get_gateway_config()
+                gateway_url = os.getenv(
+                    "HAGENT_GATEWAY_URL",
+                    f"http://{gw_cfg['host']}:{gw_cfg['port']}",
+                )
+                resp = await client.get(f"{gateway_url}/health")
+                hagent_ok = resp.status_code == 200
+            else:
+                # DeerFlow: toolkit home or chat health
+                resp = await client.get(f"{base}/home")
+                if resp.status_code != 200:
+                    resp = await client.get(f"{base}/api/v1/chat/health")
+                hagent_ok = resp.status_code == 200
     except Exception:
         pass
 

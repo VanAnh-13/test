@@ -13,6 +13,7 @@
 name: "🎓 Agent Training — Student Dataset"
 
 on:
+  # Heavy demo — manual only (CI/E2E cover automated paths)
   workflow_dispatch:
     inputs:
       models:
@@ -28,12 +29,6 @@ on:
         required: false
         default: "true"
         type: boolean
-  push:
-    branches:
-      - features/deerflow-automl
-    paths:
-      - "src/backend/scripts/**"
-      - ".github/workflows/agent-train-student.yml"
 
 concurrency:
   group: agent-training-${{ github.ref }}

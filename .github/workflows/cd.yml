@@ -1,0 +1,121 @@
+# ══════════════════════════════════════════════════════════
+# CD — Continuous Delivery / Deploy
+#
+# - Docs → GitHub Pages (main)
+# - Optional Docker image build (no push unless secrets set)
+# ══════════════════════════════════════════════════════════
+
+name: CD
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "docs/**"
+      - "mkdocs.yml"
+      - "src/backend/**"
+      - "src/frontend/**"
+      - "docker-compose.yaml"
+      - ".github/workflows/cd.yml"
+  workflow_dispatch:
+    inputs:
+      deploy_docs:
+        description: "Deploy MkDocs to GitHub Pages"
+        type: boolean
+        default: true
+      build_images:
+        description: "Build Docker images (toolkit/worker)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: cd-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy-docs:
+    name: Deploy docs
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch' && inputs.deploy_docs == true)
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install MkDocs
+        run: |
+          python -m pip install --upgrade pip
+          pip install mkdocs-material
+
+      - name: Build site
+        run: mkdocs build --strict
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./site
+          destination_dir: ./docs
+
+      - name: Summary
+        run: |
+          {
+            echo "## CD — Docs"
+            echo "- Deployed MkDocs site to \`gh-pages\` /docs"
+            echo "- Commit: \`${{ github.sha }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  build-images:
+    name: Build Docker images
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch' && inputs.build_images == true)
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build toolkit image
+        uses: docker/build-push-action@v6
+        with:
+          context: src/backend
+          file: src/backend/hautoml.toolkit.dockerfile
+          push: false
+          tags: hautoml-toolkit:cd-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build worker image
+        uses: docker/build-push-action@v6
+        with:
+          context: src/backend
+          file: src/backend/worker.dockerfile
+          push: false
+          tags: hautoml-worker:cd-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Summary
+        run: |
+          {
+            echo "## CD — Docker build"
+            echo "- Built \`hautoml-toolkit:cd-${{ github.sha }}\`"
+            echo "- Built \`hautoml-worker:cd-${{ github.sha }}\`"
+            echo "- Push disabled (set registry secrets to enable publish)"
+          } >> "$GITHUB_STEP_SUMMARY"

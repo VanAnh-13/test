@@ -1,0 +1,171 @@
+"""
+NL → GoalSpec (structured). Uses lightweight rules + optional LLM.
+
+Primary path is rule-based so tests and offline use need no LLM.
+"""
+
+from __future__ import annotations
+
+import re
+import uuid
+from typing import Any, Dict, Optional
+
+from hagent.world.schema import GoalSpec
+
+
+def _detect_goal_type(text: str) -> str:
+    lower = text.lower()
+    train_kw = (
+        "train",
+        "huấn luyện",
+        "huan luyen",
+        "training",
+        "xây model",
+        "xay model",
+        "fit model",
+    )
+    analyze_kw = (
+        "phân tích",
+        "phan tich",
+        "analyze",
+        "feature",
+        "dataset",
+        "dữ liệu",
+        "du lieu",
+        "thống kê",
+    )
+    eval_kw = (
+        "đánh giá",
+        "danh gia",
+        "evaluate",
+        "so sánh",
+        "compare",
+        "kết quả",
+        "best model",
+    )
+    monitor_kw = ("status", "trạng thái", "job", "theo dõi", "monitor")
+    list_kw = ("liệt kê", "liet ke", "list", "danh sách", "danh sach")
+
+    if any(k in lower for k in train_kw):
+        return "train"
+    if any(k in lower for k in eval_kw):
+        return "evaluate"
+    if any(k in lower for k in monitor_kw):
+        return "monitor"
+    if any(k in lower for k in list_kw):
+        return "list"
+    if any(k in lower for k in analyze_kw):
+        return "analyze"
+    return "respond"
+
+
+def _detect_problem_type(text: str) -> Optional[str]:
+    lower = text.lower()
+    if "regress" in lower or "hồi quy" in lower or "hoi quy" in lower:
+        return "regression"
+    if "classif" in lower or "phân loại" in lower or "phan loai" in lower:
+        return "classification"
+    return None
+
+
+def _detect_metric(text: str) -> Optional[str]:
+    lower = text.lower()
+    for m in (
+        "f1",
+        "accuracy",
+        "precision",
+        "recall",
+        "roc_auc",
+        "auc",
+        "mae",
+        "mse",
+        "rmse",
+        "r2",
+    ):
+        if re.search(rf"\b{re.escape(m)}\b", lower):
+            return m
+    return None
+
+
+def _detect_target_column(text: str) -> Optional[str]:
+    # patterns: target X, cột mục tiêu X, target_column=X
+    patterns = [
+        r"target(?:_column)?\s*[:=]\s*['\"]?([A-Za-z0-9_]+)['\"]?",
+        r"cột\s+mục\s+tiêu\s*[:=]?\s*['\"]?([A-Za-z0-9_]+)['\"]?",
+        r"target\s+['\"]?([A-Za-z0-9_]+)['\"]?",
+        r"nhãn\s+['\"]?([A-Za-z0-9_]+)['\"]?",
+    ]
+    for p in patterns:
+        m = re.search(p, text, re.IGNORECASE)
+        if m:
+            return m.group(1)
+    return None
+
+
+def _detect_dataset_id(text: str, known_ids: Optional[list[str]] = None) -> Optional[str]:
+    if known_ids:
+        for did in known_ids:
+            if did and did in text:
+                return did
+    m = re.search(
+        r"dataset(?:_id)?\s*[:=]\s*['\"]?([A-Za-z0-9_\-]+)['\"]?",
+        text,
+        re.IGNORECASE,
+    )
+    if m:
+        return m.group(1)
+    return None
+
+
+def _detect_time_limit(text: str) -> Optional[int]:
+    m = re.search(r"(\d+)\s*(?:giây|seconds?|s)\b", text, re.IGNORECASE)
+    if m:
+        return int(m.group(1))
+    m = re.search(r"(\d+)\s*(?:phút|minutes?|m)\b", text, re.IGNORECASE)
+    if m:
+        return int(m.group(1)) * 60
+    return None
+
+
+def parse_goal(
+    message: str,
+    *,
+    known_dataset_ids: Optional[list[str]] = None,
+    default_user_constraints: Optional[Dict[str, Any]] = None,
+) -> GoalSpec:
+    """Parse natural language into GoalSpec (deterministic rules)."""
+    text = (message or "").strip()
+    goal_type = _detect_goal_type(text)
+    constraints: Dict[str, Any] = dict(default_user_constraints or {})
+    time_limit = _detect_time_limit(text)
+    if time_limit is not None:
+        constraints["time_limit"] = time_limit
+
+    goal: GoalSpec = {
+        "goal_type": goal_type,
+        "description": text[:500],
+        "metric": _detect_metric(text),
+        "problem_type": _detect_problem_type(text),
+        "dataset_id": _detect_dataset_id(text, known_dataset_ids),
+        "target_column": _detect_target_column(text),
+        "constraints": constraints,
+        "goal_id": str(uuid.uuid4()),  # type: ignore[typeddict-unknown-key]
+    }
+    # Clean Nones for cleaner state
+    return {k: v for k, v in goal.items() if v is not None}  # type: ignore[return-value]
+
+
+def is_simple_query(message: str, simple_keywords: Optional[list[str]] = None) -> bool:
+    """True when planner should be skipped (greeting / chitchat)."""
+    lower = (message or "").strip().lower()
+    if not lower:
+        return True
+    keywords = simple_keywords or []
+    if any(k in lower for k in keywords):
+        return True
+    # Very short non-task messages
+    if len(lower) < 12 and not any(
+        k in lower for k in ("train", "dataset", "job", "model", "data")
+    ):
+        return True
+    return False

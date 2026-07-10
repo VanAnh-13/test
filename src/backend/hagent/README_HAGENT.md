@@ -1,122 +1,60 @@
-﻿# HAgent - HAgent Integration for HAutoML
+# HAgent — DeerFlow-AutoML Integration
 
-Đây là package tích hợp HAgent AI Agent vào hệ thống HAutoML.
+## Architecture (default)
 
-## Cấu trúc thư mục
-
-```
-HAgent/
-├── AGENTS.md           # Hướng dẫn tổng quan về agent system
-├── SOUL.md             # Định nghĩa identity và rules của HAgent
-├── USER.md             # Thông tin về người dùng
-├── TOOLS.md            # Ghi chú về tools và môi trường
-├── proxy.py            # HAgent Proxy - nhận request từ Bridge
-├── chat_router.py      # Router cho chat endpoints
-├── chat_store.py       # Lưu trữ conversation history
-├── hagent.yaml         # Cấu hình HAgent Gateway
-├── bridge/             # HAgent Bridge - kết nối Frontend với Gateway
-│   ├── app.py
-│   ├── auth.py
-│   ├── config.py
-│   └── ...
-└── skills/             # HAgent Skills
-    └── hautoml/        # HAutoML skill với tools
-        ├── SKILL.md
-        ├── tools.yaml
-        └── scripts/
-            └── hautoml_tools.py
+```text
+Chat UI → Bridge (FastAPI :9900)
+            │  JWT + Mongo conversations + WorldState
+            ▼
+         toolkit app.py (:8585)
+            │  POST /api/v1/chat/agent-run
+            ▼
+         LangGraph multi-agent
+            (hierarchy → campaign / tools → synthesizer)
+            ▼
+         HAutoML jobs / MinIO / Kafka workers
 ```
 
-## Kiến trúc
+| Env | Default | Meaning |
+|---|---|---|
+| `HAGENT_RUNTIME_MODE` | `deerflow` | `deerflow` or `openclaw` |
+| `HAGENT_DEERFLOW_URL` | `{HAUTOML}/api/v1/chat/agent-run` | Bridge → toolkit agent |
+| `HAGENT_CONFIG` | `hagent/hagent.yaml` | Central YAML |
+| `OLLAMA_BASE_URL` | host gateway | Local LLM |
 
-```
-Frontend (Next.js)
-    ↓ HTTP POST /api/v1/chat/
-HAgent Bridge (FastAPI) - Port 8900
-    ↓ HTTP POST /hooks/agent
-HAgent Proxy (Python HTTP Server) - Port 18790
-    ↓ CLI: HAgent agent --message "..." --session-id "..."
-HAgent Gateway (Node.js) - Port 18789
-    ↓ Execute tools from skills/hautoml/
-HAutoML Backend API - Port 8585
-```
+## Docker
 
-## Các file quan trọng
+From `src/backend`:
 
-### SOUL.md
-Định nghĩa "linh hồn" của HAgent:
-- **QUY TẮC TUYỆT ĐỐI**: CHỈ gọi tools, KHÔNG viết code
-- Cách trả lời người dùng
-- Xử lý khi không có tool phù hợp
-
-### skills/hautoml/SKILL.md
-Định nghĩa các tools có sẵn:
-- `health` - Kiểm tra hệ thống
-- `list_datasets` - Liệt kê datasets
-- `get_features` - Lấy features của dataset
-- `start_training` - Bắt đầu training job
-- `get_job_info` - Xem kết quả training
-- ... và nhiều tools khác
-
-### skills/hautoml/scripts/hautoml_tools.py
-CLI tool thực thi các API calls đến HAutoML Backend.
-
-## Cách hoạt động
-
-1. User gửi message qua chat widget
-2. Frontend gọi Bridge API
-3. Bridge forward đến Proxy
-4. Proxy inject SOUL.md vào message và gọi HAgent Gateway
-5. Gateway parse message, chọn tool phù hợp từ hautoml skill
-6. Tool (hautoml_tools.py) gọi HAutoML API
-7. Kết quả trả về qua chuỗi ngược lại
-
-## Environment Variables
-
-Các biến môi trường cần thiết:
-- `HAUTOML_BASE_URL` - URL của HAutoML Backend (default: http://localhost:8585)
-- `USER_TOKEN` - JWT token của user (tự động truyền từ Bridge)
-- `USER_ID` - ID của user (tự động truyền từ Bridge)
-
-## Deployment
-
-Tất cả chạy trong Docker container `toolkit`:
-- HAutoML Backend (FastAPI)
-- HAgent Proxy (Python)
-- HAgent Gateway (Node.js - global install)
-
-Bridge chạy trong container riêng `HAgent_bridge`.
-
-## Testing
-
-Test agent trực tiếp:
 ```bash
-docker exec toolkit openclaw agent \
-  --message "Liệt kê các dataset" \
-  --session-id test123 \
-  --json
+# DeerFlow only (recommended)
+docker compose up --build -d toolkit hagent_bridge mongo kafka minio
+
+# With workers
+docker compose --profile worker up --build -d
+
+# Legacy OpenClaw
+HAGENT_RUNTIME_MODE=openclaw docker compose --profile openclaw --profile worker up --build -d
 ```
 
-Test tool trực tiếp:
-```bash
-docker exec toolkit bash -c \
-  "export HAUTOML_BASE_URL=http://localhost:8585 && \
-   python3 /app/HAgent/skills/hautoml/scripts/hautoml_tools.py health"
-```
+Images:
 
-## Troubleshooting
+- `hautoml.toolkit.dockerfile` — API + DeerFlow agent code
+- `hagent/bridge/Dockerfile` — Bridge only (HTTP client to toolkit)
 
-### Agent tự viết code thay vì gọi tools
-- Kiểm tra SOUL.md có được load không
-- Xem logs: `docker logs toolkit --tail 50`
-- Verify skill được nhận diện: `docker exec toolkit openclaw skills list | grep hautoml`
+## Skills
 
-### Tools không được gọi
-- Kiểm tra skill path: `/app/HAgent/skills/hautoml/`
-- Verify HAUTOML_BASE_URL environment variable
-- Test tool trực tiếp (xem phần Testing)
+- DeerFlow tools: `hagent/agent/tools/automl_tools.py`
+- OpenClaw skill docs/CLI: `hagent/skills/hautoml/`
+  - `SKILL.md`, `tools.yaml`, `scripts/hautoml_tools.py`
 
-### API calls thất bại
-- Kiểm tra HAutoML Backend đang chạy: `curl http://localhost:8585/docs`
-- Verify JWT token hợp lệ
-- Xem logs Backend: `docker logs toolkit | grep "POST\|GET"`
+## Health
+
+- Bridge: `GET http://localhost:5360/api/v1/chat/health`
+- Toolkit: `GET http://localhost:5370/home`
+- Agent invoke (auth): `POST /api/v1/chat/agent-run`
+
+## Deprecated
+
+- Toolkit auto-start `hagent/proxy.py` + always-on OpenClaw (now optional profile)
+- Bridge-only OpenClaw gateway as default path

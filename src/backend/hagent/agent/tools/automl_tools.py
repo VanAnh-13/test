@@ -209,6 +209,7 @@ async def start_training(
     models: list[str] | None = None,
     metric: str | None = None,
     time_limit: int = 300,
+    search_algorithm: str | None = None,
     token: str | None = None,
 ) -> str:
     """Khởi tạo một job training AutoML.
@@ -221,6 +222,7 @@ async def start_training(
         models: Danh sách tên model muốn thử (None = dùng tất cả).
         metric: Metric đánh giá (None = dùng mặc định).
         time_limit: Giới hạn thời gian (giây), mặc định 300s.
+        search_algorithm: grid_search | bayesian_search | genetic_algorithm | ...
         token: JWT token (tùy chọn).
 
     Returns:
@@ -236,6 +238,8 @@ async def start_training(
             training_item["models"] = models
         if metric:
             training_item["metric"] = metric
+        if search_algorithm:
+            training_item["search_algorithm"] = search_algorithm
 
         result = await _api_post(
             "/train-from-requestbody-json/",
@@ -244,6 +248,123 @@ async def start_training(
             token=token,
         )
         return _result(result)
+    except Exception as exc:
+        return _error(exc)
+
+
+@tool
+async def get_features(
+    dataset_id: str,
+    problem_type: str | None = None,
+    token: str | None = None,
+) -> str:
+    """Lấy danh sách features của dataset.
+
+    Args:
+        dataset_id: ID dataset.
+        problem_type: Optional problem type hint.
+        token: JWT token (tùy chọn).
+    """
+    try:
+        # Prefer dataset info endpoint; normalize to features list
+        result = await _api_get(
+            "/get-data-info",
+            params={"id": dataset_id},
+            token=token,
+        )
+        if isinstance(result, dict):
+            features = (
+                result.get("features")
+                or result.get("columns")
+                or result.get("list_feature")
+                or []
+            )
+            return _result(
+                {
+                    "dataset_id": dataset_id,
+                    "features": features,
+                    "problem_type": problem_type or result.get("problem_type"),
+                    "target": result.get("target"),
+                    **{k: v for k, v in result.items() if k not in ("features",)},
+                }
+            )
+        return _result(result)
+    except Exception as exc:
+        return _error(exc)
+
+
+@tool
+async def get_metrics(problem_type: str) -> str:
+    """Lấy danh sách metric khả dụng theo problem type.
+
+    Args:
+        problem_type: classification | regression
+    """
+    try:
+        # Reuse available-models payload which often includes metrics
+        result = await _api_get(f"/api/v1/available-models/{problem_type}")
+        if isinstance(result, dict) and "metrics" in result:
+            return _result(result)
+        return _result(
+            {
+                "problem_type": problem_type,
+                "metrics": result if isinstance(result, list) else result,
+            }
+        )
+    except Exception as exc:
+        return _error(exc)
+
+
+@tool
+async def preview_data(
+    dataset_id: str,
+    n_rows: int = 5,
+    token: str | None = None,
+) -> str:
+    """Xem trước vài dòng dữ liệu dataset.
+
+    Args:
+        dataset_id: ID dataset.
+        n_rows: Số dòng preview (mặc định 5).
+        token: JWT token (tùy chọn).
+    """
+    try:
+        result = await _api_get(
+            "/get-data-info",
+            params={"id": dataset_id, "preview_rows": n_rows},
+            token=token,
+        )
+        if isinstance(result, dict):
+            result = {**result, "dataset_id": dataset_id, "id": result.get("id", dataset_id)}
+        return _result(result)
+    except Exception as exc:
+        return _error(exc)
+
+
+@tool
+async def get_world_state(user_id: str, token: str | None = None) -> str:
+    """Lấy snapshot World Model của user (datasets/jobs/plans đã biết).
+
+    Args:
+        user_id: ID người dùng.
+        token: JWT token (tùy chọn, hiện dùng cho auth đồng bộ).
+    """
+    try:
+        # Prefer in-process snapshot if store injected later; else return hint
+        # Chat/middleware normally injects world_model into state — this tool
+        # is a fallback for agents that need an explicit refresh signal.
+        _ = token  # reserved for authenticated store access
+        return _result(
+            {
+                "user_id": user_id,
+                "note": (
+                    "World state is injected via middleware. "
+                    "Call list_datasets/list_jobs to refresh."
+                ),
+                "datasets": {},
+                "jobs": {},
+            }
+        )
     except Exception as exc:
         return _error(exc)
 
@@ -306,19 +427,117 @@ async def check_system_health() -> str:
         return _result({"status": "error", "error": str(exc)})
 
 
+@tool
+async def cancel_job(job_id: str, token: str | None = None) -> str:
+    """Hủy / force-stop job training hoặc prediction nếu API hỗ trợ.
+
+    Args:
+        job_id: ID job.
+        token: JWT token (tùy chọn).
+    """
+    try:
+        # Prefer v2 experiment cancel endpoints when available
+        try:
+            result = await _api_post(
+                f"/v2/auto/{job_id}/cancel",
+                token=token,
+            )
+            return _result(result)
+        except Exception:
+            result = await _api_post(
+                "/cancel-job",
+                params={"id": job_id},
+                token=token,
+            )
+            return _result(result)
+    except Exception as exc:
+        return _error(exc)
+
+
+@tool
+async def predict_batch(
+    job_id: str,
+    file_path: str | None = None,
+    token: str | None = None,
+) -> str:
+    """Chạy batch prediction trên job đã train (API v2).
+
+    Args:
+        job_id: ID job model đã train.
+        file_path: Đường dẫn file CSV/XLSX trên server (nếu API nhận path).
+                   Nếu None, trả hướng dẫn upload qua /v2/auto/{job_id}/predictions.
+        token: JWT token (tùy chọn).
+    """
+    try:
+        if not file_path:
+            return _result(
+                {
+                    "status": "need_upload",
+                    "message": (
+                        f"Upload file qua POST /v2/auto/{job_id}/predictions "
+                        "với multipart file_data."
+                    ),
+                    "job_id": job_id,
+                    "endpoint": f"/v2/auto/{job_id}/predictions",
+                }
+            )
+        # Path-based convenience for agent/tooling environments
+        import os
+
+        if not os.path.exists(file_path):
+            return _error(FileNotFoundError(f"File không tồn tại: {file_path}"))
+
+        url = f"{_get_base_url()}/v2/auto/{job_id}/predictions"
+        filename = os.path.basename(file_path)
+        content_type = (
+            "text/csv"
+            if filename.endswith(".csv")
+            else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        async with httpx.AsyncClient(timeout=_get_timeout()) as client:
+            with open(file_path, "rb") as f:
+                resp = await client.post(
+                    url,
+                    headers=_auth_headers(token),
+                    files={"file_data": (filename, f, content_type)},
+                )
+            resp.raise_for_status()
+            ctype = resp.headers.get("content-type", "")
+            if "application/json" in ctype:
+                return _result(resp.json())
+            return _result(
+                {
+                    "status": "success",
+                    "job_id": job_id,
+                    "content_type": ctype,
+                    "size_bytes": len(resp.content),
+                    "note": "Binary prediction file returned by API",
+                }
+            )
+    except Exception as exc:
+        return _error(exc)
+
+
 # ── Tool registry ────────────────────────────────────────
 
 ALL_TOOLS = [
     list_datasets,
     get_dataset_info,
+    get_features,
+    preview_data,
     get_available_models,
+    get_metrics,
     start_training,
     get_job_info,
     list_jobs,
     check_system_health,
+    get_world_state,
+    cancel_job,
+    predict_batch,
 ]
 
-DATASET_TOOLS = [list_datasets, get_dataset_info]
-TRAINING_TOOLS = [start_training, get_job_info, list_jobs]
-MODEL_TOOLS = [get_available_models]
-SYSTEM_TOOLS = [check_system_health]
+DATASET_TOOLS = [list_datasets, get_dataset_info, get_features, preview_data]
+TRAINING_TOOLS = [start_training, get_job_info, list_jobs, cancel_job]
+MODEL_TOOLS = [get_available_models, get_metrics]
+SYSTEM_TOOLS = [check_system_health, get_world_state]
+PREDICT_TOOLS = [predict_batch]

@@ -147,19 +147,128 @@ def get_hooks_config() -> dict:
 
 
 def get_world_state_config() -> dict:
-    """Lấy cấu hình World State."""
+    """Lấy cấu hình World State (legacy section + world_model.state)."""
     cfg = load_config()
     ws = cfg.get("world_state", {}) or {}
-    ws["collection_name"] = os.getenv(
-        "WORLD_STATE_COLLECTION", ws.get("collection_name", "world_states")
+    # Prefer nested world_model.state when present
+    wm_state = (cfg.get("world_model") or {}).get("state") or {}
+    merged = {**ws, **wm_state}
+    merged["collection_name"] = os.getenv(
+        "WORLD_STATE_COLLECTION",
+        merged.get("collection_name", "world_states"),
     )
-    ws["ttl_seconds"] = int(
-        os.getenv("WORLD_STATE_TTL_SECONDS", ws.get("ttl_seconds", 86400))
+    merged["ttl_seconds"] = int(
+        os.getenv(
+            "WORLD_STATE_TTL_SECONDS",
+            merged.get("ttl_seconds", 86400),
+        )
     )
-    ws["snapshot_size_limit"] = int(
-        os.getenv("WORLD_STATE_SNAPSHOT_SIZE_LIMIT", ws.get("snapshot_size_limit", 16384))
+    merged["snapshot_size_limit"] = int(
+        os.getenv(
+            "WORLD_STATE_SNAPSHOT_SIZE_LIMIT",
+            merged.get("snapshot_size_limit", 16384),
+        )
     )
-    return ws
+    return merged
+
+
+def get_world_model_config() -> dict:
+    """
+    Lấy cấu hình LeWM-style World Model (encoder/predictor/planner/surprise).
+
+    Section: world_model in hagent.yaml
+    """
+    cfg = load_config()
+    wm = dict(cfg.get("world_model") or {})
+    wm.setdefault("enabled", True)
+    wm.setdefault("encoder", {"backend": "structured_v1", "dim": 64})
+    wm.setdefault("predictor", {"backend": "tabular_transition_v1"})
+    wm.setdefault(
+        "planner",
+        {
+            "backend": "cem_lite",
+            "horizon": 4,
+            "n_candidates": 8,
+            "n_return_plans": 2,
+        },
+    )
+    wm.setdefault(
+        "surprise",
+        {"metric": "l2", "thresholds": {"medium": 0.15, "high": 0.40}},
+    )
+    wm.setdefault(
+        "trajectory",
+        {"enabled": True, "collection": "world_trajectories", "max_per_user": 5000},
+    )
+    return wm
+
+
+def get_planning_config() -> dict:
+    """Lấy agent.planning config."""
+    agent = get_agent_config()
+    planning = dict(agent.get("planning") or {})
+    planning.setdefault("enabled", True)
+    planning.setdefault("ground_on_world_model", True)
+    planning.setdefault("execute_plans", True)
+    planning.setdefault("max_revisions", 2)
+    planning.setdefault("skip_planner_for_simple_queries", True)
+    return planning
+
+
+def get_campaign_config() -> dict:
+    """Phase 6 multi-candidate job campaign config."""
+    agent = get_agent_config()
+    camp = dict(agent.get("campaign") or {})
+    camp.setdefault("enabled", True)
+    camp.setdefault("n_job_candidates", 3)
+    camp.setdefault("max_concurrent_jobs", 2)
+    camp.setdefault("warm_start_top_k", 3)
+    camp.setdefault(
+        "search_algorithms",
+        ["grid_search", "bayesian_search", "genetic_algorithm"],
+    )
+    camp.setdefault("time_limit_options", [180, 300, 600])
+    camp.setdefault("prefer_for_goal_types", ["train"])
+    camp.setdefault("max_monitor_ticks", 50)
+    return camp
+
+
+def get_hierarchy_config() -> dict:
+    """Hierarchical goal decomposition + live controller config."""
+    agent = get_agent_config()
+    h = dict(agent.get("hierarchy") or {})
+    h.setdefault("enabled", True)
+    h.setdefault("live_controller", True)
+    h.setdefault("smart_skip", True)
+    h.setdefault("abort_on_leaf_fail", False)
+    h.setdefault(
+        "templates",
+        {
+            "train": [
+                {"goal_type": "analyze", "description": "Inspect dataset features"},
+                {"goal_type": "select", "description": "Select models/metrics"},
+                {"goal_type": "train", "description": "Run training campaign/jobs"},
+                {"goal_type": "evaluate", "description": "Compare results"},
+            ],
+            "evaluate": [
+                {"goal_type": "monitor", "description": "List/check jobs"},
+                {"goal_type": "evaluate", "description": "Compare best models"},
+            ],
+        },
+    )
+    return h
+
+
+def get_eval_config() -> dict:
+    """Phase 7 offline eval harness defaults."""
+    agent = get_agent_config()
+    e = dict(agent.get("eval") or {})
+    e.setdefault(
+        "default_modes",
+        ["single_shot", "plan_executor", "campaign", "hierarchical"],
+    )
+    e.setdefault("default_tags", ["tabular"])
+    return e
 
 
 # ── DeerFlow-AutoML config accessors ────────────────────

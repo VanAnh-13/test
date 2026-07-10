@@ -89,11 +89,74 @@ proxy:
     invalid_response: "HAgent chưa trả về phản hồi hợp lệ. Vui lòng thử lại sau."
     generic: "HAgent đang gặp lỗi khi xử lý yêu cầu. Chi tiết đã được ghi trong log backend."
 
-# ── World State ──────────────────────────────────────────
+# ── World State (legacy keys; world_model.state preferred) ─
 world_state:
   collection_name: "world_states"
   ttl_seconds: 86400  # 24 giờ
   snapshot_size_limit: 16384 # 16KB
+
+# ══════════════════════════════════════════════════════════
+# LeWM-style World Model (arXiv:2603.19312 paradigm)
+# encode → predict → plan → surprise → trajectory
+# ══════════════════════════════════════════════════════════
+world_model:
+  enabled: true
+  encoder:
+    backend: "structured_v1"
+    dim: 64
+    feature_extractors:
+      - "dataset_counts"
+      - "job_status_histogram"
+      - "best_score_stats"
+      - "phase_one_hot"
+      - "focus_flags"
+      - "feature_coverage"
+      - "goal_type_one_hot"
+      - "active_dataset_hash"
+    phases: ["idle", "analyze", "select", "train", "evaluate", "respond"]
+    goal_types: ["train", "analyze", "evaluate", "list", "respond", "monitor", "unknown"]
+    job_statuses: ["pending", "starting", "running", "completed", "failed", "unknown"]
+  predictor:
+    backend: "tabular_transition_v1"
+    default_scale: 0.03
+  planner:
+    backend: "cem_lite"
+    horizon: 4
+    n_candidates: 8
+    n_return_plans: 2
+    elite_fraction: 0.25
+    distance_metric: "l2"
+    cost_weights:
+      latent_goal: 1.0
+      constraint_violation: 5.0
+      step_penalty: 0.05
+  surprise:
+    metric: "l2"
+    thresholds:
+      medium: 0.15
+      high: 0.40
+  trajectory:
+    enabled: true
+    collection: "world_trajectories"
+    max_per_user: 5000
+  state:
+    collection_name: "world_states"
+    ttl_seconds: 86400
+    snapshot_size_limit: 16384
+  default_action_space:
+    - "list_datasets"
+    - "get_dataset_info"
+    - "get_features"
+    - "preview_data"
+    - "get_available_models"
+    - "get_metrics"
+    - "start_training"
+    - "get_job_info"
+    - "list_jobs"
+    - "check_system_health"
+    - "get_world_state"
+    - "cancel_job"
+    - "predict_batch"
 
 # ══════════════════════════════════════════════════════════
 # DeerFlow-AutoML — Cấu hình Multi-Agent
@@ -159,6 +222,88 @@ agent:
 
   # Đường dẫn tới SOUL.md (nhân cách agent)
   soul_path: "./SOUL.md"
+
+  # Phase-4/5 planning (latent WM + executor loop)
+  planning:
+    enabled: true
+    ground_on_world_model: true
+    execute_plans: true
+    max_revisions: 2
+    revise_on_high_surprise: true
+    # Actions that legitimately change the world a lot — do not auto-revise
+    surprise_ignore_actions:
+      - "start_training"
+      - "list_datasets"
+      - "list_jobs"
+      - "get_world_state"
+    skip_planner_for_simple_queries: true
+    simple_query_keywords:
+      - "xin chào"
+      - "hello"
+      - "hi "
+      - "bạn là ai"
+      - "who are you"
+      - "cảm ơn"
+      - "thanks"
+
+  # Phase-6 multi-candidate training campaigns
+  campaign:
+    enabled: true
+    n_job_candidates: 3
+    max_concurrent_jobs: 2
+    warm_start_top_k: 3
+    prefer_for_goal_types:
+      - "train"
+    search_algorithms:
+      - "grid_search"
+      - "bayesian_search"
+      - "genetic_algorithm"
+    time_limit_options: [180, 300, 600]
+    max_monitor_ticks: 50
+
+  # Adaptive hierarchical goals (live controller + smart-skip)
+  hierarchy:
+    enabled: true
+    live_controller: true   # wire hierarchy node into graph
+    smart_skip: true        # skip leaves already satisfied by World Model
+    abort_on_leaf_fail: false
+    templates:
+      train:
+        - goal_type: analyze
+          description: "Inspect dataset features"
+        - goal_type: select
+          description: "Select models/metrics"
+        - goal_type: train
+          description: "Run training campaign/jobs"
+        - goal_type: evaluate
+          description: "Compare results"
+      evaluate:
+        - goal_type: monitor
+          description: "List/check jobs"
+        - goal_type: evaluate
+          description: "Compare best models"
+
+  eval:
+    default_modes:
+      - single_shot
+      - plan_executor
+      - campaign
+      - hierarchical
+    default_tags:
+      - tabular
+
+  # Agent harness (offline + graph + optional api)
+  harness:
+    default_layers:
+      - offline
+      - graph
+    default_offline_modes:
+      - single_shot
+      - plan_executor
+      - campaign
+      - hierarchical
+    smoke_tags:
+      - smoke
 
   # ── Sub-agents Registry ──────────────────────────────
   # Khai báo tất cả sub-agents tại đây.

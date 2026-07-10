@@ -1,36 +1,15 @@
-name: Deploy Documentation to GitHub Pages
+# Deprecated: docs deploy lives in cd.yml
+
+name: Deploy Documentation (legacy alias)
 
 on:
-  push:
-    branches:
-      - main
-
-permissions:
-  contents: write
-  pages: write
-  id-token: write
+  workflow_dispatch:
 
 jobs:
-  deploy:
+  redirect:
+    name: Use CD workflow
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: 3.x
-
-      - name: Install dependencies
-        run: pip install mkdocs-material
-
-      - name: Build documentation
-        run: mkdocs build
-
-      - name: Deploy to Github Pages
-        uses: peaceiris/actions-gh-pages@v4
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./site
-          destination_dir: ./docs
+      - name: Notice
+        run: |
+          echo "::notice::deploy-docs.yml is deprecated. Use CD (.github/workflows/cd.yml)."

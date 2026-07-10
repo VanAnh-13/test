@@ -28,27 +28,104 @@ logger = logging.getLogger(__name__)
 
 
 def _format_world_model_summary(world_model: dict[str, Any] | None) -> str:
-    """Format world model snapshot cho system prompt."""
+    """Format world model snapshot cho system prompt (via world.query)."""
     if not world_model:
         return "Chưa có dữ liệu World Model."
+    try:
+        from hagent.world.query import format_for_prompt
 
-    datasets = world_model.get("datasets", {})
-    jobs = world_model.get("jobs", {})
+        return format_for_prompt(world_model)
+    except Exception:
+        datasets = world_model.get("datasets", {})
+        jobs = world_model.get("jobs", {})
+        lines = []
+        if datasets:
+            ds_names = [
+                f"- {did}: {d.get('name', '?')}" for did, d in list(datasets.items())[:10]
+            ]
+            lines.append(f"**Datasets ({len(datasets)}):**\n" + "\n".join(ds_names))
+        else:
+            lines.append("**Datasets:** Chưa có")
+        if jobs:
+            job_summaries = [
+                f"- {jid}: status={j.get('status', '?')}"
+                for jid, j in list(jobs.items())[:10]
+            ]
+            lines.append(f"**Jobs ({len(jobs)}):**\n" + "\n".join(job_summaries))
+        else:
+            lines.append("**Jobs:** Chưa có")
+        return "\n".join(lines)
 
-    lines = []
-    if datasets:
-        ds_names = [f"- {did}: {d.get('name', '?')}" for did, d in datasets.items()]
-        lines.append(f"**Datasets ({len(datasets)}):**\n" + "\n".join(ds_names[:10]))
-    else:
-        lines.append("**Datasets:** Chưa có")
 
-    if jobs:
-        job_summaries = [f"- {jid}: status={j.get('status', '?')}" for jid, j in jobs.items()]
-        lines.append(f"**Jobs ({len(jobs)}):**\n" + "\n".join(job_summaries[:10]))
-    else:
-        lines.append("**Jobs:** Chưa có")
+def _attach_latent_plan(
+    state: AutoMLState,
+    user_message: str,
+) -> dict[str, Any]:
+    """
+    Goal parse + CEM-lite plan grounded on world model.
+    Returns state fields only (no messages). Skips simple queries.
+    """
+    try:
+        from hagent.bridge.config import get_planning_config
+        from hagent.agent.planning.goal_parser import is_simple_query, parse_goal
+        from hagent.agent.planning.plan_adapter import plan_results_to_state_update
+        from hagent.agent.constraints import validate_plan_steps
+        from hagent.world.service import WorldModelService
+    except Exception as exc:
+        logger.debug("Planning imports failed: %s", exc)
+        return {}
 
-    return "\n".join(lines)
+    planning_cfg = get_planning_config()
+    if not planning_cfg.get("enabled", True):
+        return {}
+    if planning_cfg.get("skip_planner_for_simple_queries", True):
+        if is_simple_query(
+            user_message,
+            planning_cfg.get("simple_query_keywords"),
+        ):
+            return {}
+
+    wm_service = state.get("_wm_service")  # type: ignore[assignment]
+    if wm_service is None:
+        wm_service = WorldModelService.from_config()
+
+    snapshot = state.get("world_model") or {"user_id": state.get("user_id") or ""}
+    known_ids = list((snapshot.get("datasets") or {}).keys())
+    goal = parse_goal(user_message, known_dataset_ids=known_ids)
+
+    # Only run latent planner for non-respond goals
+    if goal.get("goal_type") in (None, "respond"):
+        return {"goal": goal}
+
+    obs = wm_service.observation_from_snapshot(
+        snapshot, user_id=state.get("user_id"), goal=goal
+    )
+    plans = wm_service.plan(obs, goal)
+    update = plan_results_to_state_update(plans, select_best=True)
+    update["goal"] = goal
+    update["user_requirements"] = goal
+
+    selected = update.get("selected_plan")
+    if selected:
+        steps = selected.get("steps") or []
+        verification = validate_plan_steps(steps, obs, goal=goal)
+        update["plan_verification"] = verification.to_dict()
+        z = wm_service.encode(obs)
+        update["latent"] = z.to_dict()
+        update["cost_metrics"] = {
+            "plans_generated": len(plans),
+            "best_cost": plans[0].cost if plans else None,
+        }
+        # Prefer first plan step's agent if valid
+        if steps and not state.get("next_agent"):
+            first = steps[0]
+            agent = None
+            if isinstance(first, dict):
+                agent = first.get("agent")
+            if agent:
+                update["_suggested_agent"] = agent
+
+    return update
 
 
 # ── Routing logic (config-driven) ────────────────────────
@@ -194,8 +271,120 @@ async def coordinator_node(state: AutoMLState) -> dict:
             last_user_msg = msg.content or ""
             break
 
+    # Latent plan (LeWM-style) before routing — attaches goal/plan/verification
+    plan_fields = _attach_latent_plan(state, last_user_msg)
+
     quick_route = keyword_route(last_user_msg)
     valid_agents = _get_valid_agents()
+
+    # Prefer specialist from plan if keyword route missing
+    suggested = plan_fields.pop("_suggested_agent", None)
+
+    # When latent plan / train goal → campaign (Phase 6) or plan_executor
+    if plan_fields.get("selected_plan") or plan_fields.get("goal"):
+        goal = plan_fields.get("goal") or {}
+        gtype = str(goal.get("goal_type") or "")
+        if gtype and gtype != "respond":
+            verification = plan_fields.get("plan_verification") or {}
+            plan_fields.setdefault("plan_status", "ready")
+            plan_fields.setdefault("plan_step_index", 0)
+            plan_fields.setdefault("revision_count", 0)
+
+            # Phase 6: multi-candidate campaign for train goals
+            use_campaign = False
+            try:
+                from hagent.bridge.config import get_campaign_config
+
+                ccfg = get_campaign_config()
+                prefer = {
+                    str(t).lower()
+                    for t in (ccfg.get("prefer_for_goal_types") or ["train"])
+                }
+                use_campaign = bool(ccfg.get("enabled", True)) and gtype.lower() in prefer
+            except Exception:
+                use_campaign = gtype.lower() == "train"
+
+            # Adaptive hierarchy (live controller) for train/evaluate
+            hierarchy_payload: dict = {}
+            try:
+                from hagent.bridge.config import get_hierarchy_config
+                from hagent.agent.planning.hierarchy import (
+                    apply_smart_skips,
+                    decompose_goal,
+                )
+
+                hcfg = get_hierarchy_config()
+                if hcfg.get("enabled", True) and gtype in ("train", "evaluate"):
+                    hier = decompose_goal(goal)
+                    skips = apply_smart_skips(
+                        hier,
+                        world_model=state.get("world_model"),
+                    )
+                    hierarchy_payload = {
+                        "hierarchy": hier.to_dict(),
+                        "hierarchy_status": "running",
+                    }
+                    if skips:
+                        hierarchy_payload.setdefault("execution_events", [])
+                        # events merged later by graph; stash skip count in message
+                        hierarchy_payload["_skip_count"] = len(skips)
+            except Exception:
+                pass
+
+            live_h = bool(hierarchy_payload.get("hierarchy")) and bool(
+                hierarchy_payload.get("hierarchy_status") == "running"
+            )
+            try:
+                from hagent.bridge.config import get_hierarchy_config as _gh
+
+                live_h = live_h and bool(_gh().get("live_controller", True))
+            except Exception:
+                pass
+
+            if live_h and goal.get("dataset_id") and (
+                gtype != "train" or goal.get("target_column")
+            ):
+                n_sub = len((hierarchy_payload.get("hierarchy") or {}).get("subgoals") or [])
+                n_skip = int(hierarchy_payload.pop("_skip_count", 0) or 0)
+                route_msg = AIMessage(
+                    content=(
+                        f"Goal `{gtype}` → adaptive hierarchy "
+                        f"({n_sub} subgoals, smart-skip={n_skip})."
+                    )
+                )
+                return {
+                    "messages": [route_msg],
+                    "next_agent": None,
+                    **plan_fields,
+                    **hierarchy_payload,
+                }
+
+            if use_campaign and goal.get("dataset_id") and goal.get("target_column"):
+                route_msg = AIMessage(
+                    content=(
+                        f"Goal `{gtype}` → multi-candidate campaign "
+                        f"(warm-start + parallel jobs)."
+                    )
+                )
+                return {
+                    "messages": [route_msg],
+                    "next_agent": None,
+                    **plan_fields,
+                    **{k: v for k, v in hierarchy_payload.items() if k != "_skip_count"},
+                }
+
+            route_msg = AIMessage(
+                content=(
+                    f"Đã lập latent plan ({gtype}). "
+                    f"Chuyển plan_executor. "
+                    f"verify={verification.get('ok', verification.get('pass', True))}."
+                )
+            )
+            return {
+                "messages": [route_msg],
+                "next_agent": None,
+                **plan_fields,
+            }
 
     if quick_route and quick_route in valid_agents:
         logger.info("Quick route → %s (keyword match)", quick_route)
@@ -205,10 +394,32 @@ async def coordinator_node(state: AutoMLState) -> dict:
         return {
             "messages": [route_msg],
             "next_agent": quick_route,
+            **plan_fields,
+        }
+
+    if suggested and suggested in valid_agents and plan_fields.get("selected_plan"):
+        logger.info("Plan-suggested route → %s", suggested)
+        route_msg = AIMessage(
+            content=f"[ROUTE:{suggested}] Theo latent plan → {suggested}."
+        )
+        return {
+            "messages": [route_msg],
+            "next_agent": suggested,
+            **plan_fields,
         }
 
     # ── Bước 2: LLM-based routing ────────────────────────
     system_prompt = _load_system_prompt(world_model)
+
+    # Inject plan summary when available
+    if plan_fields.get("selected_plan"):
+        sp = plan_fields["selected_plan"]
+        system_prompt += (
+            f"\n\n## Latent Plan (CEM-lite)\n"
+            f"title={sp.get('title')}, cost={sp.get('cost')}, "
+            f"steps={sp.get('meta', {}).get('action_types') or sp.get('steps')}\n"
+            f"verification={plan_fields.get('plan_verification')}"
+        )
 
     llm = create_chat_model()
     llm_with_tools = llm.bind_tools(ALL_TOOLS)
@@ -224,7 +435,7 @@ async def coordinator_node(state: AutoMLState) -> dict:
     response = await llm_with_tools.ainvoke(full_messages)
 
     # ── Bước 3: Parse routing decision ───────────────────
-    state_update: dict[str, Any] = {"messages": [response]}
+    state_update: dict[str, Any] = {"messages": [response], **plan_fields}
 
     if response.content and not (hasattr(response, "tool_calls") and response.tool_calls):
         route_target, _ = parse_coordinator_response(response.content)

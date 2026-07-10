@@ -1,0 +1,12 @@
+world_model:
+  user_id: eval_user
+  datasets:
+    ds_glass:
+      id: ds_glass
+      name: glass
+      n_rows: 214
+      n_cols: 10
+      features: [RI, Na, Mg, Al, Si, K, Ca, Ba, Fe, Type]
+      target: Type
+  jobs: {}
+  active_dataset_id: ds_glass
