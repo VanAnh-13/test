@@ -27,8 +27,16 @@ if str(BACKEND_DIR) not in sys.path:
 
 
 def run_async(coro):
-    """Helper: chạy async function trong test sync."""
-    return asyncio.get_event_loop().run_until_complete(coro)
+    """Helper: chạy async function trong test sync (Python 3.10+ safe)."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    # Already inside a running loop (pytest-asyncio) — create nested task
+    import concurrent.futures
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, coro).result()
 
 
 # ══════════════════════════════════════════════════════════

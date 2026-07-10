@@ -228,11 +228,30 @@ def subagent_route(state: AutoMLState) -> str:
 
 def after_sub_tools(state: AutoMLState) -> str:
     """Sau khi tool chạy xong, quay lại sub-agent hiện tại."""
+    from hagent.agent.registry import get_agent_registry
+
     next_agent = state.get("next_agent")
     registry = get_agent_registry()
     if next_agent and registry.is_valid_agent(next_agent):
         return next_agent
     return "synthesize"
+
+
+def should_continue(state: AutoMLState | dict) -> str:
+    """
+    Backward-compatible helper used by older unit tests.
+
+    Legacy single-agent style:
+      - tool_calls present → \"tools\"
+      - otherwise → \"end\"
+    """
+    messages = state.get("messages") or []
+    if not messages:
+        return "end"
+    last = messages[-1]
+    if hasattr(last, "tool_calls") and last.tool_calls:
+        return "tools"
+    return "end"
 
 
 # ── Synthesizer node ─────────────────────────────────────
