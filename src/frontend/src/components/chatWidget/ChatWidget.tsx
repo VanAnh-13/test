@@ -19,6 +19,8 @@ import {
   getConversations,
   getConversationHistory,
   type ChatResponse,
+  type WorldModelSummary,
+  type SelectedPlanSummary,
 } from "@/api/chatClient";
 import { useSession } from "next-auth/react";
 import ReactMarkdown from "react-markdown";
@@ -32,6 +34,22 @@ interface Message {
   content: string;
   time: string;
   fileName?: string;
+  meta?: {
+    plan_status?: string | null;
+    surprise?: ChatResponse["surprise"];
+    campaign_status?: string | null;
+    hierarchy_status?: string | null;
+  };
+}
+
+interface WorldPanelState {
+  world_model?: WorldModelSummary | null;
+  selected_plan?: SelectedPlanSummary | null;
+  plan_status?: string | null;
+  surprise?: ChatResponse["surprise"];
+  campaign_status?: string | null;
+  hierarchy_status?: string | null;
+  evaluation?: ChatResponse["evaluation"];
 }
 
 // ─── Constants ──────────────────────────────────────
@@ -134,6 +152,8 @@ export default function ChatWidget() {
     gatewayConnected: boolean;
     hautomlConnected: boolean;
   } | null>(null);
+  const [worldPanel, setWorldPanel] = useState<WorldPanelState | null>(null);
+  const [wmOpen, setWmOpen] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -325,8 +345,34 @@ export default function ChatWidget() {
           role: "assistant",
           content: response.message,
           time: getCurrentTime(),
+          meta: {
+            plan_status: response.plan_status,
+            surprise: response.surprise,
+            campaign_status: response.campaign_status,
+            hierarchy_status: response.hierarchy_status,
+          },
         };
         setMessages((prev) => [...prev, botMsg]);
+
+        if (
+          response.world_model ||
+          response.selected_plan ||
+          response.surprise ||
+          response.plan_status ||
+          response.campaign_status ||
+          response.hierarchy_status
+        ) {
+          setWorldPanel({
+            world_model: response.world_model,
+            selected_plan: response.selected_plan,
+            plan_status: response.plan_status,
+            surprise: response.surprise,
+            campaign_status: response.campaign_status,
+            hierarchy_status: response.hierarchy_status,
+            evaluation: response.evaluation,
+          });
+          setWmOpen(true);
+        }
 
         if (response.suggestions?.length) {
           setSuggestions(response.suggestions);
@@ -379,6 +425,8 @@ export default function ChatWidget() {
     setConversationId(null);
     setSelectedFile(null);
     setHagentStatus(null);
+    setWorldPanel(null);
+    setWmOpen(false);
   }, [conversationId, session]);
 
   const handleKeyDown = useCallback(
@@ -459,6 +507,97 @@ export default function ChatWidget() {
           </div>
         </div>
 
+        {/* World Model panel */}
+        {worldPanel && (
+          <div className={styles.wmPanel}>
+            <button
+              type="button"
+              className={styles.wmToggle}
+              onClick={() => setWmOpen((v) => !v)}
+            >
+              <span>World Model</span>
+              <span className={styles.wmChips}>
+                {worldPanel.plan_status && (
+                  <span className={styles.wmChip}>plan:{worldPanel.plan_status}</span>
+                )}
+                {worldPanel.surprise?.level && (
+                  <span
+                    className={`${styles.wmChip} ${
+                      worldPanel.surprise.level === "high"
+                        ? styles.wmChipHigh
+                        : worldPanel.surprise.level === "medium"
+                          ? styles.wmChipMed
+                          : ""
+                    }`}
+                  >
+                    surprise:{worldPanel.surprise.level}
+                    {typeof worldPanel.surprise.value === "number"
+                      ? ` ${worldPanel.surprise.value.toFixed(2)}`
+                      : ""}
+                  </span>
+                )}
+                {worldPanel.campaign_status && (
+                  <span className={styles.wmChip}>
+                    campaign:{worldPanel.campaign_status}
+                  </span>
+                )}
+                {worldPanel.hierarchy_status && (
+                  <span className={styles.wmChip}>
+                    hierarchy:{worldPanel.hierarchy_status}
+                  </span>
+                )}
+              </span>
+              <ChevronDown
+                size={14}
+                className={wmOpen ? styles.wmChevronOpen : styles.wmChevron}
+              />
+            </button>
+            {wmOpen && (
+              <div className={styles.wmBody}>
+                {worldPanel.world_model && (
+                  <div className={styles.wmRow}>
+                    <strong>State</strong>
+                    <span>
+                      phase={worldPanel.world_model.phase || "—"} · datasets=
+                      {worldPanel.world_model.n_datasets ?? 0} · jobs=
+                      {worldPanel.world_model.n_jobs ?? 0}
+                      {worldPanel.world_model.active_dataset_id
+                        ? ` · ds=${worldPanel.world_model.active_dataset_id}`
+                        : ""}
+                    </span>
+                  </div>
+                )}
+                {worldPanel.selected_plan?.steps && (
+                  <div className={styles.wmRow}>
+                    <strong>Plan</strong>
+                    <span>
+                      {(worldPanel.selected_plan.steps || [])
+                        .map((s) =>
+                          typeof s === "string"
+                            ? s
+                            : s?.action?.type || s?.type || "?"
+                        )
+                        .filter(Boolean)
+                        .join(" → ") || "—"}
+                    </span>
+                  </div>
+                )}
+                {worldPanel.evaluation?.best_job_id && (
+                  <div className={styles.wmRow}>
+                    <strong>Best job</strong>
+                    <span>
+                      {worldPanel.evaluation.best_job_id}
+                      {worldPanel.evaluation.recommendation
+                        ? ` (${worldPanel.evaluation.recommendation})`
+                        : ""}
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Messages */}
         <div className={styles.messages}>
           {showWelcome && (
@@ -508,6 +647,34 @@ export default function ChatWidget() {
                     {msg.content}
                   </ReactMarkdown>
                 </div>
+                {msg.meta &&
+                  (msg.meta.surprise?.level ||
+                    msg.meta.plan_status ||
+                    msg.meta.campaign_status) && (
+                    <div className={styles.msgMeta}>
+                      {msg.meta.plan_status && (
+                        <span className={styles.wmChip}>
+                          plan:{msg.meta.plan_status}
+                        </span>
+                      )}
+                      {msg.meta.surprise?.level && (
+                        <span
+                          className={`${styles.wmChip} ${
+                            msg.meta.surprise.level === "high"
+                              ? styles.wmChipHigh
+                              : ""
+                          }`}
+                        >
+                          surprise:{msg.meta.surprise.level}
+                        </span>
+                      )}
+                      {msg.meta.campaign_status && (
+                        <span className={styles.wmChip}>
+                          {msg.meta.campaign_status}
+                        </span>
+                      )}
+                    </div>
+                  )}
                 <div className={styles.msgTime}>{msg.time}</div>
               </div>
             </div>

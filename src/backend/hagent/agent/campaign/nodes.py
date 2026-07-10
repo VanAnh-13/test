@@ -46,6 +46,7 @@ async def campaign_node(state: AutoMLState) -> dict:
 
     campaign = await ensure_campaign(state)
     prev_status = campaign.status
+    surprise_buf: list = []
 
     if prev_status == "building":
         events.append(
@@ -73,7 +74,11 @@ async def campaign_node(state: AutoMLState) -> dict:
         user_id=state.get("user_id"),
         user_token=state.get("user_token"),
         world_model=state.get("world_model"),
+        wm_service=state.get("_wm_service"),
+        surprise_events=surprise_buf,
     )
+    events.extend(surprise_buf)
+    wm_from_camp = getattr(campaign, "_world_model_snapshot", None)
 
     # Safety: avoid infinite graph loops when jobs never finish
     max_ticks = _max_monitor_ticks()
@@ -82,12 +87,17 @@ async def campaign_node(state: AutoMLState) -> dict:
             if v.status in ("pending", "submitted", "running"):
                 v.status = "failed"
                 v.error = v.error or f"campaign monitor timeout after {max_ticks} ticks"
+        more_surp: list = []
         campaign = await campaign_step(
             campaign,
             user_id=state.get("user_id"),
             user_token=state.get("user_token"),
             world_model=state.get("world_model"),
+            wm_service=state.get("_wm_service"),
+            surprise_events=more_surp,
         )
+        events.extend(more_surp)
+        wm_from_camp = getattr(campaign, "_world_model_snapshot", None) or wm_from_camp
         events.append(
             {
                 "type": "campaign_timeout",
@@ -134,6 +144,10 @@ async def campaign_node(state: AutoMLState) -> dict:
         "cost_metrics": cost,
         "current_phase": "train" if campaign.status != "done" else "evaluate",
     }
+    if surprise_buf:
+        last_s = surprise_buf[-1].get("surprise")
+        if last_s:
+            update["surprise"] = last_s
 
     if campaign.status == "done":
         best = next(
@@ -169,7 +183,11 @@ async def campaign_node(state: AutoMLState) -> dict:
         update["execution_events"] = events
         update["messages"] = [AIMessage(content=msg)]
         # Sync jobs into world_model lightly
-        wm = dict(state.get("world_model") or {"user_id": state.get("user_id")})
+        wm = dict(
+            wm_from_camp
+            or state.get("world_model")
+            or {"user_id": state.get("user_id")}
+        )
         jobs = dict(wm.get("jobs") or {})
         for v in campaign.variants:
             if v.job_id:
@@ -184,6 +202,8 @@ async def campaign_node(state: AutoMLState) -> dict:
                 }
         wm["jobs"] = jobs
         update["world_model"] = wm
+    elif wm_from_camp is not None:
+        update["world_model"] = wm_from_camp
 
     elif campaign.status == "failed":
         update["plan_status"] = "failed"

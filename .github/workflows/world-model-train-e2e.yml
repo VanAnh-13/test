@@ -1,0 +1,186 @@
+# ══════════════════════════════════════════════════════════
+# World Model Full-System Train (human prompt)
+#
+# Deterministic CI path (no GPU / no live Ollama required):
+#   human "train a model" prompt → hierarchy + campaign + LeWM
+#   encode / predict / surprise / trajectories (+ optional neural fit)
+#
+# Push/PR on backend or this workflow; also workflow_dispatch.
+# ══════════════════════════════════════════════════════════
+
+name: "World Model Train E2E"
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+      - features/**
+    paths:
+      - "src/backend/hagent/**"
+      - "src/backend/scripts/run_world_model_train_e2e.py"
+      - "src/backend/scripts/train_world_predictor.py"
+      - "src/backend/tests/test_world_model_deep.py"
+      - ".github/workflows/world-model-train-e2e.yml"
+      - ".github/workflows/ci.yml"
+  pull_request:
+    branches:
+      - main
+      - dev
+    paths:
+      - "src/backend/hagent/**"
+      - "src/backend/scripts/run_world_model_train_e2e.py"
+      - "src/backend/tests/test_world_model_deep.py"
+      - ".github/workflows/world-model-train-e2e.yml"
+  workflow_dispatch:
+    inputs:
+      prompt:
+        description: "Human train prompt"
+        required: false
+        default: >-
+          Please train a model on my glass classification dataset ds_glass.
+          Target column is Type. Optimize f1 and use multi-candidate training.
+      train_neural:
+        description: "Fit neural JEPA from trajectories"
+        type: boolean
+        default: true
+
+concurrency:
+  group: wm-train-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  world-model-train:
+    name: Human prompt → train + World Model
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      mongodb:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --eval 'db.runCommand({ ping: 1 })'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      PYTHONPATH: src/backend
+      HAGENT_CONFIG: ${{ github.workspace }}/src/backend/hagent/hagent.yaml
+      HAUTOML_BASE_URL: http://localhost:8585
+      MONGODB_CONNECT: localhost:27017
+      MONGODB_DB_NAME: hagent_wm_ci
+      OPENAI_API_KEY: "ci-mock-key"
+      LLM_DEFAULT_MODEL: "ci-mock"
+      LANGCHAIN_TRACING_V2: "false"
+      DO_NOT_TRACK: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: src/backend/requirements.txt
+
+      - name: Install dependencies
+        working-directory: src/backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio pytest-timeout
+
+      - name: Unit — World Model deep
+        working-directory: src/backend
+        run: |
+          python -m pytest \
+            tests/test_world_model_deep.py \
+            tests/test_phase4_world_model_lewm.py \
+            tests/test_phase6_campaign.py \
+            tests/test_hierarchy_adaptive.py \
+            -q --timeout=60 --tb=short
+
+      - name: Harness — WM human train scenarios
+        working-directory: src/backend
+        run: |
+          python scripts/run_agent_harness.py \
+            --layer offline,graph \
+            --tags wm \
+            --json wm_harness.json \
+            --md wm_harness.md
+
+      - name: Full-system train E2E (human prompt)
+        working-directory: src/backend
+        run: |
+          PROMPT='${{ github.event.inputs.prompt }}'
+          if [ -z "$PROMPT" ] || [ "$PROMPT" = "null" ]; then
+            PROMPT="Please train a model on my glass classification dataset ds_glass. The target column is Type. Optimize for f1 and run multi-candidate training if available."
+          fi
+          NEURAL_FLAG=""
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            if [ "${{ github.event.inputs.train_neural }}" = "true" ]; then
+              NEURAL_FLAG="--train-neural"
+            fi
+          else
+            NEURAL_FLAG="--train-neural"
+          fi
+          set -o pipefail
+          python scripts/run_world_model_train_e2e.py \
+            --prompt "$PROMPT" \
+            --mongo \
+            $NEURAL_FLAG \
+            --neural-out ./data/world_model/jepa_ci.npz \
+            --json wm_train_e2e.json \
+            2>&1 | tee wm_train_e2e.txt
+
+      - name: Offline neural train script smoke
+        working-directory: src/backend
+        run: |
+          python scripts/train_world_predictor.py \
+            --from-memory \
+            --epochs 5 \
+            --latent-dim 32 \
+            --out ./data/world_model/jepa_from_synth.npz
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wm-train-e2e-${{ github.run_id }}
+          path: |
+            src/backend/wm_harness.json
+            src/backend/wm_harness.md
+            src/backend/wm_train_e2e.json
+            src/backend/wm_train_e2e.txt
+            src/backend/data/world_model/
+          if-no-files-found: ignore
+
+      - name: Job summary
+        if: always()
+        working-directory: src/backend
+        run: |
+          {
+            echo "## World Model Train E2E"
+            echo ""
+            echo "Human-style **train a model** prompt through hierarchy/campaign + LeWM."
+            echo ""
+            if [ -f wm_harness.md ]; then
+              echo "### Harness"
+              cat wm_harness.md
+              echo ""
+            fi
+            if [ -f wm_train_e2e.json ]; then
+              echo "### Full-system report"
+              echo '```json'
+              python -c "import json; d=json.load(open('wm_train_e2e.json')); print(json.dumps({k:d.get(k) for k in ('success','n_failed','prompt','train','neural','plan_slice')}, indent=2, ensure_ascii=False)[:5000])"
+              echo '```'
+            fi
+            echo ""
+            echo "- Branch: \`${{ github.ref_name }}\`"
+            echo "- Commit: \`${{ github.sha }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

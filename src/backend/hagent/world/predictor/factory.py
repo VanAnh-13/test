@@ -12,7 +12,11 @@ def create_predictor(config: dict | None = None) -> Any:
     backend = str(cfg.get("backend") or "tabular_transition_v1").lower()
     if backend == "tabular_transition_v1":
         return TabularTransitionV1Predictor(cfg)
+    if backend in ("neural_jepa_v1", "neural_jepa", "jepa_v1"):
+        from hagent.world.predictor.neural_jepa_v1 import NeuralJepaV1Predictor
+
+        return NeuralJepaV1Predictor(cfg)
     raise ValueError(
         f"Unsupported world_model.predictor.backend={backend!r}. "
-        f"Supported: tabular_transition_v1"
+        f"Supported: tabular_transition_v1, neural_jepa_v1"
     )

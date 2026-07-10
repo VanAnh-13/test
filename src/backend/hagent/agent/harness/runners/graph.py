@@ -45,6 +45,13 @@ async def run_graph_scenario(scenario: AgentScenario) -> AgentRunResult:
 
             hier = decompose_goal(goal)
             apply_smart_skips(hier, world_model=scenario.world_model)
+            # Deep WM: attach WorldModelService so campaign/hierarchy record surprise
+            try:
+                from hagent.world.service import WorldModelService
+
+                wm_service = WorldModelService.from_config()
+            except Exception:
+                wm_service = None
             state: Dict[str, Any] = {
                 "messages": [],
                 "user_id": scenario.user_id,
@@ -55,10 +62,14 @@ async def run_graph_scenario(scenario: AgentScenario) -> AgentRunResult:
                 "execution_events": [],
                 "cost_metrics": {},
             }
+            if wm_service is not None:
+                state["_wm_service"] = wm_service
             for _ in range(40):
                 step = await hierarchy_node(state)
                 state.update(step)
                 state["messages"] = []
+                if wm_service is not None:
+                    state["_wm_service"] = wm_service
                 if hierarchy_route(state) == "synthesize":
                     break
             mode = "hierarchy"

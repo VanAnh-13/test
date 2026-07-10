@@ -29,6 +29,17 @@ class ChatResponse(BaseModel):
     suggestions: list[str] = []
     provider: str = ""
     model: str = ""
+    tool_outputs: list[dict] = []
+    # World Model / planning surface
+    plan_status: str | None = None
+    selected_plan: dict | None = None
+    surprise: dict | None = None
+    cost_metrics: dict | None = None
+    execution_events: list | None = None
+    world_model: dict | None = None
+    campaign_status: str | None = None
+    hierarchy_status: str | None = None
+    evaluation: dict | None = None
 
 
 # ─── Health ──────────────────────────────────────────────

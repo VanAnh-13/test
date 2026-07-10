@@ -165,6 +165,7 @@ jobs:
             tests/test_hierarchy_adaptive.py \
             tests/test_agent_harness.py \
             tests/test_student_performance_e2e.py \
+            tests/test_world_model_deep.py \
             -v \
             --timeout=90 \
             --tb=short \
@@ -191,6 +192,13 @@ jobs:
             --json ci_student_harness.json \
             --md ci_student_harness.md \
             2>&1 | tee -a ci_harness_run.txt
+          # World Model human train prompts
+          python scripts/run_agent_harness.py \
+            --layer offline,graph \
+            --tags wm \
+            --json ci_wm_harness.json \
+            --md ci_wm_harness.md \
+            2>&1 | tee -a ci_harness_run.txt
           # Also full offline default scenarios (compat)
           python scripts/run_agent_harness.py \
             --layer offline \
@@ -198,6 +206,23 @@ jobs:
             --json ci_eval.json \
             --md ci_eval.md \
             2>&1 | tee -a ci_harness_run.txt
+
+      - name: World Model full-system train (human prompt)
+        working-directory: src/backend
+        run: |
+          set -o pipefail
+          # Human-style train prompt → hierarchy/campaign + LeWM surprise/trajectories
+          python scripts/run_world_model_train_e2e.py \
+            --mongo \
+            --train-neural \
+            --neural-out ./data/world_model/jepa_ci.npz \
+            --json ci_wm_train_e2e.json \
+            2>&1 | tee ci_wm_train_e2e.txt
+          # Explicit human prompt variant (glass)
+          python scripts/run_world_model_train_e2e.py \
+            --prompt "Please train a model on dataset ds_glass. Target Type, classification, metric f1." \
+            --json ci_wm_train_prompt.json \
+            2>&1 | tee -a ci_wm_train_e2e.txt
 
       - name: Upload CI artifacts
         if: always()
@@ -210,9 +235,15 @@ jobs:
             src/backend/ci_harness.md
             src/backend/ci_student_harness.json
             src/backend/ci_student_harness.md
+            src/backend/ci_wm_harness.json
+            src/backend/ci_wm_harness.md
             src/backend/ci_eval.json
             src/backend/ci_eval.md
             src/backend/ci_harness_run.txt
+            src/backend/ci_wm_train_e2e.json
+            src/backend/ci_wm_train_e2e.txt
+            src/backend/ci_wm_train_prompt.json
+            src/backend/data/world_model/jepa_ci.npz
           if-no-files-found: ignore
 
       - name: Cleanup mock LLM
@@ -246,6 +277,18 @@ jobs:
               echo ""
               echo "### Eval harness"
               cat ci_eval.md
+            fi
+            if [ -f ci_wm_harness.md ]; then
+              echo ""
+              echo "### World Model harness"
+              cat ci_wm_harness.md
+            fi
+            if [ -f ci_wm_train_e2e.json ]; then
+              echo ""
+              echo "### World Model train E2E (human prompt)"
+              echo '```json'
+              python -c "import json; d=json.load(open('ci_wm_train_e2e.json')); print(json.dumps({k:d.get(k) for k in ('success','n_failed','n_checks','prompt','train','neural')}, indent=2, ensure_ascii=False)[:4000])"
+              echo '```'
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 

@@ -1,0 +1,53 @@
+# Full-system World Model scenarios (human train prompts)
+scenarios:
+  - id: wm_human_train_glass
+    name: "Human prompt — train glass classification (World Model deep)"
+    tags: [wm, train, smoke, e2e, human]
+    message: >-
+      Please train a model on my glass classification dataset ds_glass.
+      The target column is Type. Optimize for f1 and run multi-candidate
+      training if available. I want the best model you can find.
+    user_id: wm_e2e_user
+    world_model_fixture: glass_wm
+    goal:
+      goal_type: train
+      dataset_id: ds_glass
+      target_column: Type
+      problem_type: classification
+      metric: f1
+    expect:
+      success: true
+      goal_type: train
+      has_job: true
+      tools_called_min: 1
+      tools_include: [start_training]
+      route_in: [hierarchy, campaign, train]
+      max_elapsed_seconds: 90
+
+  - id: wm_human_train_student
+    name: "Human prompt — train student performance regression (World Model)"
+    tags: [wm, train, student, e2e, human]
+    message: >-
+      Please train models on the Student Performance dataset for me.
+      Target is G3 (regression). Try RandomForestRegressor, XGBRegressor, and SVR.
+      Dataset id is ds_student_001. Use rmse as the metric.
+    user_id: wm_e2e_user
+    world_model_fixture: student_wm
+    goal:
+      goal_type: train
+      dataset_id: ds_student_001
+      target_column: G3
+      problem_type: regression
+      metric: rmse
+      models:
+        - RandomForestRegressor
+        - XGBRegressor
+        - SVR
+    expect:
+      success: true
+      goal_type: train
+      has_job: true
+      tools_called_min: 1
+      tools_include: [start_training]
+      route_in: [hierarchy, campaign, train]
+      max_elapsed_seconds: 90

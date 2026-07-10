@@ -16,6 +16,7 @@ from hagent.world.schema import (
 )
 from hagent.world.service import WorldModelService
 from hagent.world.state_store import WorldStateStore, create_world_state_store
+from hagent.world.trajectory_store import TrajectoryStore, create_trajectory_store
 from hagent.world.updater import apply_plan_event, apply_tool_output
 
 __all__ = [
@@ -29,6 +30,8 @@ __all__ = [
     "WorldModelService",
     "WorldStateStore",
     "create_world_state_store",
+    "TrajectoryStore",
+    "create_trajectory_store",
     "apply_tool_output",
     "apply_plan_event",
     "utc_now",

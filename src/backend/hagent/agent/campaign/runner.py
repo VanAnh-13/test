@@ -180,32 +180,113 @@ async def campaign_step(
     user_token: str | None,
     world_model: dict | None,
     fact_store: Any | None = None,
+    wm_service: Any | None = None,
+    surprise_events: list | None = None,
 ) -> Campaign:
     """
     One graph tick of the campaign:
     - submit up to free concurrency slots
     - poll in-flight jobs
     - when all terminal → compare + mark done
+
+    Optional wm_service records LeWM surprise on submit/poll.
     """
     goal = campaign.goal or {}
+    wm_snap = dict(world_model or {"user_id": user_id or ""})
+    events = surprise_events if surprise_events is not None else []
 
     # Submit phase
     in_flight = campaign.in_flight()
     free = max(0, campaign.max_concurrent - len(in_flight))
     if free > 0:
         for variant in list(campaign.pending_submit())[:free]:
+            before = dict(wm_snap)
             await _submit_variant(
                 variant,
                 user_id=user_id,
                 user_token=user_token,
                 goal=goal,
-                world_model=world_model,
+                world_model=wm_snap,
             )
+            if variant.job_id:
+                jobs = dict(wm_snap.get("jobs") or {})
+                jobs[variant.job_id] = {
+                    "id": variant.job_id,
+                    "status": variant.status,
+                    "config": variant.params,
+                    "dataset_id": variant.params.get("dataset_id"),
+                }
+                wm_snap["jobs"] = jobs
+            try:
+                from hagent.agent.campaign.wm_hooks import campaign_wm_step
+
+                surprise, wm_snap = await campaign_wm_step(
+                    wm_service=wm_service,
+                    world_model=before,
+                    user_id=user_id,
+                    action_type="start_training",
+                    params=dict(variant.params or {}),
+                    goal=goal,
+                    next_world_model=wm_snap,
+                )
+                if surprise:
+                    events.append(
+                        {
+                            "type": "campaign_surprise",
+                            "action": "start_training",
+                            "variant_id": variant.variant_id,
+                            "surprise": surprise,
+                        }
+                    )
+            except Exception as exc:
+                logger.debug("campaign submit WM step: %s", exc)
         campaign.status = "monitoring" if campaign.in_flight() or campaign.pending_submit() else campaign.status
 
     # Poll phase
     for variant in list(campaign.in_flight()):
+        before = dict(wm_snap)
         await _poll_variant(variant, user_token=user_token)
+        if variant.job_id:
+            jobs = dict(wm_snap.get("jobs") or {})
+            jobs[variant.job_id] = {
+                "id": variant.job_id,
+                "status": variant.status,
+                "best_model": variant.best_model,
+                "best_score": variant.best_score,
+                "metrics": variant.metrics,
+                "config": variant.params,
+                "dataset_id": (variant.params or {}).get("dataset_id"),
+            }
+            wm_snap["jobs"] = jobs
+        try:
+            from hagent.agent.campaign.wm_hooks import campaign_wm_step
+
+            surprise, wm_snap = await campaign_wm_step(
+                wm_service=wm_service,
+                world_model=before,
+                user_id=user_id,
+                action_type="get_job_info",
+                params={"job_id": variant.job_id, "status_hint": variant.status},
+                goal=goal,
+                next_world_model=wm_snap,
+            )
+            if surprise:
+                events.append(
+                    {
+                        "type": "campaign_surprise",
+                        "action": "get_job_info",
+                        "variant_id": variant.variant_id,
+                        "job_id": variant.job_id,
+                        "status": variant.status,
+                        "surprise": surprise,
+                    }
+                )
+        except Exception as exc:
+            logger.debug("campaign poll WM step: %s", exc)
+
+    # Attach latest WM for callers
+    campaign._world_model_snapshot = wm_snap  # type: ignore[attr-defined]
+    campaign._surprise_events = events  # type: ignore[attr-defined]
 
     unfinished = campaign.unfinished()
     still_pending_submit = campaign.pending_submit()

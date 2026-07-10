@@ -86,6 +86,19 @@ async def lifespan(app: FastAPI):
     await app.state.world_state_store.ensure_indexes()
     logger.info("WorldStateStore đã khởi tạo ✓")
 
+    # Trajectory store for LeWM offline learning
+    try:
+        from hagent.world.trajectory_store import create_trajectory_store
+
+        app.state.trajectory_store = create_trajectory_store(
+            conv_store.get_db_client(),
+            db_name=mongo_cfg["db_name"],
+        )
+        logger.info("TrajectoryStore đã khởi tạo ✓")
+    except Exception as exc:
+        app.state.trajectory_store = None
+        logger.warning("TrajectoryStore init skipped: %s", exc)
+
     runtime = os.getenv("HAGENT_RUNTIME_MODE", "deerflow")
     logger.info(
         "HAgent Bridge khởi chạy trên port %d — runtime=%s",
@@ -490,7 +503,7 @@ async def _apply_tool_outputs_to_world_state(
 ) -> None:
     tool_outputs = result.get("tool_outputs")
     if not isinstance(tool_outputs, list):
-        return
+        tool_outputs = []
 
     current_state = await world_state_store.get(user_id)
     if not current_state:
@@ -513,6 +526,39 @@ async def _apply_tool_outputs_to_world_state(
             updated_state = await world_state_store.upsert(user_id, patch)
             if updated_state:
                 current_state = updated_state
+
+    # Persist plan / surprise / agent world_model fields from deerflow result
+    meta_patch: dict = {}
+    if isinstance(result.get("surprise"), dict):
+        meta_patch["last_surprise"] = result["surprise"]
+        pe = world_updater.apply_plan_event(
+            current_state, "surprise_recorded", {"surprise": result["surprise"]}
+        )
+        meta_patch.update(pe)
+    selected = result.get("selected_plan")
+    if isinstance(selected, dict) and selected.get("plan_id"):
+        pe = world_updater.apply_plan_event(
+            current_state,
+            "plan_selected",
+            {**selected, "plan_id": selected["plan_id"]},
+        )
+        meta_patch.update(pe)
+    wm = result.get("world_model")
+    if isinstance(wm, dict):
+        for k in (
+            "datasets",
+            "jobs",
+            "phase",
+            "active_dataset_id",
+            "active_job_id",
+            "active_plan_id",
+            "active_goal",
+            "cost_metrics",
+        ):
+            if k in wm and wm[k] is not None:
+                meta_patch[k] = wm[k]
+    if meta_patch:
+        await world_state_store.upsert(user_id, meta_patch)
 
 
 # ─── Endpoints ───────────────────────────────────────────
@@ -582,6 +628,16 @@ async def chat(
         suggestions=result.get("suggestions", []),
         provider=result.get("provider", ""),
         model=result.get("model", ""),
+        tool_outputs=result.get("tool_outputs", []),
+        plan_status=result.get("plan_status"),
+        selected_plan=result.get("selected_plan"),
+        surprise=result.get("surprise"),
+        cost_metrics=result.get("cost_metrics"),
+        execution_events=result.get("execution_events"),
+        world_model=result.get("world_model"),
+        campaign_status=result.get("campaign_status"),
+        hierarchy_status=result.get("hierarchy_status"),
+        evaluation=result.get("evaluation"),
     )
 
 
@@ -665,6 +721,16 @@ async def chat_with_file(
         message=result["message"], conversation_id=conv_id,
         sources=result.get("sources", []), suggestions=result.get("suggestions", []),
         provider=result.get("provider", ""), model=result.get("model", ""),
+        tool_outputs=result.get("tool_outputs", []),
+        plan_status=result.get("plan_status"),
+        selected_plan=result.get("selected_plan"),
+        surprise=result.get("surprise"),
+        cost_metrics=result.get("cost_metrics"),
+        execution_events=result.get("execution_events"),
+        world_model=result.get("world_model"),
+        campaign_status=result.get("campaign_status"),
+        hierarchy_status=result.get("hierarchy_status"),
+        evaluation=result.get("evaluation"),
     )
 
 

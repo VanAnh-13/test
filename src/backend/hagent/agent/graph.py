@@ -456,6 +456,10 @@ async def run_agent(
     user_token: str | None = None,
     world_model: dict[str, Any] | None = None,
     memory_context: str | None = None,
+    mongo_client: Any | None = None,
+    db_name: str | None = None,
+    world_store: Any | None = None,
+    wm_service: Any | None = None,
 ) -> dict[str, Any]:
     """Chạy multi-agent graph với middleware pipeline."""
     from langchain_core.messages import HumanMessage
@@ -463,6 +467,21 @@ async def run_agent(
 
     graph = get_automl_graph()
     middleware = create_default_chain()
+
+    # Durable WM runtime (Mongo when available)
+    if wm_service is None or world_store is None:
+        try:
+            from hagent.world.runtime import build_wm_runtime
+
+            _wm, _store = build_wm_runtime(
+                mongo_client=mongo_client, db_name=db_name
+            )
+            if wm_service is None:
+                wm_service = _wm
+            if world_store is None:
+                world_store = _store
+        except Exception as exc:
+            logger.debug("WM runtime build skipped: %s", exc)
 
     initial_state: AutoMLState = {
         "messages": [HumanMessage(content=message)],
@@ -478,6 +497,10 @@ async def run_agent(
         "execution_events": [],
         "cost_metrics": {},
     }
+    if wm_service is not None:
+        initial_state["_wm_service"] = wm_service  # type: ignore[typeddict-unknown-key]
+    if world_store is not None:
+        initial_state["_world_store"] = world_store  # type: ignore[typeddict-unknown-key]
 
     import os
     import time
@@ -557,6 +580,10 @@ async def stream_agent(
     user_token: str | None = None,
     world_model: dict[str, Any] | None = None,
     memory_context: str | None = None,
+    mongo_client: Any | None = None,
+    db_name: str | None = None,
+    world_store: Any | None = None,
+    wm_service: Any | None = None,
 ):
     """Stream multi-agent graph events qua async generator (Phase 5 enriched)."""
     from langchain_core.messages import HumanMessage
@@ -572,6 +599,20 @@ async def stream_agent(
         "synthesize",
     }
 
+    if wm_service is None or world_store is None:
+        try:
+            from hagent.world.runtime import build_wm_runtime
+
+            _wm, _store = build_wm_runtime(
+                mongo_client=mongo_client, db_name=db_name
+            )
+            if wm_service is None:
+                wm_service = _wm
+            if world_store is None:
+                world_store = _store
+        except Exception as exc:
+            logger.debug("WM runtime build skipped (stream): %s", exc)
+
     initial_state: AutoMLState = {
         "messages": [HumanMessage(content=message)],
         "world_model": world_model,
@@ -586,6 +627,10 @@ async def stream_agent(
         "execution_events": [],
         "cost_metrics": {},
     }
+    if wm_service is not None:
+        initial_state["_wm_service"] = wm_service  # type: ignore[typeddict-unknown-key]
+    if world_store is not None:
+        initial_state["_world_store"] = world_store  # type: ignore[typeddict-unknown-key]
 
     import os
     import time
@@ -704,6 +749,19 @@ async def stream_agent(
     cost = dict(final_state_snapshot.get("cost_metrics") or {})
     cost["elapsed_seconds"] = round(time.time() - t0, 3)
 
+    # Persist world model after stream if store attached
+    if middleware is not None and world_store is not None and user_id:
+        try:
+            post_result = {
+                "tool_outputs": [],
+                "selected_plan": final_state_snapshot.get("selected_plan"),
+                "surprise": final_state_snapshot.get("surprise"),
+                "world_model": initial_state.get("world_model"),
+            }
+            await middleware.run_post(initial_state, post_result)
+        except Exception as exc:
+            logger.debug("stream WM post_process failed: %s", exc)
+
     yield {
         "type": "done",
         "response": final_content,
@@ -712,4 +770,8 @@ async def stream_agent(
         "cost_metrics": cost,
         "revision_count": final_state_snapshot.get("revision_count") or 0,
         "surprise": final_state_snapshot.get("surprise"),
+        "selected_plan": final_state_snapshot.get("selected_plan"),
+        "campaign_status": final_state_snapshot.get("campaign_status"),
+        "hierarchy_status": final_state_snapshot.get("hierarchy_status"),
+        "execution_events": final_state_snapshot.get("execution_events") or [],
     }

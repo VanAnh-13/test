@@ -118,4 +118,28 @@ jobs:
             echo "- Built \`hautoml-toolkit:cd-${{ github.sha }}\`"
             echo "- Built \`hautoml-worker:cd-${{ github.sha }}\`"
             echo "- Push disabled (set registry secrets to enable publish)"
+            echo "- World Model train E2E: workflow \`world-model-train-e2e.yml\` (CI gate before CD)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Soft gate: document that WM train E2E is expected green on main (CI workflow).
+  # Does not re-run heavy tests here — avoids duplicate CI cost on docs-only pushes.
+  wm-train-notice:
+    name: World Model train (notice)
+    runs-on: ubuntu-latest
+    needs: []
+    if: github.event_name == 'push'
+    steps:
+      - name: Notice
+        run: |
+          {
+            echo "## CD — World Model"
+            echo "Full-system human train prompt is covered by:"
+            echo "- CI job: \`World Model full-system train (human prompt)\` in \`ci.yml\`"
+            echo "- Dedicated workflow: \`world-model-train-e2e.yml\`"
+            echo ""
+            echo "Local:"
+            echo '```bash'
+            echo "cd src/backend"
+            echo "python scripts/run_world_model_train_e2e.py --train-neural --json /tmp/wm.json"
+            echo '```'
           } >> "$GITHUB_STEP_SUMMARY"

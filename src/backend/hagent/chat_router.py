@@ -46,6 +46,16 @@ class ChatResponse(BaseModel):
     tool_outputs: list[dict] = []
     provider: str = ""
     model: str = ""
+    # World Model / planning surface (optional, deep integration)
+    plan_status: str | None = None
+    selected_plan: dict | None = None
+    surprise: dict | None = None
+    cost_metrics: dict | None = None
+    execution_events: list | None = None
+    world_model: dict | None = None
+    campaign_status: str | None = None
+    hierarchy_status: str | None = None
+    evaluation: dict | None = None
 
 
 class StreamChatRequest(BaseModel):
@@ -62,6 +72,25 @@ class HealthResponse(BaseModel):
 
 
 # ─── World Model helper ──────────────────────────────────
+
+
+def _wm_summary(world_model: dict | None) -> dict | None:
+    """Compact snapshot for API/UI (avoid huge payloads)."""
+    if not isinstance(world_model, dict):
+        return None
+    datasets = world_model.get("datasets") or {}
+    jobs = world_model.get("jobs") or {}
+    return {
+        "user_id": world_model.get("user_id"),
+        "phase": world_model.get("phase"),
+        "active_dataset_id": world_model.get("active_dataset_id"),
+        "active_job_id": world_model.get("active_job_id"),
+        "n_datasets": len(datasets),
+        "n_jobs": len(jobs),
+        "dataset_ids": list(datasets.keys())[:20],
+        "job_ids": list(jobs.keys())[:20],
+        "last_surprise": world_model.get("last_surprise"),
+    }
 
 
 async def _load_world_model(db: AsyncDatabase, user_id: str) -> dict | None:
@@ -99,6 +128,8 @@ async def _call_agent(
     user_token: str | None = None,
     user_id: str | None = None,
     world_model: dict | None = None,
+    mongo_client=None,
+    db_name: str | None = None,
 ) -> dict:
     """Gọi LangGraph agent runtime — thay thế OpenClaw Gateway."""
     error_messages = get_error_messages()
@@ -111,6 +142,8 @@ async def _call_agent(
             user_id=user_id,
             user_token=user_token,
             world_model=world_model,
+            mongo_client=mongo_client,
+            db_name=db_name,
         )
         return {
             "message": result.get("response", ""),
@@ -119,6 +152,15 @@ async def _call_agent(
             "tool_outputs": result.get("tool_outputs", []),
             "provider": result.get("provider", "deerflow-automl"),
             "model": result.get("model", ""),
+            "plan_status": result.get("plan_status"),
+            "selected_plan": result.get("selected_plan"),
+            "surprise": result.get("surprise"),
+            "cost_metrics": result.get("cost_metrics"),
+            "execution_events": result.get("execution_events") or [],
+            "world_model": result.get("world_model"),
+            "campaign_status": result.get("campaign_status"),
+            "hierarchy_status": result.get("hierarchy_status"),
+            "evaluation": result.get("evaluation"),
         }
 
     except Exception as exc:
@@ -196,12 +238,54 @@ async def agent_run(
             world_model["datasets"] = datasets
             world_model["active_dataset_id"] = ctx_ds
 
+    client = getattr(db, "client", None)
+    db_name = getattr(db, "name", None)
     result = await _call_agent(
         message=req.message,
         user_token=user_token,
         user_id=str(user_id),
         world_model=world_model,
+        mongo_client=client,
+        db_name=str(db_name) if db_name else None,
     )
+    # Persist agent world_model snapshot back if present
+    if result.get("world_model") and client is not None:
+        try:
+            from hagent.bridge.config import get_world_state_config
+            from hagent.world.state_store import WorldStateStore
+
+            ws_cfg = get_world_state_config()
+            store = WorldStateStore(
+                client=client,
+                db_name=str(db_name or "hagent"),
+                collection_name=ws_cfg["collection_name"],
+                ttl_seconds=ws_cfg["ttl_seconds"],
+            )
+            snap = result["world_model"]
+            patch = {
+                k: snap[k]
+                for k in (
+                    "datasets",
+                    "jobs",
+                    "plans",
+                    "goals",
+                    "phase",
+                    "active_dataset_id",
+                    "active_job_id",
+                    "active_plan_id",
+                    "active_goal",
+                    "last_surprise",
+                    "cost_metrics",
+                )
+                if k in snap
+            }
+            if result.get("surprise"):
+                patch["last_surprise"] = result["surprise"]
+            if patch:
+                await store.upsert(str(user_id), patch)
+        except Exception as exc:
+            logger.debug("agent-run WM persist failed: %s", exc)
+
     return ChatResponse(
         message=result["message"],
         conversation_id=conversation_id,
@@ -210,6 +294,15 @@ async def agent_run(
         tool_outputs=result.get("tool_outputs", []),
         provider=result.get("provider", "deerflow-automl"),
         model=result.get("model", "multi-agent"),
+        plan_status=result.get("plan_status"),
+        selected_plan=result.get("selected_plan"),
+        surprise=result.get("surprise"),
+        cost_metrics=result.get("cost_metrics"),
+        execution_events=result.get("execution_events"),
+        world_model=_wm_summary(result.get("world_model")),
+        campaign_status=result.get("campaign_status"),
+        hierarchy_status=result.get("hierarchy_status"),
+        evaluation=result.get("evaluation"),
     )
 
 
@@ -233,6 +326,8 @@ async def chat(
 
     # Load World Model
     world_model = await _load_world_model(db, str(user_id))
+    client = getattr(db, "client", None)
+    db_name = getattr(db, "name", None)
 
     # Gọi DeerFlow-AutoML Agent
     result = await _call_agent(
@@ -240,6 +335,8 @@ async def chat(
         user_token=user_token,
         user_id=str(user_id),
         world_model=world_model,
+        mongo_client=client,
+        db_name=str(db_name) if db_name else None,
     )
 
     # Lưu phản hồi trợ lý
@@ -253,6 +350,15 @@ async def chat(
         tool_outputs=result.get("tool_outputs", []),
         provider=result.get("provider", ""),
         model=result.get("model", ""),
+        plan_status=result.get("plan_status"),
+        selected_plan=result.get("selected_plan"),
+        surprise=result.get("surprise"),
+        cost_metrics=result.get("cost_metrics"),
+        execution_events=result.get("execution_events"),
+        world_model=_wm_summary(result.get("world_model")),
+        campaign_status=result.get("campaign_status"),
+        hierarchy_status=result.get("hierarchy_status"),
+        evaluation=result.get("evaluation"),
     )
 
 

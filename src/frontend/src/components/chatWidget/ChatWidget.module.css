@@ -749,3 +749,96 @@
   padding: 0;
   color: inherit;
 }
+
+/* ── World Model panel ── */
+.wmPanel {
+  border-bottom: 1px solid #e2e8f0;
+  background: #f8fafc;
+  font-size: 12px;
+  color: #475569;
+}
+
+.wmToggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  color: #334155;
+  text-align: left;
+}
+
+.wmToggle:hover {
+  background: #f1f5f9;
+}
+
+.wmChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  flex: 1;
+  font-weight: 500;
+}
+
+.wmChip {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #e0e7ff;
+  color: #4338ca;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.wmChipMed {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.wmChipHigh {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.wmChevron {
+  transition: transform 0.2s;
+  flex-shrink: 0;
+}
+
+.wmChevronOpen {
+  transform: rotate(180deg);
+  flex-shrink: 0;
+}
+
+.wmBody {
+  padding: 0 12px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.wmRow {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  line-height: 1.35;
+}
+
+.wmRow strong {
+  color: #64748b;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.msgMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}

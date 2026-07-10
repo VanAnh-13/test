@@ -25,7 +25,12 @@ BACKEND = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BACKEND))
 
 
-async def run_training(message: str, user_id: str) -> dict:
+async def run_training(
+    message: str,
+    user_id: str,
+    *,
+    world_model: dict | None = None,
+) -> dict:
     """Chạy agent graph với message training."""
     from hagent.agent.graph import run_agent
 
@@ -36,6 +41,11 @@ async def run_training(message: str, user_id: str) -> dict:
     print(f"👤 User: {user_id}")
     print(f"🤖 Provider: {os.getenv('LLM_PROVIDER', 'unknown')}")
     print(f"📊 Model: {os.getenv('LLM_MODEL', os.getenv('OLLAMA_MODEL', 'unknown'))}")
+    if world_model:
+        print(
+            f"🌍 World Model: datasets={len((world_model or {}).get('datasets') or {})} "
+            f"jobs={len((world_model or {}).get('jobs') or {})}"
+        )
     print()
 
     start = time.time()
@@ -43,6 +53,7 @@ async def run_training(message: str, user_id: str) -> dict:
     result = await run_agent(
         message=message,
         user_id=user_id,
+        world_model=world_model,
     )
 
     elapsed = time.time() - start
@@ -74,6 +85,22 @@ async def run_training(message: str, user_id: str) -> dict:
                     print(f"      📌 Status: {payload['status']}")
             else:
                 print(f"      {str(payload)[:200]}")
+
+    # World Model / planning surface
+    if result.get("plan_status") or result.get("surprise") or result.get("campaign_status"):
+        print("\n🌍 World Model / planning:")
+        if result.get("plan_status"):
+            print(f"      plan_status: {result.get('plan_status')}")
+        if result.get("campaign_status"):
+            print(f"      campaign_status: {result.get('campaign_status')}")
+        if result.get("hierarchy_status"):
+            print(f"      hierarchy_status: {result.get('hierarchy_status')}")
+        sur = result.get("surprise") or {}
+        if sur:
+            print(f"      surprise: level={sur.get('level')} value={sur.get('value')}")
+        if result.get("evaluation"):
+            ev = result["evaluation"]
+            print(f"      best_job: {ev.get('best_job_id')} rec={ev.get('recommendation')}")
 
     print(f"\n📌 Route: {result.get('route', 'N/A')}")
     print(f"⏱️  Time: {elapsed:.1f}s")
@@ -163,21 +190,50 @@ def main():
                         help="Run full conversation flow instead of single message")
     parser.add_argument("--output", "-o", type=str, default=None,
                         help="Output JSON file path")
+    parser.add_argument(
+        "--seed-glass-wm",
+        action="store_true",
+        help="Seed a glass dataset World Model snapshot for train prompts",
+    )
     args = parser.parse_args()
+
+    world_model = None
+    if args.seed_glass_wm:
+        world_model = {
+            "user_id": args.user_id,
+            "datasets": {
+                "ds_glass": {
+                    "id": "ds_glass",
+                    "name": "glass",
+                    "n_rows": 214,
+                    "n_cols": 10,
+                    "features": [
+                        "RI", "Na", "Mg", "Al", "Si", "K", "Ca", "Ba", "Fe", "Type",
+                    ],
+                    "target": "Type",
+                }
+            },
+            "jobs": {},
+            "active_dataset_id": "ds_glass",
+            "phase": "idle",
+        }
 
     if args.conversation:
         results = asyncio.run(run_conversation(args.user_id))
     elif args.message:
-        result = asyncio.run(run_training(args.message, args.user_id))
+        result = asyncio.run(
+            run_training(args.message, args.user_id, world_model=world_model)
+        )
         results = [result]
     else:
-        # Default: training command
+        # Default: human-style training command (English) for CI demos
         msg = (
-            "Huấn luyện dataset student với 3 thuật toán: "
-            "RandomForestRegressor, XGBRegressor, SVR. "
-            "Target là cột G3, problem_type là regression."
+            "Please train a model on dataset ds_glass. "
+            "Target column is Type, problem type classification, metric f1."
         )
-        result = asyncio.run(run_training(msg, args.user_id))
+        result = asyncio.run(
+            run_training(msg, args.user_id, world_model=world_model)
+        )
         results = [result]
 
     if args.output:

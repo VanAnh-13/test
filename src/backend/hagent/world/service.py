@@ -60,11 +60,14 @@ class WorldModelService:
         *,
         trajectory_store: TrajectoryStore | None = None,
         action_space: Sequence[str] | None = None,
+        mongo_client: Any | None = None,
+        db_name: str | None = None,
     ) -> "WorldModelService":
         """
         Build service from world_model config section.
 
         If config is None, load from hagent.yaml via bridge.config.
+        When mongo_client is provided, trajectories persist to Mongo.
         """
         if config is None:
             try:
@@ -83,8 +86,12 @@ class WorldModelService:
 
         traj_cfg = cfg.get("trajectory") or {}
         if trajectory_store is None and traj_cfg.get("enabled", True):
-            trajectory_store = TrajectoryStore(
-                collection=None,
+            from hagent.world.trajectory_store import create_trajectory_store
+
+            trajectory_store = create_trajectory_store(
+                mongo_client,
+                db_name=db_name,
+                collection_name=traj_cfg.get("collection"),
                 max_per_user=int(traj_cfg.get("max_per_user", 5000)),
                 enabled=bool(traj_cfg.get("enabled", True)),
             )

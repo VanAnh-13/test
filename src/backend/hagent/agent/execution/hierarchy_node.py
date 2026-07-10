@@ -65,14 +65,44 @@ def _merge_tool_into_wm(state: AutoMLState, tool_name: str, payload: dict) -> di
     return ws.to_dict()
 
 
+async def _wm_leaf_update(
+    state: AutoMLState,
+    *,
+    before_wm: dict,
+    after_wm: dict,
+    action_type: str,
+    params: dict | None = None,
+    goal: dict | None = None,
+) -> tuple[dict | None, dict]:
+    """Optional LeWM surprise after hierarchy leaf tool."""
+    try:
+        from hagent.agent.campaign.wm_hooks import campaign_wm_step
+
+        surprise, next_wm = await campaign_wm_step(
+            wm_service=state.get("_wm_service"),
+            world_model=before_wm,
+            user_id=state.get("user_id"),
+            action_type=action_type,
+            params=params or {},
+            goal=goal,
+            next_world_model=after_wm,
+        )
+        return surprise, next_wm or after_wm
+    except Exception as exc:
+        logger.debug("hierarchy WM update: %s", exc)
+        return None, after_wm
+
+
 async def _run_analyze_leaf(state: AutoMLState, leaf_goal: dict) -> Dict[str, Any]:
     user_id = state.get("user_id")
     token = state.get("user_token")
     wm = state.get("world_model")
     tools_used = []
     new_wm = dict(wm or {})
+    last_surprise = None
 
     for action_type in ("get_dataset_info", "get_features"):
+        before = dict(new_wm)
         params = enrich_params(
             action_type,
             {},
@@ -87,13 +117,24 @@ async def _run_analyze_leaf(state: AutoMLState, leaf_goal: dict) -> Dict[str, An
             new_wm = _merge_tool_into_wm(
                 {**state, "world_model": new_wm}, action_type, payload
             )
+            last_surprise, new_wm = await _wm_leaf_update(
+                state,
+                before_wm=before,
+                after_wm=new_wm,
+                action_type=action_type,
+                params=params,
+                goal=leaf_goal,
+            )
 
-    return {
+    out = {
         "done": True,
         "world_model": new_wm,
         "summary": f"analyze via {', '.join(tools_used)}",
         "tools": tools_used,
     }
+    if last_surprise:
+        out["surprise"] = last_surprise
+    return out
 
 
 async def _run_select_leaf(state: AutoMLState, leaf_goal: dict) -> Dict[str, Any]:
@@ -208,12 +249,15 @@ async def _run_train_leaf(state: AutoMLState, leaf_goal: dict) -> Dict[str, Any]
 
     # Safety cap inside train leaf (campaign_node has its own; hierarchy path needs this too)
     train_ticks = int(state.get("campaign_tick") or 0) + 1
+    surp_events: list = []
     campaign = await ensure_campaign(leaf_state)
     campaign = await campaign_step(
         campaign,
         user_id=state.get("user_id"),
         user_token=state.get("user_token"),
         world_model=state.get("world_model"),
+        wm_service=state.get("_wm_service"),
+        surprise_events=surp_events,
     )
 
     try:
@@ -228,12 +272,16 @@ async def _run_train_leaf(state: AutoMLState, leaf_goal: dict) -> Dict[str, Any]
             if v.status in ("pending", "submitted", "running"):
                 v.status = "failed"
                 v.error = v.error or f"hierarchy train timeout after {max_monitor} ticks"
+        more: list = []
         campaign = await campaign_step(
             campaign,
             user_id=state.get("user_id"),
             user_token=state.get("user_token"),
             world_model=state.get("world_model"),
+            wm_service=state.get("_wm_service"),
+            surprise_events=more,
         )
+        surp_events.extend(more)
 
     train_active = campaign.status not in ("done", "failed")
     update: Dict[str, Any] = {
@@ -242,7 +290,12 @@ async def _run_train_leaf(state: AutoMLState, leaf_goal: dict) -> Dict[str, Any]
         "campaign_tick": train_ticks,
         "hierarchy_train_active": train_active,
         "_hierarchy_train_active": train_active,  # back-compat for any readers
+        "surprise_events": surp_events,
     }
+    if surp_events:
+        last = surp_events[-1].get("surprise")
+        if last:
+            update["surprise"] = last
 
     if campaign.status == "done":
         from hagent.agent.campaign.compare import compare_campaign
@@ -255,7 +308,11 @@ async def _run_train_leaf(state: AutoMLState, leaf_goal: dict) -> Dict[str, Any]
             "recommendation": best.best_model if best else None,
         }
         # Sync jobs into WM
-        wm = dict(state.get("world_model") or {"user_id": state.get("user_id")})
+        wm = dict(
+            getattr(campaign, "_world_model_snapshot", None)
+            or state.get("world_model")
+            or {"user_id": state.get("user_id")}
+        )
         jobs = dict(wm.get("jobs") or {})
         for v in campaign.variants:
             if v.job_id:
@@ -426,6 +483,15 @@ async def hierarchy_node(state: AutoMLState) -> dict:
         update["campaign_status"] = leaf_out["campaign_status"]
     if "_hierarchy_train_active" in leaf_out:
         update["_hierarchy_train_active"] = leaf_out["_hierarchy_train_active"]
+    if "hierarchy_train_active" in leaf_out:
+        update["hierarchy_train_active"] = leaf_out["hierarchy_train_active"]
+    if "campaign_tick" in leaf_out:
+        update["campaign_tick"] = leaf_out["campaign_tick"]
+    if leaf_out.get("surprise") is not None:
+        update["surprise"] = leaf_out["surprise"]
+    if leaf_out.get("surprise_events"):
+        events.extend(leaf_out["surprise_events"])
+        update["execution_events"] = events
 
     tools = leaf_out.get("tools") or []
     cost["tools_called"] = int(cost.get("tools_called") or 0) + len(tools)
@@ -487,6 +553,14 @@ async def hierarchy_node(state: AutoMLState) -> dict:
 
         if hier.is_complete():
             prog = hier.progress()
+            events.append(
+                {
+                    "type": "hierarchy_done",
+                    "hierarchy_id": hier.hierarchy_id,
+                    "progress": prog,
+                }
+            )
+            update["execution_events"] = events
             update.update(
                 {
                     "messages": [

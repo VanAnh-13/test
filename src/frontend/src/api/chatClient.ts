@@ -29,11 +29,52 @@ export interface ChatRequest {
   model?: string | null;
 }
 
+export interface WorldModelSummary {
+  user_id?: string;
+  phase?: string;
+  active_dataset_id?: string | null;
+  active_job_id?: string | null;
+  n_datasets?: number;
+  n_jobs?: number;
+  dataset_ids?: string[];
+  job_ids?: string[];
+  last_surprise?: {
+    value?: number;
+    level?: string;
+    metric?: string;
+  } | null;
+}
+
+export interface SelectedPlanSummary {
+  plan_id?: string;
+  title?: string;
+  steps?: Array<{ action?: { type?: string }; type?: string } | string>;
+  cost?: number | Record<string, unknown>;
+}
+
 export interface ChatResponse {
   message: string;
   conversation_id: string;
   sources?: string[];
   suggestions?: string[];
+  provider?: string;
+  model?: string;
+  plan_status?: string | null;
+  selected_plan?: SelectedPlanSummary | null;
+  surprise?: {
+    value?: number;
+    level?: string;
+    metric?: string;
+  } | null;
+  cost_metrics?: Record<string, unknown> | null;
+  execution_events?: Array<Record<string, unknown>> | null;
+  world_model?: WorldModelSummary | null;
+  campaign_status?: string | null;
+  hierarchy_status?: string | null;
+  evaluation?: {
+    best_job_id?: string | null;
+    recommendation?: string | null;
+  } | null;
 }
 
 export interface SuggestionsResponse {
