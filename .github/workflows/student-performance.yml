@@ -1,0 +1,260 @@
+# ══════════════════════════════════════════════════════════
+# Student Performance — realistic AutoML CI/CD
+#
+# Flow:
+#   list datasets → analyze (G3) → train RF/XGB/SVR → evaluate
+#
+# Jobs:
+#   1. student-e2e   — deterministic harness + mock HAutoML API
+#                      (push/PR, no GPU, no Ollama)
+#   2. student-live  — optional live agent with Ollama
+#                      (workflow_dispatch only)
+# ══════════════════════════════════════════════════════════
+
+name: "🎓 Student Performance E2E"
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+      - features/**
+    paths:
+      - "src/backend/**"
+      - ".github/workflows/student-performance.yml"
+      - ".github/workflows/agent-train-student.yml"
+  pull_request:
+    branches:
+      - main
+      - dev
+      - features/**
+    paths:
+      - "src/backend/**"
+      - ".github/workflows/student-performance.yml"
+  workflow_dispatch:
+    inputs:
+      models:
+        description: "Models (comma-separated)"
+        required: false
+        default: "RandomForestRegressor,XGBRegressor,SVR"
+      run_live_agent:
+        description: "Also run live Ollama agent conversation"
+        type: boolean
+        default: false
+      ollama_model:
+        description: "Ollama model for live agent"
+        required: false
+        default: "qwen2.5:7b"
+
+concurrency:
+  group: student-perf-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ────────────────────────────────────────────────────────
+  # Deterministic path (always on push/PR)
+  # ────────────────────────────────────────────────────────
+  student-e2e:
+    name: "Harness + Mock API"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      PYTHONPATH: src/backend
+      HAGENT_CONFIG: ${{ github.workspace }}/src/backend/hagent/hagent.yaml
+      HAUTOML_BASE_URL: http://127.0.0.1:8585
+      OPENAI_API_KEY: "ci-mock-key"
+      LLM_DEFAULT_MODEL: "ci-mock"
+      LANGCHAIN_TRACING_V2: "false"
+      DO_NOT_TRACK: "1"
+      HAGENT_RUNTIME_MODE: deerflow
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: src/backend/requirements.txt
+
+      - name: Install dependencies
+        working-directory: src/backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio pytest-timeout pyyaml
+
+      - name: Pytest — Student Performance pack
+        working-directory: src/backend
+        run: |
+          mkdir -p results
+          set -o pipefail
+          python -m pytest tests/test_student_performance_e2e.py -v --timeout=90 --tb=short --color=yes \
+            2>&1 | tee results/student_pytest.txt
+
+      - name: E2E script — harness + mock-api
+        working-directory: src/backend
+        run: |
+          mkdir -p results
+          set -o pipefail
+          MODELS="${{ github.event.inputs.models || 'RandomForestRegressor,XGBRegressor,SVR' }}"
+          python scripts/run_student_performance_e2e.py \
+            --layers harness,mock-api \
+            --models "$MODELS" \
+            --port 8585 \
+            --json results/student_e2e.json \
+            --md results/student_e2e.md \
+            2>&1 | tee results/student_e2e_run.txt
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: student-performance-${{ github.run_id }}
+          path: |
+            src/backend/results/student_*.json
+            src/backend/results/student_*.md
+            src/backend/results/student_*.txt
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Job summary
+        if: always()
+        working-directory: src/backend
+        run: |
+          {
+            echo "## 🎓 Student Performance E2E"
+            echo ""
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Dataset | Student Performance (\`ds_student_001\`) |"
+            echo "| Shape | 395 × 33 |"
+            echo "| Target | \`G3\` (regression) |"
+            echo "| Models | RF · XGBoost · SVR |"
+            echo "| Expected best | \`XGBRegressor\` (RMSE 1.65) |"
+            echo "| Branch | \`${{ github.ref_name }}\` |"
+            echo "| Commit | \`${{ github.sha }}\` |"
+            echo ""
+            if [ -f results/student_e2e.md ]; then
+              cat results/student_e2e.md
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ────────────────────────────────────────────────────────
+  # Live agent (manual only — heavy, needs Ollama)
+  # ────────────────────────────────────────────────────────
+  student-live:
+    name: "Live Agent (Ollama)"
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_live_agent == true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    needs: [student-e2e]
+
+    env:
+      PYTHONPATH: src/backend
+      HAGENT_CONFIG: ${{ github.workspace }}/src/backend/hagent/hagent.yaml
+      HAUTOML_BASE_URL: http://127.0.0.1:8585
+      OLLAMA_BASE_URL: http://127.0.0.1:11434
+      OLLAMA_MODEL: ${{ github.event.inputs.ollama_model || 'qwen2.5:7b' }}
+      LLM_PROVIDER: ollama
+      LLM_MODEL: ${{ github.event.inputs.ollama_model || 'qwen2.5:7b' }}
+      LLM_DEFAULT_MODEL: ollama-ci
+      OPENAI_API_KEY: "not-needed"
+      LANGCHAIN_TRACING_V2: "false"
+      DO_NOT_TRACK: "1"
+      HAGENT_RUNTIME_MODE: deerflow
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: src/backend/requirements.txt
+
+      - name: Install dependencies
+        working-directory: src/backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install & start Ollama
+        run: |
+          curl -fsSL https://ollama.com/install.sh | sh
+          ollama serve &
+          echo "OLLAMA_PID=$!" >> "$GITHUB_ENV"
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
+              echo "Ollama ready"
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "Ollama failed to start"
+              exit 1
+            fi
+            sleep 1
+          done
+          ollama pull "$OLLAMA_MODEL"
+          ollama list
+
+      - name: Start Mock HAutoML
+        working-directory: src/backend
+        run: |
+          python scripts/mock_hautoml_server.py --port 8585 &
+          echo "MOCK_PID=$!" >> "$GITHUB_ENV"
+          for i in $(seq 1 20); do
+            if curl -sf http://127.0.0.1:8585/home >/dev/null 2>&1; then
+              echo "Mock HAutoML ready"
+              exit 0
+            fi
+            sleep 0.5
+          done
+          exit 1
+
+      - name: Live agent E2E (conversation)
+        working-directory: src/backend
+        run: |
+          mkdir -p results
+          MODELS="${{ github.event.inputs.models || 'RandomForestRegressor,XGBRegressor,SVR' }}"
+          python scripts/run_student_performance_e2e.py \
+            --layers agent \
+            --models "$MODELS" \
+            --no-start-server \
+            --user-id student_ci \
+            --json results/student_live.json \
+            --md results/student_live.md
+
+      - name: Upload live artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: student-live-${{ github.run_id }}
+          path: src/backend/results/student_live.*
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Cleanup
+        if: always()
+        run: |
+          [ -n "${MOCK_PID:-}" ] && kill "$MOCK_PID" 2>/dev/null || true
+          [ -n "${OLLAMA_PID:-}" ] && kill "$OLLAMA_PID" 2>/dev/null || true
+
+  student-gate:
+    name: Student Performance gate
+    runs-on: ubuntu-latest
+    needs: [student-e2e]
+    if: always()
+    steps:
+      - name: Require deterministic E2E
+        run: |
+          if [ "${{ needs.student-e2e.result }}" != "success" ]; then
+            echo "student-e2e failed: ${{ needs.student-e2e.result }}"
+            exit 1
+          fi
+          echo "Student Performance E2E passed ✓"

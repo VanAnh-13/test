@@ -677,17 +677,28 @@ async def health_check():
     base = hautoml_cfg["base_url"].rstrip("/")
     mode = (os.getenv("HAGENT_RUNTIME_MODE") or "deerflow").strip().lower()
 
+    # Always define the runtime URL for the response (avoids UnboundLocalError
+    # when mode is deerflow and gateway_url was only set in the openclaw branch).
+    if mode in ("openclaw", "gateway", "legacy"):
+        gw_cfg = get_gateway_config()
+        runtime_url = os.getenv(
+            "HAGENT_GATEWAY_URL",
+            f"http://{gw_cfg['host']}:{gw_cfg['port']}",
+        )
+    else:
+        # DeerFlow: prefer explicit agent/toolkit URL, else HAutoML base
+        runtime_url = (
+            os.getenv("HAGENT_URL")
+            or os.getenv("DEERFLOW_BASE_URL")
+            or base
+        )
+
     # Kiểm tra agent runtime
     hagent_ok = False
     try:
         async with httpx.AsyncClient(timeout=5) as client:
             if mode in ("openclaw", "gateway", "legacy"):
-                gw_cfg = get_gateway_config()
-                gateway_url = os.getenv(
-                    "HAGENT_GATEWAY_URL",
-                    f"http://{gw_cfg['host']}:{gw_cfg['port']}",
-                )
-                resp = await client.get(f"{gateway_url}/health")
+                resp = await client.get(f"{runtime_url}/health")
                 hagent_ok = resp.status_code == 200
             else:
                 # DeerFlow: toolkit home or chat health
@@ -708,7 +719,7 @@ async def health_check():
         pass
 
     return HealthResponse(
-        hagent_url=gateway_url,
+        hagent_url=runtime_url,
         connected=hagent_ok,
         hautoml_connected=hautoml_ok,
         mode="hagent",

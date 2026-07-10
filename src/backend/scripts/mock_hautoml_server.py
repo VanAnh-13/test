@@ -37,7 +37,7 @@ STUDENT_DATASET = {
         "traveltime", "studytime", "failures", "schoolsup",
         "famsup", "paid", "activities", "nursery", "higher",
         "internet", "romantic", "famrel", "freetime", "goout",
-        "Dalc", "Walc", "health", "absences", "G1", "G2",
+        "Dalc", "Walc", "health", "absences", "G1", "G2", "G3",
     ],
     "target": "G3",
     "problem_type": "regression",
@@ -164,6 +164,14 @@ class MockHandler(BaseHTTPRequestHandler):
                 self._send_json(STUDENT_DATASET)
             else:
                 self._send_json({"error": f"Dataset not found: {ds_id}"}, 404)
+
+        # Job info (GET variant used by CI e2e)
+        elif path == "/get-job-info":
+            job_id = params.get("id", [""])[0]
+            if job_id in active_jobs:
+                self._send_json(active_jobs[job_id])
+            else:
+                self._send_json({"error": f"Job not found: {job_id}"}, 404)
 
         else:
             self._send_json({"error": f"Unknown endpoint: {path}"}, 404)

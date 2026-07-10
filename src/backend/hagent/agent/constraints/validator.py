@@ -54,7 +54,19 @@ def validate_action(
                 reasons.append(f"dataset_id={dataset_id} not in world model")
             feats = features_of(observation, str(dataset_id))
             target = action.params.get("target_column") or goal.get("target_column")
-            if target and feats and target not in feats:
+            # Accept target if it is a feature column OR the declared dataset target
+            # (some fixtures keep label separate from feature list).
+            declared_target = None
+            if ds is not None:
+                declared_target = getattr(ds, "target", None)
+                if declared_target is None and isinstance(ds, dict):
+                    declared_target = ds.get("target")
+            if (
+                target
+                and feats
+                and target not in feats
+                and str(target) != str(declared_target or "")
+            ):
                 reasons.append(
                     f"target_column={target!r} not in dataset features"
                 )

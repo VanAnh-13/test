@@ -1,0 +1,79 @@
+# Student Performance E2E pack — realistic AutoML regression flow
+# Tags: student | student-e2e | regression | train | analyze | list
+scenarios:
+  - id: student_list
+    name: "List datasets → Student Performance visible"
+    tags: [student, student-e2e, list]
+    message: "Hiển thị danh sách dataset của tôi"
+    user_id: student_ci
+    world_model_fixture: student_wm
+    goal:
+      goal_type: list
+    expect:
+      success: true
+      goal_type: list
+      has_job: false
+      tools_called_min: 0
+      max_elapsed_seconds: 15
+
+  - id: student_analyze
+    name: "Analyze Student Performance features (G3 target)"
+    tags: [student, student-e2e, analyze, regression]
+    message: "Phân tích dataset Student Performance ds_student_001, xem features và target G3"
+    user_id: student_ci
+    world_model_fixture: student_wm
+    goal:
+      goal_type: analyze
+      dataset_id: ds_student_001
+      target_column: G3
+      problem_type: regression
+    expect:
+      success: true
+      goal_type: analyze
+      has_job: false
+      tools_called_min: 1
+      max_elapsed_seconds: 30
+
+  - id: student_train_multi
+    name: "Train RF + XGBoost + SVR on Student Performance (G3 regression)"
+    tags: [student, student-e2e, train, regression, multi-model]
+    message: >-
+      Huấn luyện dataset Student Performance ds_student_001 với 3 thuật toán:
+      RandomForestRegressor, XGBRegressor, SVR.
+      Target là cột G3, problem_type là regression, metric là rmse.
+    user_id: student_ci
+    world_model_fixture: student_wm
+    goal:
+      goal_type: train
+      dataset_id: ds_student_001
+      target_column: G3
+      problem_type: regression
+      metric: rmse
+      models:
+        - RandomForestRegressor
+        - XGBRegressor
+        - SVR
+    expect:
+      success: true
+      goal_type: train
+      has_job: true
+      tools_called_min: 1
+      tools_include: [start_training]
+      route_in: [hierarchy, campaign, train]
+      max_elapsed_seconds: 90
+
+  - id: student_evaluate
+    name: "Evaluate / compare Student Performance training results"
+    tags: [student, student-e2e, evaluate, regression]
+    message: "So sánh kết quả training Student Performance. Model nào tốt nhất theo RMSE?"
+    user_id: student_ci
+    world_model_fixture: student_wm
+    goal:
+      goal_type: evaluate
+      dataset_id: ds_student_001
+      metric: rmse
+    expect:
+      success: true
+      goal_type: evaluate
+      tools_called_min: 0
+      max_elapsed_seconds: 45

@@ -2,9 +2,84 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from hagent.agent.harness.schema import AgentScenario
+
+# Deterministic Student Performance regression metrics (aligns with mock_hautoml_server)
+STUDENT_TRAINING_RESULTS: Dict[str, Dict[str, float]] = {
+    "RandomForestRegressor": {"rmse": 1.82, "mae": 1.34, "r2": 0.87, "mse": 3.31},
+    "XGBRegressor": {"rmse": 1.65, "mae": 1.21, "r2": 0.91, "mse": 2.72},
+    "SVR": {"rmse": 2.15, "mae": 1.58, "r2": 0.82, "mse": 4.62},
+    "LinearRegression": {"rmse": 2.45, "mae": 1.89, "r2": 0.76, "mse": 6.00},
+}
+
+STUDENT_DEFAULT_MODELS = [
+    "RandomForestRegressor",
+    "XGBRegressor",
+    "SVR",
+]
+
+
+def _is_student_scenario(scenario: AgentScenario, ds: Optional[str]) -> bool:
+    if ds and "student" in str(ds).lower():
+        return True
+    if "student" in str(scenario.id).lower():
+        return True
+    if any("student" in str(t).lower() for t in (scenario.tags or [])):
+        return True
+    goal = scenario.goal or {}
+    if str(goal.get("problem_type") or "").lower() == "regression" and (
+        goal.get("target_column") == "G3" or goal.get("metric") == "rmse"
+    ):
+        return True
+    return False
+
+
+def _pick_models(params: Dict[str, Any], scenario: AgentScenario) -> List[str]:
+    for key in ("models", "model_names", "algorithms"):
+        raw = params.get(key) or (scenario.goal or {}).get(key)
+        if isinstance(raw, list) and raw:
+            return [str(x) for x in raw]
+        if isinstance(raw, str) and raw.strip():
+            return [x.strip() for x in raw.split(",") if x.strip()]
+    if _is_student_scenario(scenario, params.get("dataset_id")):
+        return list(STUDENT_DEFAULT_MODELS)
+    return ["model_0"]
+
+
+def _build_student_job(
+    jid: str,
+    ds: Optional[str],
+    models: List[str],
+    *,
+    metric: str = "rmse",
+) -> Dict[str, Any]:
+    model_results = []
+    best_model = None
+    best_score = float("inf")
+    for m in models:
+        metrics = dict(
+            STUDENT_TRAINING_RESULTS.get(m, {"rmse": 2.5, "mae": 2.0, "r2": 0.7})
+        )
+        model_results.append({"model": m, "metrics": metrics})
+        score = float(metrics.get(metric, metrics.get("rmse", 999)))
+        if score < best_score:
+            best_score = score
+            best_model = m
+    return {
+        "id": jid,
+        "job_id": jid,
+        "status": "completed",
+        "dataset_id": ds,
+        "problem_type": "regression",
+        "target_column": "G3",
+        "models_requested": models,
+        "best_model": best_model,
+        "best_score": round(best_score, 4),
+        "model_results": model_results,
+        "metrics": dict(STUDENT_TRAINING_RESULTS.get(best_model or "", {})),
+    }
 
 
 def make_mock_tool_invoker(
@@ -16,8 +91,10 @@ def make_mock_tool_invoker(
     Async invoker(action_type, params) -> dict
 
     Deterministic job ids and scores for offline/graph layers.
+    Student Performance scenarios return multi-model RF/XGB/SVR results.
     """
     job_n = {"i": 0}
+    jobs: Dict[str, Dict[str, Any]] = {}
     score_list = list(scores or [0.71, 0.88, 0.80, 0.76])
     wm = scenario.world_model or {}
 
@@ -28,6 +105,7 @@ def make_mock_tool_invoker(
             or wm.get("active_dataset_id")
         )
         wm_ds = (wm.get("datasets") or {}).get(ds or "", {})
+        student = _is_student_scenario(scenario, ds)
 
         if action_type == "list_datasets":
             return {"datasets": list((wm.get("datasets") or {}).values())}
@@ -43,13 +121,25 @@ def make_mock_tool_invoker(
                 or (scenario.goal or {}).get("target_column"),
                 "n_rows": wm_ds.get("n_rows", 100),
                 "n_cols": wm_ds.get("n_cols", len(feats)),
+                "problem_type": wm_ds.get("problem_type")
+                or (scenario.goal or {}).get("problem_type"),
             }
 
         if action_type in ("get_available_models", "get_metrics"):
-            return {
-                "problem_type": params.get("problem_type")
+            ptype = (
+                params.get("problem_type")
                 or (scenario.goal or {}).get("problem_type")
-                or "classification",
+                or ("regression" if student else "classification")
+            )
+            if str(ptype).lower() == "regression" or student:
+                return {
+                    "problem_type": "regression",
+                    "models": list(STUDENT_DEFAULT_MODELS) + ["LinearRegression"],
+                    "metrics": ["rmse", "mae", "r2", "mse"],
+                    "default_metric": "rmse",
+                }
+            return {
+                "problem_type": "classification",
                 "models": ["rf", "lr", "xgb"],
                 "metrics": ["accuracy", "f1", "rmse", "mae"],
             }
@@ -57,6 +147,18 @@ def make_mock_tool_invoker(
         if action_type == "start_training":
             job_n["i"] += 1
             jid = f"eval-job-{scenario.id}-{job_n['i']}"
+            if student:
+                models = _pick_models(params, scenario)
+                metric = str((scenario.goal or {}).get("metric") or "rmse")
+                job = _build_student_job(jid, ds, models, metric=metric)
+                job["status"] = "starting"
+                jobs[jid] = {**job, "status": "completed"}
+                return {
+                    "job_id": jid,
+                    "status": "starting",
+                    "dataset_id": ds,
+                    "models_requested": models,
+                }
             return {
                 "job_id": jid,
                 "status": "starting",
@@ -65,6 +167,14 @@ def make_mock_tool_invoker(
 
         if action_type == "get_job_info":
             jid = params.get("job_id") or "eval-job"
+            if jid in jobs:
+                return dict(jobs[jid])
+            if student:
+                models = _pick_models(params, scenario)
+                metric = str((scenario.goal or {}).get("metric") or "rmse")
+                job = _build_student_job(str(jid), ds, models, metric=metric)
+                jobs[str(jid)] = job
+                return job
             try:
                 idx = int(str(jid).rsplit("-", 1)[-1]) - 1
             except ValueError:
@@ -81,6 +191,8 @@ def make_mock_tool_invoker(
             }
 
         if action_type == "list_jobs":
+            if jobs:
+                return {"jobs": list(jobs.values()), "total": len(jobs)}
             return {"jobs": list((wm.get("jobs") or {}).values())}
 
         if action_type == "get_world_state":

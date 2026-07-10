@@ -1,19 +1,22 @@
 # ══════════════════════════════════════════════════════════
-# DeerFlow-AutoML — Agent Training Demo (Student Dataset)
+# DeerFlow-AutoML — Live Agent Training Demo (Student Dataset)
 #
-# Workflow này chạy Agent với Ollama để:
+# Prefer the deterministic path for PRs/pushes:
+#   .github/workflows/student-performance.yml
+#
+# This workflow is the OPTIONAL live Ollama conversation:
 # 1. List datasets
-# 2. Phân tích dataset Student Performance
-# 3. Training với 3 thuật toán: RF, XGBoost, SVR
-# 4. Đánh giá kết quả
+# 2. Analyze Student Performance
+# 3. Train RF / XGBoost / SVR
+# 4. Evaluate results
 #
-# Trigger: manual (workflow_dispatch) hoặc push
+# Trigger: manual only (workflow_dispatch)
 # ══════════════════════════════════════════════════════════
 
-name: "🎓 Agent Training — Student Dataset"
+name: "🎓 Agent Training — Student Dataset (Live Ollama)"
 
 on:
-  # Heavy demo — manual only (CI/E2E cover automated paths)
+  # Heavy live demo — manual only (deterministic CI is student-performance.yml)
   workflow_dispatch:
     inputs:
       models:

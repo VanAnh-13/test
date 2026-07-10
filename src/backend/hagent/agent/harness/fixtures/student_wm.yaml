@@ -1,0 +1,49 @@
+# World-model fixture — UCI Student Performance (regression on G3)
+# Mirrors mock_hautoml_server.STUDENT_DATASET for deterministic CI.
+world_model:
+  user_id: student_ci
+  datasets:
+    ds_student_001:
+      id: ds_student_001
+      name: Student Performance
+      filename: student_performance.csv
+      n_rows: 395
+      n_cols: 33
+      features:
+        - school
+        - sex
+        - age
+        - address
+        - famsize
+        - Pstatus
+        - Medu
+        - Fedu
+        - Mjob
+        - Fjob
+        - reason
+        - guardian
+        - traveltime
+        - studytime
+        - failures
+        - schoolsup
+        - famsup
+        - paid
+        - activities
+        - nursery
+        - higher
+        - internet
+        - romantic
+        - famrel
+        - freetime
+        - goout
+        - Dalc
+        - Walc
+        - health
+        - absences
+        - G1
+        - G2
+        - G3
+      target: G3
+      problem_type: regression
+  jobs: {}
+  active_dataset_id: ds_student_001

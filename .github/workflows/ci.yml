@@ -148,7 +148,7 @@ jobs:
           echo "Mock LLM failed to start"
           exit 1
 
-      - name: Pytest — core + world + phases 2–7
+      - name: Pytest — core + world + phases 2–7 + student
         working-directory: src/backend
         run: |
           set -o pipefail
@@ -164,6 +164,7 @@ jobs:
             tests/test_phase7_eval_hierarchy.py \
             tests/test_hierarchy_adaptive.py \
             tests/test_agent_harness.py \
+            tests/test_student_performance_e2e.py \
             -v \
             --timeout=90 \
             --tb=short \
@@ -182,6 +183,14 @@ jobs:
             --json ci_harness.json \
             --md ci_harness.md \
             2>&1 | tee ci_harness_run.txt
+          # Student Performance pack (regression RF/XGB/SVR)
+          python scripts/run_agent_harness.py \
+            --layer offline,graph \
+            --modes single_shot,plan_executor,campaign,hierarchical \
+            --tags student \
+            --json ci_student_harness.json \
+            --md ci_student_harness.md \
+            2>&1 | tee -a ci_harness_run.txt
           # Also full offline default scenarios (compat)
           python scripts/run_agent_harness.py \
             --layer offline \
@@ -199,6 +208,8 @@ jobs:
             src/backend/ci_pytest.txt
             src/backend/ci_harness.json
             src/backend/ci_harness.md
+            src/backend/ci_student_harness.json
+            src/backend/ci_student_harness.md
             src/backend/ci_eval.json
             src/backend/ci_eval.md
             src/backend/ci_harness_run.txt
