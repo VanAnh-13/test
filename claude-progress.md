@@ -242,6 +242,38 @@
 
 - Kế tiếp: BENCH-001 (tầng benchmark score-vs-jobs/regret + script + CI).
 
+## 2026-07-26 — BENCH-001
+
+### Phạm vi
+
+- `agent/eval/benchmark.py`: DatasetProfile (response surface biết trước →
+  đo regret so optimum), 3 profiles synth_strong/noisy/flat;
+  SimulatedAutoMLEnv cắm qua set_tool_invoker; run_condition với 4 loại
+  điều kiện (wm train online giữa campaigns / no_wm / random / fixed_<algo>);
+  run_benchmark_matrix.
+- `agent/eval/metrics.py`: best_so_far_curve, jobs_to_threshold,
+  normalized_regret, aggregate_curves.
+- `scripts/run_benchmark.py`: CLI ma trận + aggregate + JSON + bảng tóm tắt.
+
+### Verification
+
+- `pytest tests/test_benchmark.py` — PASS (17 passed)
+- `pytest tests -m "not ollama"` — PASS (295 passed, 0 failed)
+- CLI smoke 4 điều kiện × 3 seeds × budget 12: wm 0.8896 > random 0.8790 >
+  fixed_grid 0.6934 (synth_strong).
+
+### Rủi ro còn lại
+
+- Không gian config hiện nhỏ (3 algo × 3 time) nên wm vs no_wm sát nhau ở
+  smoke — thí nghiệm thật cần mở rộng không gian (models subset, budget lớn)
+  để tách biệt rõ.
+- CI benchmark.yml chưa tạo: `.github/**` thuộc protected_paths, cần user
+  phê duyệt trước khi thêm workflow.
+
+### Handoff
+
+- Kế tiếp: USAGE-001 (token/cost tracker) rồi DATA-OPENML-001 (fetch script).
+
 ## Mẫu ghi cho phiên tiếp theo
 
 ```text

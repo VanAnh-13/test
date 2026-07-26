@@ -114,3 +114,50 @@ def judge_success(
     if ok and not reasons:
         reasons.append("ok")
     return ok, reasons
+
+
+# ── Benchmark metrics (sample-efficiency) ────────────────
+
+
+def best_so_far_curve(scores: List[float]) -> List[float]:
+    """Curve best-so-far: phần tử i = max(scores[:i+1])."""
+    curve: List[float] = []
+    best = float("-inf")
+    for s in scores:
+        best = max(best, float(s))
+        curve.append(best)
+    return curve
+
+
+def jobs_to_threshold(curve: List[float], threshold: float) -> Optional[int]:
+    """Số job (1-based) để curve chạm threshold; None nếu không bao giờ chạm."""
+    for i, v in enumerate(curve):
+        if v >= threshold:
+            return i + 1
+    return None
+
+
+def normalized_regret(
+    final_best: float, optimum: float, *, baseline: float = 0.0
+) -> float:
+    """(optimum − best) / (optimum − baseline), clip về [0, +∞); 0 = đạt optimum."""
+    denom = optimum - baseline
+    if denom <= 0:
+        return 0.0
+    return max(0.0, (optimum - final_best) / denom)
+
+
+def aggregate_curves(curves: List[List[float]]) -> Dict[str, List[float]]:
+    """Mean/std theo từng bước qua nhiều seed; cắt về độ dài chung ngắn nhất."""
+    curves = [c for c in curves if c]
+    if not curves:
+        return {"mean": [], "std": [], "n": 0}
+    length = min(len(c) for c in curves)
+    mean: List[float] = []
+    std: List[float] = []
+    for i in range(length):
+        vals = [c[i] for c in curves]
+        m = sum(vals) / len(vals)
+        mean.append(m)
+        std.append((sum((v - m) ** 2 for v in vals) / len(vals)) ** 0.5)
+    return {"mean": mean, "std": std, "n": len(curves)}

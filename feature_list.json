@@ -263,6 +263,42 @@
         "tested_at": "2026-07-26T17:00:00+07:00",
         "notes": "CEM: categorical sampling + elite refit + Laplace smoothing, cache score theo config, UCB-style score μ+βσ; builder: đề xuất wm_cem_* cho slot trống + rank thứ tự submit; test xác nhận tìm đúng argmax (bayesian/600) và exploration_weight đổi lựa chọn."
       }
+    },
+    {
+      "id": "BENCH-001",
+      "title": "Tầng benchmark sample-efficiency: môi trường AutoML mô phỏng + điều kiện wm/no_wm/random/fixed + metrics curve/regret",
+      "status": "done",
+      "acceptance_criteria": [
+        "SimulatedAutoMLEnv cắm qua set_tool_invoker, deterministic theo seed, dùng đúng build_campaign + campaign_step thật.",
+        "run_condition hỗ trợ wm (train outcome model online giữa các campaign) / no_wm / random / fixed_<algo>; tôn trọng budget số job.",
+        "metrics: best_so_far_curve, jobs_to_threshold, normalized_regret, aggregate_curves.",
+        "scripts/run_benchmark.py: CLI chạy ma trận conditions × profiles × seeds, ghi JSON vào benchmarks/ và in bảng tóm tắt.",
+        "tests/test_benchmark.py pass và full suite không hồi quy. CI workflow .github/** KHÔNG sửa (protected — cần user phê duyệt riêng)."
+      ],
+      "allowed_files": [
+        "src/backend/hagent/agent/eval/benchmark.py",
+        "src/backend/hagent/agent/eval/metrics.py",
+        "src/backend/hagent/agent/eval/__init__.py",
+        "src/backend/scripts/run_benchmark.py",
+        "src/backend/tests/test_benchmark.py",
+        "feature_list.json",
+        "claude-progress.md"
+      ],
+      "test_commands": [
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests/test_benchmark.py -q --timeout=180",
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=180",
+        "cd src/backend && .venv/Scripts/python.exe scripts/run_benchmark.py --conditions wm,random --profiles synth_strong --budget 10 --seeds 1 --out benchmarks/smoke.json"
+      ],
+      "verification": {
+        "status": "passed",
+        "commands_run": [
+          "cd src/backend && .venv/Scripts/python.exe -m pytest tests/test_benchmark.py -q --timeout=180 (17 passed)",
+          "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=180 (295 passed)",
+          "cd src/backend && .venv/Scripts/python.exe scripts/run_benchmark.py --conditions wm,no_wm,random,fixed_grid_search --profiles synth_strong --budget 12 --seeds 3 --out benchmarks/smoke.json (exit 0, bảng in đúng: wm 0.8896 / random 0.8790 / fixed_grid 0.6934)"
+        ],
+        "tested_at": "2026-07-26T17:35:00+07:00",
+        "notes": "smoke.json là artifact local (đã exclude khỏi git). CI benchmark.yml chưa tạo vì .github/** protected — cần user phê duyệt riêng."
+      }
     }
   ]
 }
