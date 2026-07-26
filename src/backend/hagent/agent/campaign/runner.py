@@ -313,6 +313,7 @@ async def campaign_step(
                 world_model=wm_snap,
             )
             if variant.job_id:
+                campaign.spent_budget += 1
                 jobs = dict(wm_snap.get("jobs") or {})
                 jobs[variant.job_id] = {
                     "id": variant.job_id,

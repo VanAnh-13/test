@@ -884,6 +884,38 @@
         "tested_at": "2026-07-27T09:20:00+07:00",
         "notes": "Guard 2 chiều: gate bật + model → event chain đầy đủ, harness assertions pass; gate tắt → scenario PHẢI fail (chứng minh guard không pass rỗng). Scenario chạy qua run_graph_scenario = hierarchy leaf, đúng đường production."
       }
+    },
+    {
+      "id": "AGENT-T7-001",
+      "title": "MPC budget trong vòng mở rộng: total_budget/spent_budget vào Campaign schema, plan_batch khi backend cem_mpc_v1",
+      "status": "done",
+      "acceptance_criteria": [
+        "Campaign.total_budget (từ goal constraints max_jobs, fallback n_job_candidates×2, set lúc build) + spent_budget (tăng mỗi lần submit thành công) — cả hai sống qua to_dict/from_dict.",
+        "propose_extension_variants: remaining = total − spent; remaining ≤ 0 → KHÔNG mở rộng (budget cạn); n_extra bị cap bởi remaining; backend cem_mpc_v1 → dùng plan_batch với remaining/total (budget-annealed Thompson thật sự có đất trong prod).",
+        "Backend mặc định vẫn cem_config_v1 (không đổi hành vi prod); test spy xác nhận plan_batch nhận đúng budget khi backend mpc.",
+        "Full suite không hồi quy."
+      ],
+      "allowed_files": [
+        "src/backend/hagent/agent/campaign/schema.py",
+        "src/backend/hagent/agent/campaign/builder.py",
+        "src/backend/hagent/agent/campaign/runner.py",
+        "src/backend/tests/test_campaign_mpc_budget.py",
+        "feature_list.json",
+        "claude-progress.md"
+      ],
+      "test_commands": [
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests/test_campaign_mpc_budget.py -q --timeout=180",
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=300"
+      ],
+      "verification": {
+        "status": "passed",
+        "commands_run": [
+          "cd src/backend && .venv/Scripts/python.exe -m pytest tests/test_campaign_mpc_budget.py -q --timeout=180 (8 passed)",
+          "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=300 (466 passed)"
+        ],
+        "tested_at": "2026-07-27T10:10:00+07:00",
+        "notes": "Spy test xác nhận plan_batch nhận đúng (n=2, remaining=5, total=8) khi backend cem_mpc_v1; budget cạn → không mở rộng; n_extra bị cap bởi remaining; backend mặc định giữ cem_config_v1."
+      }
     }
   ]
 }

@@ -46,6 +46,11 @@ class Campaign:
     # Số vòng mở rộng theo outcome surprise đã dùng — PHẢI là field schema:
     # campaign round-trip to_dict/from_dict giữa các tick của graph
     extension_rounds: int = 0
+    # Ngân sách job của campaign (goal constraints max_jobs, fallback
+    # n_job_candidates×2) — vòng mở rộng không được vượt; spent tăng mỗi
+    # lần submit thành công
+    total_budget: Optional[int] = None
+    spent_budget: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -58,6 +63,8 @@ class Campaign:
             "warm_start_used": list(self.warm_start_used),
             "max_concurrent": self.max_concurrent,
             "extension_rounds": self.extension_rounds,
+            "total_budget": self.total_budget,
+            "spent_budget": self.spent_budget,
         }
 
     @classmethod
@@ -76,6 +83,12 @@ class Campaign:
             warm_start_used=list(data.get("warm_start_used") or []),
             max_concurrent=int(data.get("max_concurrent") or 2),
             extension_rounds=int(data.get("extension_rounds") or 0),
+            total_budget=(
+                int(data["total_budget"])
+                if data.get("total_budget") is not None
+                else None
+            ),
+            spent_budget=int(data.get("spent_budget") or 0),
         )
 
     def pending_submit(self) -> List[CampaignVariant]:

@@ -129,7 +129,14 @@ def propose_extension_variants(
     cfg = dict(_campaign_config())
     if config:
         cfg.update(config)
-    n_extra = max(1, int(n_extra))
+
+    # Tôn trọng ngân sách campaign: cạn budget thì KHÔNG mở rộng
+    total = campaign.total_budget or (len(campaign.variants) * 2)
+    remaining = max(0, total - max(campaign.spent_budget, len(campaign.variants)))
+    if remaining <= 0:
+        return []
+    n_extra = max(1, min(int(n_extra), remaining))
+
     base = _base_train_params(goal, user_id)
     metric = str(base.get("metric") or "").lower()
     higher = metric not in _LOWER_IS_BETTER_METRICS
@@ -144,13 +151,26 @@ def propose_extension_variants(
         for target in (planner, getattr(planner, "_pool_planner", None)):
             if target is not None and hasattr(target, "exploration_weight"):
                 target.exploration_weight = float(exploration_weight)
-        proposals = planner.plan_campaign_configs(
-            base_params=base,
-            dataset_meta=dataset_meta,
-            outcome_model=model,
-            n_return=n_extra * 3,  # dư để sống sót dedup
-            higher_is_better=higher,
-        )
+        if hasattr(planner, "plan_batch"):
+            # cem_mpc_v1: Thompson anneal theo budget còn lại — đây là chỗ
+            # MPC thật sự có đất trong prod (vòng thứ hai của campaign)
+            proposals = planner.plan_batch(
+                base_params=base,
+                dataset_meta=dataset_meta,
+                outcome_model=model,
+                n=n_extra,
+                remaining_budget=remaining,
+                total_budget=total,
+                higher_is_better=higher,
+            )
+        else:
+            proposals = planner.plan_campaign_configs(
+                base_params=base,
+                dataset_meta=dataset_meta,
+                outcome_model=model,
+                n_return=n_extra * 3,  # dư để sống sót dedup
+                higher_is_better=higher,
+            )
 
     if not proposals:
         # Fallback: các thuật toán chưa thử, time budget lớn nhất
@@ -386,6 +406,12 @@ async def build_campaign(
             except Exception:
                 pass
 
+    constraints = goal.get("constraints") if isinstance(goal.get("constraints"), dict) else {}
+    try:
+        total_budget = int(constraints.get("max_jobs") or 0) or n * 2
+    except (TypeError, ValueError):
+        total_budget = n * 2
+
     return Campaign(
         campaign_id=str(uuid.uuid4()),
         goal=dict(goal),
@@ -393,4 +419,5 @@ async def build_campaign(
         status="building",
         warm_start_used=warm_labels,
         max_concurrent=max_conc,
+        total_budget=total_budget,
     )
