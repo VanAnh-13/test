@@ -200,6 +200,25 @@ def _detect_models(text: str) -> list[str]:
     return found
 
 
+# Cụm từ → thuật toán HPO (EN + VN). Cụm dài match trước; tránh từ đơn mơ hồ
+# ("ga", "sh", "random" trần) để không bắt nhầm hội thoại thường.
+_SEARCH_ALGO_PATTERNS: list[tuple[str, str]] = [
+    (r"successive[\s_-]?halving|halving", "successive_halving"),
+    (r"random[\s_-]?search|tìm\s*kiếm\s*ngẫu\s*nhiên", "random_search"),
+    (r"bayes(?:ian)?(?:[\s_-]?(?:search|optimi[sz]ation))?", "bayesian_search"),
+    (r"genetic(?:[\s_-]?algorithm)?|di\s*truyền|tiến\s*hóa", "genetic_algorithm"),
+    (r"grid[\s_-]?search|vét\s*cạn|tìm\s*kiếm\s*lưới", "grid_search"),
+]
+
+
+def _detect_search_algorithm(text: str) -> Optional[str]:
+    lowered = text.lower()
+    for pattern, algo in _SEARCH_ALGO_PATTERNS:
+        if re.search(pattern, lowered, re.IGNORECASE):
+            return algo
+    return None
+
+
 def _detect_time_limit(text: str) -> Optional[int]:
     m = re.search(r"(\d+)\s*(?:giây|seconds?|s)\b", text, re.IGNORECASE)
     if m:
@@ -227,6 +246,10 @@ def parse_goal(
     models = _detect_models(text)
     if models:
         constraints["models"] = models
+
+    search_algo = _detect_search_algorithm(text)
+    if search_algo and "search_algorithm" not in constraints:
+        constraints["search_algorithm"] = search_algo
 
     goal: GoalSpec = {
         "goal_type": goal_type,

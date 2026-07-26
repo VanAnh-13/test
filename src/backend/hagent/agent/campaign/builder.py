@@ -249,6 +249,20 @@ async def build_campaign(
 
     variants: List[CampaignVariant] = []
 
+    # 0) User yêu cầu thuật toán đích danh (goal_parser → constraints) →
+    #    GHIM variant đầu tiên đúng yêu cầu. Không ghim thì vòng diversify
+    #    bên dưới ghi đè search_algorithm và yêu cầu của user vô tác dụng.
+    requested_algo = base.get("search_algorithm")
+    if requested_algo:
+        variants.append(
+            CampaignVariant(
+                variant_id=str(uuid.uuid4()),
+                label="requested_1",
+                params=dict(base),
+                source="requested",
+            )
+        )
+
     # 1) Warm-start variants
     for i, w in enumerate(warm):
         if len(variants) >= n:
