@@ -33,7 +33,7 @@ psutil>=7.2.1
 fastapi-mail
 qrcode[pil]
 
-# DeerFlow-AutoML: LangGraph + Multi-Agent
+# HAgent: LangGraph + Multi-Agent
 typing_extensions>=4.8.0  # NotRequired etc. on Python 3.10 toolkit image
 langgraph>=0.4.0
 langchain>=0.3.0

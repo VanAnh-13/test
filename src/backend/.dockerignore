@@ -1,38 +1,47 @@
-# --- Git & IDE ---
+# ── Secrets — TUYỆT ĐỐI không vào image (repo public, image có thể bị push) ──
+.env
+.env.*
+*.pem
+*.key
+
+# ── Git & IDE ──
 .git
 .gitignore
 .vscode/
 .idea/
 
-# --- Python Cache & Virtual Env ---
+# ── Python cache & virtualenv (nặng nhất context) ──
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
-venv/
 .venv/
+venv/
 env/
-pip-log.txt
+.pytest_cache/
+.ruff_cache/
+htmlcov/
+.coverage
 
-# --- Docker Files ---
+# ── Docker (không cần trong context; compose truyền dockerfile riêng) ──
 Dockerfile
 *.dockerfile
-docker-compose.yml
-*.docker-compose.yml
+docker-compose*.yaml
+docker-compose*.yml
 .dockerignore
 
-# --- Documentation ---
+# ── Không phải runtime: test, bài báo, tài liệu, kết quả thí nghiệm ──
+tests/
+paper/
 README.md
 LICENSE
-
 *.sh
+benchmarks/*.jsonl
+benchmarks/*.json
+
+# ── Data lớn không thuộc image (checkpoint world_model NHỎ thì GIỮ) ──
 assets/end_users
 assets/online_shoppers
 assets/desc.md
-assets/assets/config-data-iris.yaml
 assets/*.csv
-
-__pycache__/
-
-*.dockerfile
-docker-compose.yaml
+data/world_model/warmup_trajectories.jsonl

@@ -1,5 +1,5 @@
 """
-DeerFlow-AutoML — LangGraph StateGraph Definition (Phase 2, SOLID).
+HAgent — LangGraph StateGraph Definition (Phase 2, SOLID).
 
 Dynamic multi-agent graph — đọc YAML config qua AgentRegistry.
 KHÔNG hardcode bất kỳ tên agent, module path, hay tool name nào.
@@ -436,7 +436,7 @@ def get_automl_graph():
     if _compiled_graph is None:
         graph = build_automl_graph()
         _compiled_graph = graph.compile()
-        logger.info("DeerFlow-AutoML graph compiled ✓")
+        logger.info("HAgent graph compiled ✓")
     return _compiled_graph
 
 
@@ -559,7 +559,7 @@ async def run_agent(
         "response": response_text,
         "tool_outputs": list(reversed(tool_outputs)),
         "sources": [],
-        "provider": "deerflow-automl",
+        "provider": "hagent",
         "model": model_name or "multi-agent",
         "route": final_state.get("current_phase", "direct"),
         "plan_status": final_state.get("plan_status"),

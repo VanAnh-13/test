@@ -1,4 +1,4 @@
-# Deploy HAgent (DeerFlow-AutoML + World Model)
+# Deploy HAgent (LangGraph multi-agent + World Model)
 
 Quy trình dựng full stack bằng Docker Compose, bao gồm cả bước bật world
 model (checkpoint) và cơ chế surprise-driven replanning.
@@ -55,8 +55,13 @@ agent:
 
 ## 3. Khởi động stack
 
+**Kiến trúc image (sau lần viết lại 27/7/2026):** MỘT image backend
+`hautoml-toolkit` (build từ `hautoml.toolkit.dockerfile`, python:3.12-slim)
+dùng chung cho toolkit / worker / nano — chỉ khác `command`; bridge có image
+mỏng riêng (`hagent/bridge/Dockerfile`). `worker.dockerfile` và
+`hautoml.nano.dockerfile` đã bỏ — không cần build tay `workers:latest` nữa:
+
 ```bash
-docker build -t workers:latest -f worker.dockerfile .
 docker compose --profile worker up --build -d
 ```
 
@@ -110,5 +115,7 @@ chứa tokens + USD (bảng giá: `hagent.yaml llm.usage_tracking.pricing`).
 - **Log**: mọi service giới hạn json-file 10MB×3.
 - **Kafka worker**: profile `worker`; thêm worker bằng cách nhân bản service
   với `WORKER_INDEX` khác.
-- **Legacy OpenClaw**: chỉ khi `HAGENT_RUNTIME_MODE=openclaw` + profile
-  `openclaw` — mặc định deerflow không cần.
+- **Secret không vào image**: `.dockerignore` chặn `.env*` — key chỉ đi
+  vào container qua `environment:` của compose (đọc từ `.env` lúc `up`).
+  Model `meta-ai` cần `META_AI_API_KEY` trong `.env` (đã passthrough sẵn
+  trong compose).

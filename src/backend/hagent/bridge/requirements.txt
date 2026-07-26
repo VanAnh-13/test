@@ -17,5 +17,9 @@ pymongo>=4.8.0
 # YAML config loader — tất cả cấu hình từ hagent.yaml
 PyYAML>=6.0
 
+# hagent.world (updater/service import qua bridge) lazy-load predictor
+# cần numpy tùy config — thiếu là nổ runtime chứ không nổ lúc build
+numpy>=1.26
+
 # File upload
 python-multipart>=0.0.7

@@ -1,5 +1,5 @@
 """
-DeerFlow-AutoML — E2E Test Script.
+HAgent — E2E Test Script.
 
 Chạy end-to-end test với Ollama model thật:
 - Kiểm tra Ollama model info
@@ -25,7 +25,7 @@ sys.path.insert(0, str(BACKEND))
 
 async def test_e2e():
     print("=" * 60)
-    print("  DeerFlow-AutoML — E2E Test with Real LLM")
+    print("  HAgent — E2E Test with Real LLM")
     print("=" * 60)
     print()
 

@@ -5,13 +5,17 @@ x-common-env: &common-env
   ALGORITHM: ${ALGORITHM:-HS256}
   ACCESS_EXPIRE: ${ACCESS_EXPIRE:-60}
   REFRESH_EXPIRE: ${REFRESH_EXPIRE:-7}
-  HAGENT_HOOKS_TOKEN: ${HAGENT_HOOKS_TOKEN}
   MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
   MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
 
 services:
   hautoml_woker_1:
-    image: ${WORKER_IMAGE:-workers:latest}
+    # Dùng chung image backend với toolkit (cùng requirements.txt) —
+    # build một lần, không drift giữa worker và toolkit
+    image: ${WORKER_IMAGE:-hautoml-toolkit}
+    build:
+      context: .
+      dockerfile: hautoml.toolkit.dockerfile
     container_name: ${WORKER_CONTAINER_NAME:-hautoml-woker-1-testing}
     profiles: ["worker"]
     restart: unless-stopped
@@ -42,18 +46,21 @@ services:
         max-file: "3"
 
   hautoml_nano:
-    image: ${NANO_IMAGE:-hautoml-nano}
+    # Demo Gradio — dùng chung image backend (requirements đã có gradio).
+    # Bỏ network_mode: host (xung đột với ports mapping, không chạy trên
+    # Docker Desktop Windows/Mac) — bridge network + ports là đủ.
+    image: ${NANO_IMAGE:-hautoml-toolkit}
+    build:
+      context: .
+      dockerfile: hautoml.toolkit.dockerfile
     container_name: ${NANO_CONTAINER_NAME:-hautoml_nano_v1_testing}
     profiles: ["nano"]
     restart: unless-stopped
-    network_mode: host
     ports:
       - "${NANO_PORT:-5106}:${NANO_PORT:-5106}"
-    expose:
-      - "${NANO_PORT:-5106}"
     environment:
-      - GRADIO_SERVER_NAME=0.0.0.0
-      - GRADIO_SERVER_PORT=${NANO_PORT:-5106}
+      GRADIO_SERVER_NAME: 0.0.0.0
+      GRADIO_SERVER_PORT: ${NANO_PORT:-5106}
     command: python automl/demo_gradio.py
     logging:
       driver: "json-file"
@@ -72,12 +79,8 @@ services:
       - "${TOOLKIT_HOST_PORT:-5370}:${TOOLKIT_PORT:-8585}"
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    # DeerFlow-AutoML: LangGraph multi-agent via hagent.chat_router on app.py
-    # OpenClaw proxy is optional (profile openclaw / HAGENT_RUNTIME_MODE=openclaw)
-    command: >
-      sh -c "mkdir -p /root/.hagent /app/hagent &&
-             test -f /app/hagent/hagent.yaml || true &&
-             python app.py"
+    # HAgent: LangGraph multi-agent via hagent.chat_router on app.py
+    # (command mặc định = CMD của dockerfile: python app.py — không override)
     environment:
       <<: *common-env
       HOST_BACK_END: 0.0.0.0
@@ -90,13 +93,16 @@ services:
       MINIO_ENDPOINT: minio:9000
       HAUTOML_BASE_URL: http://localhost:${TOOLKIT_PORT:-8585}
       HAGENT_CONFIG: /app/hagent/hagent.yaml
-      HAGENT_RUNTIME_MODE: ${HAGENT_RUNTIME_MODE:-deerflow}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:14b}
       LLM_DEFAULT_MODEL: ${LLM_DEFAULT_MODEL:-ollama-ci}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       CUSTOM_API_KEY: ${CUSTOM_API_KEY:-}
+      # Endpoint OpenAI-compatible của user (model meta-ai trong hagent.yaml)
+      META_AI_BASE_URL: ${META_AI_BASE_URL:-https://api.meta.ai/v1}
+      META_AI_MODEL: ${META_AI_MODEL:-muse-spark-1.1}
+      META_AI_API_KEY: ${META_AI_API_KEY:-}
       SKIP_EMAIL_VERIFICATION: ${SKIP_EMAIL_VERIFICATION:-false}
       LANGCHAIN_TRACING_V2: ${LANGCHAIN_TRACING_V2:-false}
       DO_NOT_TRACK: "1"
@@ -110,7 +116,6 @@ services:
     volumes:
       - .:/app
       - hagent_config:/root/.hagent
-      - toolkit_openclaw_config:/root/.openclaw
     depends_on:
       mongo:
         condition: service_healthy
@@ -232,12 +237,9 @@ services:
       HAGENT_CONFIG: /tmp/hagent.yaml
       MONGODB_CONNECT: mongo:27017
       MONGODB_DB_NAME: ${MONGODB_DB_NAME:-hagent}
-      # DeerFlow default: Bridge → toolkit LangGraph agent-run
-      HAGENT_RUNTIME_MODE: ${HAGENT_RUNTIME_MODE:-deerflow}
+      # Bridge → toolkit LangGraph agent-run
       HAUTOML_BASE_URL: http://toolkit:${TOOLKIT_PORT:-8585}
-      HAGENT_DEERFLOW_URL: http://toolkit:${TOOLKIT_PORT:-8585}/api/v1/chat/agent-run
-      # Legacy OpenClaw (only if HAGENT_RUNTIME_MODE=openclaw)
-      HAGENT_GATEWAY_URL: ${HAGENT_GATEWAY_URL:-http://openclaw_gateway:${OPENCLAW_PROXY_PORT:-18790}}
+      HAGENT_AGENT_RUN_URL: http://toolkit:${TOOLKIT_PORT:-8585}/api/v1/chat/agent-run
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:14b}
       LLM_DEFAULT_MODEL: ${LLM_DEFAULT_MODEL:-ollama-ci}
@@ -259,47 +261,7 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  # Optional legacy OpenClaw stack (docker compose --profile openclaw up)
-  openclaw_gateway:
-    profiles: ["openclaw"]
-    image: ${OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:latest}
-    container_name: ${OPENCLAW_CONTAINER_NAME:-openclaw_gateway_testing}
-    restart: unless-stopped
-    ports:
-      - "${OPENCLAW_HOST_PORT:-5361}:${OPENCLAW_GATEWAY_PORT:-18789}"
-    command: >
-      /bin/sh -c "mkdir -p /home/node/.openclaw/skills/hautoml/scripts &&
-      cp /tmp/hautoml_tools.py /home/node/.openclaw/skills/hautoml/scripts/hautoml_tools.py &&
-      cp /tmp/SKILL.md /home/node/.openclaw/skills/hautoml/SKILL.md &&
-      cp /tmp/tools.yaml /home/node/.openclaw/skills/hautoml/tools.yaml &&
-      rm -f /home/node/.openclaw/workspace/BOOTSTRAP.md &&
-      (while true; do python3 /tmp/proxy.py; echo 'proxy died, restarting in 3s'; sleep 3; done) &
-      exec node dist/index.js gateway --allow-unconfigured"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    volumes:
-      - ./hagent/proxy.py:/tmp/proxy.py:ro
-      - ./hagent/skills/hautoml/scripts/hautoml_tools.py:/tmp/hautoml_tools.py:ro
-      - ./hagent/skills/hautoml/SKILL.md:/tmp/SKILL.md:ro
-      - ./hagent/skills/hautoml/tools.yaml:/tmp/tools.yaml:ro
-      - openclaw_config:/home/node/.openclaw
-      - openclaw_workspace:/home/node/.openclaw/workspace
-      - .:/home/node/.openclaw/workspace/backend
-    environment:
-      HAUTOML_BASE_URL: http://toolkit:${TOOLKIT_PORT:-8585}
-      OPENCLAW_BUNDLED_PLUGINS_DIR: ${OPENCLAW_BUNDLED_PLUGINS_DIR:-/app/extensions}
-    depends_on:
-      - toolkit
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-
 volumes:
   hagent_config:
   hagent_workspace:
   minio_data:
-  openclaw_config:
-  openclaw_workspace:
-  toolkit_openclaw_config:

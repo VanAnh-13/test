@@ -1,5 +1,5 @@
 """
-DeerFlow-AutoML — Multi-provider LLM Configuration.
+HAgent — Multi-provider LLM Configuration.
 
 Supports: OpenAI, Anthropic, Ollama, and any OpenAI-compatible endpoint.
 Configuration is loaded from hagent.yaml via bridge/config.py.

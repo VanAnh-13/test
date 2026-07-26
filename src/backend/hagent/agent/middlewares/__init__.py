@@ -1,5 +1,5 @@
 """
-DeerFlow-AutoML — Middleware Stack (Phase 3).
+HAgent — Middleware Stack (Phase 3).
 
 Pipeline pre/post processing cho agent graph:
 - Pre: World model loading, memory injection, input validation

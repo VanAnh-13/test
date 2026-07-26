@@ -5,7 +5,7 @@ Student Performance — realistic CI/CD end-to-end runner.
 Layers (default: harness + mock-api):
   1. harness   — offline + graph agent harness (tags: student)
   2. mock-api  — Mock HAutoML HTTP flow: list → info → train RF/XGB/SVR → job info
-  3. agent     — optional live DeerFlow agent (needs Ollama / real LLM)
+  3. agent     — optional live HAgent agent (needs Ollama / real LLM)
 
 Usage (from src/backend):
   python scripts/run_student_performance_e2e.py
@@ -391,7 +391,7 @@ def run_mock_api_layer(
 
 
 async def run_agent_layer(*, user_id: str, models: Sequence[str]) -> LayerReport:
-    print("\n═══ Layer: agent (live DeerFlow graph) ═══")
+    print("\n═══ Layer: agent (live HAgent graph) ═══")
     from hagent.agent.graph import run_agent
 
     checks: List[CheckResult] = []

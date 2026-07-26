@@ -1,5 +1,5 @@
 """
-DeerFlow-AutoML — Agent Training Runner.
+HAgent — Agent Training Runner.
 
 Script chạy multi-agent graph với Ollama để training dataset.
 Dùng trong GitHub Actions hoặc local.
@@ -35,7 +35,7 @@ async def run_training(
     from hagent.agent.graph import run_agent
 
     print("=" * 60)
-    print("  DeerFlow-AutoML — Agent Training Runner")
+    print("  HAgent — Agent Training Runner")
     print("=" * 60)
     print(f"\n📨 Message: {message}")
     print(f"👤 User: {user_id}")
@@ -123,7 +123,7 @@ async def run_conversation(user_id: str) -> list[dict]:
 
     results = []
     print("=" * 60)
-    print("  DeerFlow-AutoML — Full Training Conversation")
+    print("  HAgent — Full Training Conversation")
     print("=" * 60)
 
     for i, msg in enumerate(messages, 1):
@@ -181,7 +181,7 @@ async def run_conversation(user_id: str) -> list[dict]:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="DeerFlow-AutoML Agent Training Runner")
+    parser = argparse.ArgumentParser(description="HAgent Agent Training Runner")
     parser.add_argument("--message", "-m", type=str, default=None,
                         help="Single message to send to agent")
     parser.add_argument("--user-id", "-u", type=str, default="ci_user",

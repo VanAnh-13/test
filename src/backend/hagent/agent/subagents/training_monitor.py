@@ -1,5 +1,5 @@
 """
-DeerFlow-AutoML — Training Monitor Sub-agent.
+HAgent — Training Monitor Sub-agent.
 
 Chuyên quản lý training jobs: khởi tạo, theo dõi trạng thái,
 báo cáo kết quả training.

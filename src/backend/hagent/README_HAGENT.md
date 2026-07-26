@@ -1,4 +1,4 @@
-# HAgent — DeerFlow-AutoML Integration
+# HAgent — HAgent Integration
 
 ## Architecture (default)
 
@@ -17,8 +17,7 @@ Chat UI → Bridge (FastAPI :9900)
 
 | Env | Default | Meaning |
 |---|---|---|
-| `HAGENT_RUNTIME_MODE` | `deerflow` | `deerflow` or `openclaw` |
-| `HAGENT_DEERFLOW_URL` | `{HAUTOML}/api/v1/chat/agent-run` | Bridge → toolkit agent |
+| `HAGENT_AGENT_RUN_URL` | `{HAUTOML}/api/v1/chat/agent-run` | Bridge → toolkit agent |
 | `HAGENT_CONFIG` | `hagent/hagent.yaml` | Central YAML |
 | `OLLAMA_BASE_URL` | host gateway | Local LLM |
 
@@ -27,26 +26,22 @@ Chat UI → Bridge (FastAPI :9900)
 From `src/backend`:
 
 ```bash
-# DeerFlow only (recommended)
+# Core stack
 docker compose up --build -d toolkit hagent_bridge mongo kafka minio
 
 # With workers
 docker compose --profile worker up --build -d
-
-# Legacy OpenClaw
-HAGENT_RUNTIME_MODE=openclaw docker compose --profile openclaw --profile worker up --build -d
 ```
 
 Images:
 
-- `hautoml.toolkit.dockerfile` — API + DeerFlow agent code
-- `hagent/bridge/Dockerfile` — Bridge only (HTTP client to toolkit)
+- `hautoml.toolkit.dockerfile` — MỘT image backend dùng chung
+  toolkit / worker / nano (command đặt trong compose)
+- `hagent/bridge/Dockerfile` — Bridge mỏng (HTTP client tới toolkit)
 
-## Skills
+## Tools
 
-- DeerFlow tools: `hagent/agent/tools/automl_tools.py`
-- OpenClaw skill docs/CLI: `hagent/skills/hautoml/`
-  - `SKILL.md`, `tools.yaml`, `scripts/hautoml_tools.py`
+- LangChain tools: `hagent/agent/tools/automl_tools.py` (source of truth)
 
 ## Health
 
@@ -54,7 +49,7 @@ Images:
 - Toolkit: `GET http://localhost:5370/home`
 - Agent invoke (auth): `POST /api/v1/chat/agent-run`
 
-## Deprecated
+## Ghi chú công nghệ
 
-- Toolkit auto-start `hagent/proxy.py` + always-on OpenClaw (now optional profile)
-- Bridge-only OpenClaw gateway as default path
+Kiến trúc multi-agent tham khảo mẫu điều phối agent hiện đại (LangGraph
+harness); toàn bộ mã tích hợp nằm trong `hagent/agent/` của dự án này.

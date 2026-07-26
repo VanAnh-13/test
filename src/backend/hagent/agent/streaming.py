@@ -1,5 +1,5 @@
 """
-DeerFlow-AutoML — SSE Streaming support.
+HAgent — SSE Streaming support.
 
 Provides Server-Sent Events streaming for the chat interface,
 enabling real-time token-by-token responses and tool execution updates.
@@ -25,7 +25,7 @@ async def sse_stream(
     memory_context: str | None = None,
 ) -> AsyncIterator[str]:
     """
-    SSE stream wrapper cho DeerFlow-AutoML agent.
+    SSE stream wrapper cho HAgent agent.
 
     Yields SSE-formatted strings (Phase 5 enriched):
         data: {"type": "route", "agent": "plan_executor"}\n\n

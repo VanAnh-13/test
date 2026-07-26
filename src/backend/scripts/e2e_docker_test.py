@@ -1,10 +1,10 @@
 """
-DeerFlow-AutoML — Full System Docker E2E Test.
+HAgent — Full System Docker E2E Test.
 
 Flow:
   1. Register + login (JWT)
   2. Upload Online Shoppers Intention dataset
-  3. Send train prompt via HAgent Bridge (DeerFlow agent-run)
+  3. Send train prompt via HAgent Bridge (agent-run)
   4. Poll conversation / jobs until training is accepted or jobs exist
   5. Assert ≥1 job for the user
 
@@ -55,7 +55,6 @@ def _agent_response_is_error(msg: str) -> bool:
         "đang gặp lỗi",
         "gặp lỗi khi xử lý",
         "mất kết nối",
-        "lỗi deerflow",
         "lỗi hagent",
         "provider\": \"error",
         "runtime error",
@@ -108,7 +107,7 @@ async def _list_jobs(client: httpx.AsyncClient, token: str, user_id: str) -> lis
 
 async def test_e2e_docker() -> int:
     print("=" * 60)
-    print("  🚀 DeerFlow-AutoML — Full System Docker E2E Test")
+    print("  🚀 HAgent — Full System Docker E2E Test")
     print("=" * 60)
     print(f"  HAutoML Toolkit URL: {BASE_URL}")
     print(f"  HAgent Bridge URL:   {HAGENT_URL}")
@@ -316,7 +315,7 @@ async def test_e2e_docker() -> int:
     if jobs_found:
         print("\n" + "=" * 60)
         print("  ✅ DOCKER FULL SYSTEM E2E TEST PASSED SUCCESSFULLY!")
-        print("     (Training job(s) created via DeerFlow agent path)")
+        print("     (Training job(s) created via HAgent agent path)")
         print("=" * 60)
         return 0
 

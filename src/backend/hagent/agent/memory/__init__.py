@@ -1,5 +1,5 @@
 """
-DeerFlow-AutoML — Memory Storage (Phase 3).
+HAgent — Memory Storage (Phase 3).
 
 Lưu trữ facts (kiến thức rút trích từ conversations).
 Config-driven: backend type + TTL đọc từ YAML.

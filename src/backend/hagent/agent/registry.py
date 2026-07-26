@@ -1,5 +1,5 @@
 """
-DeerFlow-AutoML — Agent & Tool Registries.
+HAgent — Agent & Tool Registries.
 
 Đọc YAML config để discover agents và tools tại runtime.
 KHÔNG hardcode bất kỳ tên agent, module path, hay tool name nào.

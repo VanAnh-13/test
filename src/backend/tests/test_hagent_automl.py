@@ -1,5 +1,5 @@
 """
-Tests cho DeerFlow-AutoML Agent — Chạy với Mock LLM Server.
+Tests cho HAgent Agent — Chạy với Mock LLM Server.
 
 Test categories:
 1. Config loading — hagent.yaml, LLM models, routing

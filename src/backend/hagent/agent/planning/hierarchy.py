@@ -1,5 +1,5 @@
 """
-Hierarchical planning for DeerFlow-AutoML.
+Hierarchical planning for HAgent.
 
 - Decompose high-level goals into ordered subgoals (config templates)
 - Smart-skip subgoals already satisfied by World Model

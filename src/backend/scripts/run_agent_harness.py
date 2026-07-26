@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Agent Harness CLI — offline / graph / api layers for DeerFlow-AutoML HAgent.
+Agent Harness CLI — offline / graph / api layers for HAgent HAgent.
 
 Usage:
   cd src/backend
@@ -26,7 +26,7 @@ if str(BACKEND) not in sys.path:
 async def _main() -> int:
     from hagent.agent.harness import report_markdown, run_harness_suite
 
-    parser = argparse.ArgumentParser(description="DeerFlow-AutoML Agent Harness")
+    parser = argparse.ArgumentParser(description="HAgent Agent Harness")
     parser.add_argument(
         "--layer",
         type=str,

@@ -5,11 +5,6 @@
 # KHÔNG có giá trị nào bị hard-code trong mã nguồn.
 # ══════════════════════════════════════════════════════════
 
-# ── Cổng Gateway ─────────────────────────────────────────
-gateway:
-  host: "0.0.0.0"
-  port: 18789
-
 # ── Dịch vụ Bridge ───────────────────────────────────────
 bridge:
   host: "0.0.0.0"
@@ -36,17 +31,6 @@ auth:
   secret_key: "${SECRET_KEY}"
   algorithm: "HS256"
 
-# ── Hook / Webhook ───────────────────────────────────────
-hooks:
-  enabled: true
-  token: "${HAGENT_HOOKS_TOKEN}"
-  path: "/hooks"
-
-# ── Kỹ năng ──────────────────────────────────────────────
-skills:
-  directories:
-    - "./skills"
-
 # ── Bộ nhớ (Phase 3 — Context Engineering) ───────────────
 memory:
   enabled: true
@@ -70,24 +54,6 @@ middlewares:
 logging:
   level: "info"
   file: "./logs/hagent.log"
-
-# ── [DEPRECATED] Bộ chuyển tiếp HAgent ───────────────────
-# DeerFlow-AutoML dùng LangGraph runtime trực tiếp,
-# không cần proxy/OpenClaw Gateway nữa.
-# Giữ lại cho backward compatibility.
-proxy:
-  soul_path: "./SOUL.md"
-  workspace_dir: "/home/node/.openclaw/workspace"
-  user_context_files:
-    token: "/tmp/hagent_user_token"
-    user_id: "/tmp/hagent_user_id"
-  error_messages:
-    model_memory: "HAgent đã kết nối tới provider AI, nhưng model hiện tại không load được vì thiếu RAM. Model cần {required}, hệ thống hiện còn {available}. Hãy kiểm tra lại provider/model đang cấu hình rồi thử lại."
-    model_endpoint: "HAgent đã gọi provider AI nhưng endpoint trả về trang lỗi thay vì API response. Hãy kiểm tra lại cấu hình provider/model đang sử dụng."
-    gateway_connection: "HAgent Gateway đang đóng kết nối bất thường. Vui lòng thử lại sau ít phút; nếu vẫn lỗi, kiểm tra log của toolkit/openclaw_gateway."
-    timeout: "HAgent xử lý quá lâu và bị timeout. Vui lòng thử lại hoặc dùng yêu cầu ngắn hơn."
-    invalid_response: "HAgent chưa trả về phản hồi hợp lệ. Vui lòng thử lại sau."
-    generic: "HAgent đang gặp lỗi khi xử lý yêu cầu. Chi tiết đã được ghi trong log backend."
 
 # ── World State (legacy keys; world_model.state preferred) ─
 world_state:
@@ -250,7 +216,7 @@ world_model:
     - "predict_batch"
 
 # ══════════════════════════════════════════════════════════
-# DeerFlow-AutoML — Cấu hình Multi-Agent
+# HAgent — Cấu hình Multi-Agent
 # ══════════════════════════════════════════════════════════
 
 # ── LLM Providers ────────────────────────────────────────
@@ -570,7 +536,6 @@ agent:
 error_messages:
   model_memory: "HAgent đã kết nối tới provider AI, nhưng model hiện tại không load được vì thiếu RAM. Model cần {required}, hệ thống hiện còn {available}. Hãy kiểm tra lại provider/model đang cấu hình rồi thử lại."
   model_endpoint: "HAgent đã gọi provider AI nhưng endpoint trả về trang lỗi thay vì API response. Hãy kiểm tra lại cấu hình provider/model đang sử dụng."
-  gateway_connection: "HAgent Gateway đang đóng kết nối bất thường. Vui lòng thử lại sau ít phút; nếu vẫn lỗi, kiểm tra log."
   timeout: "HAgent xử lý quá lâu và bị timeout. Vui lòng thử lại hoặc dùng yêu cầu ngắn hơn."
   invalid_response: "HAgent chưa trả về phản hồi hợp lệ. Vui lòng thử lại sau."
   generic: "HAgent đang gặp lỗi khi xử lý yêu cầu. Chi tiết đã được ghi trong log backend."

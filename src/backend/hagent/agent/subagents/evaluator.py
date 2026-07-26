@@ -1,5 +1,5 @@
 """
-DeerFlow-AutoML — Evaluator Sub-agent.
+HAgent — Evaluator Sub-agent.
 
 Chuyên đánh giá, so sánh kết quả training, và đề xuất model tốt nhất.
 

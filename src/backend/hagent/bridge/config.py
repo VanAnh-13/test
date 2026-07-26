@@ -100,15 +100,6 @@ def get_bridge_config() -> dict:
     return bridge
 
 
-def get_gateway_config() -> dict:
-    """Lấy cấu hình HAgent Gateway."""
-    cfg = load_config()
-    gw = cfg.get("gateway", {})
-    gw["host"] = os.getenv("GATEWAY_HOST", gw.get("host", "0.0.0.0"))
-    gw["port"] = int(os.getenv("GATEWAY_PORT", gw.get("port", 18789)))
-    return gw
-
-
 def get_hautoml_config() -> dict:
     """Lấy cấu hình HAutoML backend."""
     cfg = load_config()
@@ -136,14 +127,6 @@ def get_auth_config() -> dict:
     a["secret_key"] = os.getenv("SECRET_KEY", a.get("secret_key", ""))
     a["algorithm"] = os.getenv("ALGORITHM", a.get("algorithm", "HS256"))
     return a
-
-
-def get_hooks_config() -> dict:
-    """Lấy cấu hình webhook hooks."""
-    cfg = load_config()
-    h = cfg.get("hooks", {})
-    h["token"] = os.getenv("HAGENT_HOOKS_TOKEN", h.get("token", ""))
-    return h
 
 
 def get_world_state_config() -> dict:
@@ -271,7 +254,7 @@ def get_eval_config() -> dict:
     return e
 
 
-# ── DeerFlow-AutoML config accessors ────────────────────
+# ── HAgent config accessors ────────────────────
 
 
 def get_llm_config() -> dict:
@@ -348,15 +331,9 @@ def get_cache_config() -> dict:
 
 
 def get_error_messages() -> dict[str, str]:
-    """Lấy cấu hình thông báo lỗi."""
+    """Lấy cấu hình thông báo lỗi (section error_messages top-level)."""
     cfg = load_config()
-    # Gộp từ cả proxy.error_messages (legacy) và error_messages (mới)
-    proxy = cfg.get("proxy", {}) or {}
-    legacy = proxy.get("error_messages", {}) or {}
-    new = cfg.get("error_messages", {}) or {}
-    # Mới ghi đè cũ
-    merged = {**legacy, **new}
-    return merged
+    return dict(cfg.get("error_messages", {}) or {})
 
 
 def load_prompt_file(relative_path: str | None = None) -> str:

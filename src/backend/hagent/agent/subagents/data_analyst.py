@@ -1,5 +1,5 @@
 """
-DeerFlow-AutoML — Data Analyst Sub-agent.
+HAgent — Data Analyst Sub-agent.
 
 Chuyên phân tích datasets: liệt kê, xem thông tin chi tiết,
 đề xuất preprocessing, feature engineering.

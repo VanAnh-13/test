@@ -31,7 +31,7 @@ except ImportError:  # pragma: no cover — unit tests without langgraph
         return list(left) + list(right)
 
 
-# ── Sub-state fragments (kiểu DeerFlow) ─────────────────
+# ── Sub-state fragments (tham khảo pattern DeerFlow) ─────
 
 
 class DatasetContext(TypedDict, total=False):
@@ -167,7 +167,7 @@ class AutoMLState(TypedDict):
     hierarchy_train_active: NotRequired[bool | None]
     """True while train-leaf campaign is still monitoring (alias of _hierarchy_train_active)."""
 
-    # ── Memory context (DeerFlow memory module) ──────────
+    # ── Memory context (tham khảo DeerFlow memory) ───────
     memory_context: NotRequired[str | None]
     """Long-term memory đã inject vào prompt."""
 

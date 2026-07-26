@@ -1,5 +1,5 @@
 """
-DeerFlow-AutoML — Tool Result Cache (Phase 3).
+HAgent — Tool Result Cache (Phase 3).
 
 TTL-based in-memory cache cho tool results.
 Config đọc từ YAML agent.cache section.

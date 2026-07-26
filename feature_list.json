@@ -34,7 +34,7 @@
       "**/docker-compose*.yaml"
     ]
   },
-  "current_task_id": null,
+  "current_task_id": "MATRIX-META-001",
   "features": [
     {
       "id": "HARNESS-001",
@@ -1106,6 +1106,218 @@
         ],
         "tested_at": "2026-07-27T14:30:00+07:00",
         "notes": ".env protected — user cung cấp key trực tiếp để cấu hình = phê duyệt; key chỉ trong .env (ignored), hagent.yaml chỉ tham chiếu ${META_AI_API_KEY}. GET /v1/models của endpoint chỉ có đúng 1 model: muse-spark-1.1."
+      }
+    },
+    {
+      "id": "MATRIX-META-001",
+      "title": "Full ma trận thí nghiệm A/B/C × 6 datasets × meta-ai × 3 seeds (user chỉ định: meta test full, qwen user tự test)",
+      "status": "in_progress",
+      "acceptance_criteria": [
+        "Warmup: scripts/generate_warmup_trajectories.py chạy search sklearn THẬT trên dataset synthetic TÁCH BIỆT hoàn toàn 6 bộ eval (chống leakage — checkpoint chưa từng thấy iris/wine/...); meta tính bằng đúng meta_features_from_frame (train/serve consistency); artifact JSONL versionable.",
+        "Checkpoint v2 (head + ensemble) train từ warmup JSONL qua scripts/train_outcome_model.py; SHA256 ghi vào progress log; vocab 5 thuật toán từ hagent.yaml, KHÔNG đổi vocab (đóng băng).",
+        "agent_matrix_config.yaml models: [meta-ai]; --dry-run đủ 54 ô; hiệu chuẩn ≥1 ô A và ≥1 ô B thật (ô B phải có checkpoint_sha non-null và variant_sources chứa nguồn wm).",
+        "Adversarial pre-flight review cấu hình + điều kiện + generator TRƯỚC khi chạy full — phát hiện non-minor phải xử lý xong (bài học liêm chính hpo benchmark).",
+        "Full run 54 ô resumable ra benchmarks/agent_matrix_results.jsonl; mỗi dòng đủ route/campaign/events/tokens/checkpoint_sha/git_sha; make_paper_tables.py sinh bảng từ dữ liệu thật."
+      ],
+      "allowed_files": [
+        "src/backend/scripts/generate_warmup_trajectories.py",
+        "src/backend/scripts/run_experiment_matrix.py",
+        "src/backend/benchmarks/agent_matrix_config.yaml",
+        "src/backend/data/world_model/warmup_trajectories.jsonl",
+        "src/backend/data/world_model/outcome_head_v2.npz",
+        "src/backend/data/world_model/outcome_ensemble_v2/manifest.json",
+        "src/backend/benchmarks/agent_matrix_results.jsonl",
+        "src/backend/tests/test_warmup_trajectories.py",
+        "feature_list.json",
+        "claude-progress.md"
+      ],
+      "test_commands": [
+        "cd src/backend && .venv/Scripts/python.exe scripts/generate_warmup_trajectories.py --dry-run",
+        "cd src/backend && .venv/Scripts/python.exe scripts/train_outcome_model.py --source jsonl --jsonl data/world_model/warmup_trajectories.jsonl --dry-run",
+        "cd src/backend && .venv/Scripts/python.exe scripts/run_experiment_matrix.py --dry-run",
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=300"
+      ],
+      "verification": {
+        "status": "pending",
+        "commands_run": [],
+        "tested_at": null,
+        "notes": "run_experiment_matrix.py trong allowed_files CHỈ để sửa lỗi pre-flight phát hiện (nếu có), không đổi thiết kế điều kiện. TẠM DỪNG thao tác chính (warmup generator vẫn chạy nền) — user chen yêu cầu DOCKER-BACKEND-002; quay lại ngay khi docker xong. Checkpoint ensemble gồm nhiều member_*.npz trong outcome_ensemble_v2/ — whitelist đại diện bằng manifest.json, member sinh máy cùng SHA ghi ở progress log."
+      }
+    },
+    {
+      "id": "DOCKER-BACKEND-002",
+      "title": "Viết lại Docker phía backend (user yêu cầu trực tiếp — compose protected được phê duyệt theo yêu cầu này)",
+      "status": "done",
+      "acceptance_criteria": [
+        "Khôi phục + viết lại 3 dockerfile mất trong sự cố Drive (hautoml.toolkit.dockerfile, worker, nano) theo bản gốc commit 2ae2739 nhưng sửa các lỗi: toolkit bỏ Node/openclaw (đã có container openclaw riêng), layer caching đúng thứ tự (requirements trước COPY code), python:3.12-slim khớp môi trường 3.12.13 đang chạy, libgl cho opencv trên slim.",
+        "hagent/bridge/Dockerfile: thêm numpy (predictor lazy-import — WorldModelService có thể dựng predictor cần numpy lúc runtime).",
+        "docker-compose.yaml: worker/nano thêm section build (hiện image không thể tự build); toolkit truyền META_AI_* env; dọn command toolkit (chuỗi test -f || true && vô nghĩa); nano bỏ network_mode host xung đột ports.",
+        ".dockerignore viết lại: loại .venv, tests, paper, __pycache__, kết quả benchmark — image gọn.",
+        "Verification THẬT: docker compose build sạch; compose up mongo+kafka+minio+toolkit+bridge tất cả healthy; health endpoint toolkit /home và bridge /api/v1/chat/health trả 200; compose down sạch."
+      ],
+      "allowed_files": [
+        "src/backend/docker-compose.yaml",
+        "src/backend/hautoml.toolkit.dockerfile",
+        "src/backend/worker.dockerfile",
+        "src/backend/hautoml.nano.dockerfile",
+        "src/backend/hagent/bridge/Dockerfile",
+        "src/backend/hagent/bridge/requirements.txt",
+        "src/backend/.dockerignore",
+        "docs/deploy.md",
+        "feature_list.json",
+        "claude-progress.md"
+      ],
+      "test_commands": [
+        "cd src/backend && docker compose config --quiet",
+        "cd src/backend && docker compose build",
+        "cd src/backend && docker compose up -d mongo kafka minio toolkit hagent_bridge && docker compose ps",
+        "cd src/backend && docker compose down"
+      ],
+      "verification": {
+        "status": "passed",
+        "commands_run": [
+          "docker compose config --quiet (3 profiles) - exit 0",
+          "docker compose build toolkit hagent_bridge - exit 0 (hautoml-toolkit + hagent-bridge 361MB)",
+          "docker compose up -d mongo kafka minio toolkit hagent_bridge - CA 5 healthy; curl toolkit /home = 200; bridge /api/v1/chat/health connected:true; compose down sach",
+          "pytest -m 'not ollama' - 514 passed",
+          "docker compose build toolkit hagent_bridge — exit 0 (image hautoml-toolkit + hagent-bridge 361MB)",
+          "docker compose config --quiet với đủ 3 profiles — exit 0",
+          "Smoke up: mongo/kafka/minio/toolkit/hagent_bridge — CẢ 5 healthy; curl toolkit /home = 200; bridge /api/v1/chat/health connected:true hautoml_connected:true; compose down sạch",
+          ".dockerignore chặn .env* (lỗ bảo mật cũ: COPY . . từng có thể bake key vào image)"
+        ],
+        "tested_at": "2026-07-27T01:10:00+07:00",
+        "notes": "docker-compose.yaml protected — user yêu cầu trực tiếp 'viết lại docker phía backend' = phê duyệt. Điều chỉnh so với kế hoạch ban đầu: 3 dockerfile lowercase VẪN TỒN TẠI (glob Dockerfile* không khớp — chẩn đoán 'mất file' ban đầu sai), nên đây là viết lại thật thay vì khôi phục. worker.dockerfile + hautoml.nano.dockerfile bị XÓA (hợp nhất về 1 image). bridge/requirements.txt thêm numpy (file **/requirements.txt protected — thay đổi thuộc phạm vi 'viết lại docker' user yêu cầu, chỉ THÊM dep, ghi rõ ở đây)."
+      }
+    },
+    {
+      "id": "OPENCLAW-REMOVE-001",
+      "title": "Gỡ toàn bộ OpenClaw khỏi backend (user yêu cầu trực tiếp — phê duyệt cho compose + app.py comment-only)",
+      "status": "done",
+      "acceptance_criteria": [
+        "Xóa file chỉ phục vụ openclaw: hagent/proxy.py, hagent/SOUL.md (chỉ proxy đọc), hagent/skills/ (chỉ compose mount vào container openclaw, không python consumer nào đọc — đã grep xác nhận).",
+        "docker-compose.yaml: xóa service openclaw_gateway, 3 volume openclaw_*/toolkit_openclaw_config, mount toolkit_openclaw_config của toolkit, HAGENT_RUNTIME_MODE + HAGENT_GATEWAY_URL + HAGENT_HOOKS_TOKEN (hooks chỉ openclaw dùng — đã grep xác nhận consumer duy nhất là _call_openclaw_gateway).",
+        "bridge: xóa _call_openclaw_gateway + nhánh mode trong _call_hagent_gateway + nhánh mode health_check; config.py xóa get_gateway_config/get_hooks_config; hagent.yaml xóa section gateway/hooks/skills/proxy; bridge Dockerfile bỏ ENV HAGENT_RUNTIME_MODE.",
+        "Env examples + docs (deploy.md, hagent-explanation.md, AGENTS.md hagent, README_HAGENT.md) sạch openclaw; app.py + chat_router.py chỉ sửa COMMENT nhắc openclaw (không đổi hành vi endpoint).",
+        "grep -ri openclaw trên cây backend (trừ .venv/__pycache__) = 0 hit; ledger lịch sử (feature_list/claude-progress entry cũ) GIỮ NGUYÊN — không viết lại lịch sử.",
+        "Full suite xanh + docker compose config --quiet + build + up smoke healthy (gộp verify với DOCKER-BACKEND-002)."
+      ],
+      "allowed_files": [
+        "src/backend/docker-compose.yaml",
+        "src/backend/app.py",
+        "src/backend/hagent/bridge/app.py",
+        "src/backend/hagent/bridge/config.py",
+        "src/backend/hagent/bridge/Dockerfile",
+        "src/backend/hagent/hagent.yaml",
+        "src/backend/hagent/chat_router.py",
+        "src/backend/hagent/proxy.py",
+        "src/backend/hagent/SOUL.md",
+        "src/backend/hagent/skills/hautoml/SKILL.md",
+        "src/backend/hagent/AGENTS.md",
+        "src/backend/hagent/README_HAGENT.md",
+        "src/backend/docs/hagent-explanation.md",
+        "src/backend/.env.example",
+        "src/backend/deploy.llm.env.example",
+        "src/backend/hautoml.toolkit.dockerfile",
+        "docs/deploy.md",
+        "feature_list.json",
+        "claude-progress.md",
+        "src/backend/hagent/skills/hautoml/tools.yaml",
+        "src/backend/hagent/skills/hautoml/scripts/hautoml_tools.py"
+      ],
+      "test_commands": [
+        "cd src/backend && grep -ri openclaw --exclude-dir=.venv --exclude-dir=__pycache__ . ; test $? -eq 1",
+        "cd src/backend && docker compose config --quiet",
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=300"
+      ],
+      "verification": {
+        "status": "passed",
+        "commands_run": [
+          "grep -ri openclaw (tru .venv/__pycache__/.pytest_cache) - exit 1 (0 hit)",
+          "pytest -m 'not ollama' - 514 passed",
+          "Smoke stack 5 container healthy sau khi go (gop verify voi DOCKER-BACKEND-002)",
+          "grep -ri openclaw (trừ .venv/__pycache__/.pytest_cache) — exit 1 (0 hit)",
+          "pytest -m 'not ollama' — 514 passed",
+          "Smoke stack 5 container healthy sau khi gỡ (gộp verify với DOCKER-BACKEND-002)"
+        ],
+        "tested_at": "2026-07-27T01:10:00+07:00",
+        "notes": "app.py protected — chỉ sửa comment/docstring nhắc OpenClaw, không đổi hành vi; phê duyệt = yêu cầu trực tiếp 'gỡ toàn bộ mọi thứ liên quan đến openclaw'. Đã xóa: proxy.py, SOUL.md, skills/ (git rm); gateway/hooks/skills/proxy section trong hagent.yaml; get_gateway_config/get_hooks_config; HAGENT_HOOKS_TOKEN mọi nơi; error_messages chuyển về đúng section top-level (phát hiện + sửa key trùng yaml)."
+      }
+    },
+    {
+      "id": "DEERFLOW-BRAND-001",
+      "title": "Bỏ thương hiệu DeerFlow — hệ thống là HAgent, chỉ ghi nhận 'dựa trên công nghệ' (user: 'Không nói là DeerFlow, mà chỉ dựa trên công nghệ của họ, tích hợp vào hệ thống')",
+      "status": "done",
+      "acceptance_criteria": [
+        "Chức năng: provider trong response 'deerflow-automl' → 'hagent'; env HAGENT_DEERFLOW_URL → HAGENT_AGENT_RUN_URL (bridge + compose); bỏ DEERFLOW_BASE_URL fallback; hàm _call_deerflow_runtime → _call_agent_runtime; log/error string 'DeerFlow runtime' → 'HAgent runtime'; mock owned_by → 'hagent-ci'; e2e marker 'lỗi deerflow' bỏ.",
+        "Branding: mọi docstring/comment/label 'DeerFlow-AutoML — X' → 'HAgent — X' trên cây hagent/ + dockerfiles + compose + docs + env examples.",
+        "GIỮ attribution đúng yêu cầu user: dòng 'built on LangGraph harness inspired by DeerFlow 2.0 (ByteDance)' trong hagent/agent/__init__.py và các dòng 'Reference: deerflow/...' (tham chiếu nguồn công nghệ) — không phải branding.",
+        "grep: không còn 'DeerFlow-AutoML' / 'deerflow-automl' / 'DeerFlow runtime' / HAGENT_DEERFLOW_URL / DEERFLOW_BASE_URL ngoài ledger lịch sử; full suite xanh."
+      ],
+      "allowed_files": [
+        "claude-progress.md",
+        "docs/deploy.md",
+        "feature_list.json",
+        "src/backend/.env.example",
+        "src/backend/deploy.llm.env.example",
+        "src/backend/docker-compose.yaml",
+        "src/backend/docs/hagent-explanation.md",
+        "src/backend/docs/world_model.md",
+        "src/backend/hagent/AGENTS.md",
+        "src/backend/hagent/README_HAGENT.md",
+        "src/backend/hagent/SOUL.md",
+        "src/backend/hagent/agent/__init__.py",
+        "src/backend/hagent/agent/cache.py",
+        "src/backend/hagent/agent/coordinator.py",
+        "src/backend/hagent/agent/eval/runner.py",
+        "src/backend/hagent/agent/graph.py",
+        "src/backend/hagent/agent/llm_config.py",
+        "src/backend/hagent/agent/memory/__init__.py",
+        "src/backend/hagent/agent/memory/extractor.py",
+        "src/backend/hagent/agent/memory/injection.py",
+        "src/backend/hagent/agent/middlewares/__init__.py",
+        "src/backend/hagent/agent/planning/hierarchy.py",
+        "src/backend/hagent/agent/registry.py",
+        "src/backend/hagent/agent/state.py",
+        "src/backend/hagent/agent/streaming.py",
+        "src/backend/hagent/agent/subagents/__init__.py",
+        "src/backend/hagent/agent/subagents/data_analyst.py",
+        "src/backend/hagent/agent/subagents/evaluator.py",
+        "src/backend/hagent/agent/subagents/model_selector.py",
+        "src/backend/hagent/agent/subagents/training_monitor.py",
+        "src/backend/hagent/agent/tools/__init__.py",
+        "src/backend/hagent/agent/tools/automl_tools.py",
+        "src/backend/hagent/bridge/Dockerfile",
+        "src/backend/hagent/bridge/app.py",
+        "src/backend/hagent/bridge/config.py",
+        "src/backend/hagent/bridge/requirements.txt",
+        "src/backend/hagent/chat_router.py",
+        "src/backend/hagent/hagent.yaml",
+        "src/backend/hagent/prompts/coordinator.md",
+        "src/backend/hagent/proxy.py",
+        "src/backend/hagent/skills/hautoml/SKILL.md",
+        "src/backend/hagent/skills/hautoml/scripts/hautoml_tools.py",
+        "src/backend/hagent/skills/hautoml/tools.yaml",
+        "src/backend/hautoml.toolkit.dockerfile",
+        "src/backend/scripts/e2e_docker_test.py",
+        "src/backend/tests/mock_llm_server.py"
+      ],
+      "test_commands": [
+        "cd src/backend && grep -rn \"DeerFlow-AutoML\\|deerflow-automl\\|HAGENT_DEERFLOW_URL\\|DEERFLOW_BASE_URL\" --exclude-dir=.venv --exclude-dir=__pycache__ --exclude-dir=.pytest_cache . ; test $? -eq 1",
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=300"
+      ],
+      "verification": {
+        "status": "passed",
+        "commands_run": [
+          "grep DeerFlow-AutoML|deerflow-automl|HAGENT_DEERFLOW_URL|DEERFLOW_BASE_URL|HAGENT_RUNTIME_MODE|HAGENT_HOOKS_TOKEN - exit 1 (0 hit)",
+          "pytest -m 'not ollama' - 514 passed; bridge health live tra active_provider=hagent",
+          "git mv tests/test_deerflow_automl.py tests/test_hagent_automl.py (ten file cung la branding)",
+          "grep DeerFlow-AutoML|deerflow-automl|HAGENT_DEERFLOW_URL|DEERFLOW_BASE_URL|HAGENT_RUNTIME_MODE|HAGENT_HOOKS_TOKEN — exit 1 (0 hit)",
+          "provider response = 'hagent' (graph.py + bridge + chat_router); env đổi tên HAGENT_AGENT_RUN_URL",
+          "pytest 514 passed; bridge health live trả active_provider=hagent",
+          "Bắt + sửa bug sed: xóa dòng ENV cuối để lại backslash nối ENV vào RUN trong toolkit dockerfile"
+        ],
+        "tested_at": "2026-07-27T01:10:00+07:00",
+        "notes": "Gộp verify build/up smoke với DOCKER-BACKEND-002 + OPENCLAW-REMOVE-001. requirements.txt (protected) chỉ đổi 1 dòng COMMENT branding. Attribution GIỮ đúng yêu cầu: 'inspired by DeerFlow 2.0 (ByteDance)' + các dòng Reference/Tham chiếu deerflow (~10 dòng)."
       }
     }
   ]

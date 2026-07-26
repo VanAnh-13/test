@@ -218,7 +218,7 @@ async def list_models():
                 "id": "mock-model",
                 "object": "model",
                 "created": int(time.time()),
-                "owned_by": "deerflow-automl-ci",
+                "owned_by": "hagent-ci",
             }
         ],
     }

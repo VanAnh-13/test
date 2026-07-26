@@ -1,5 +1,5 @@
 """
-DeerFlow-AutoML — Model Selector Sub-agent.
+HAgent — Model Selector Sub-agent.
 
 Chuyên đề xuất thuật toán ML phù hợp dựa trên dataset context,
 problem type, và requirements của người dùng.

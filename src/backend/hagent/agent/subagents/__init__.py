@@ -1,5 +1,5 @@
 """
-DeerFlow-AutoML — Sub-agent Base Class.
+HAgent — Sub-agent Base Class.
 
 Cung cấp pattern chung cho tất cả sub-agents:
 - Load system prompt từ file (config-driven, không hardcode path)
@@ -50,7 +50,7 @@ def _default_prompts_dir() -> Path:
 
 class SubAgent(abc.ABC):
     """
-    Abstract base class cho DeerFlow-AutoML sub-agents.
+    Abstract base class cho HAgent sub-agents.
 
     Mỗi sub-agent khai báo:
     - name (property): Tên agent (dùng cho routing)

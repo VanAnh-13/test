@@ -86,7 +86,7 @@ async def lifespan(app: FastAPI):
         app.state.monitor_task = None
         app.state.kafka_available = False
 
-    # Tạo index cho OpenClaw chat
+    # Tạo index cho chat store
     try:
         await chat_store.ensure_indexes(app.state.db)
         logger.info("Đã tạo chat indexes thành công")
@@ -481,13 +481,13 @@ async def api_activate_model(job_id, activate=0, db: AsyncDatabase = Depends(get
     return await update_activate_model(job_id, db, activate)
 
 
-# ─── OpenClaw: Endpoint danh sách thuật toán ML ─────────
+# ─── Endpoint danh sách thuật toán ML ───────────────────
 
 @app.get("/api/v1/available-models/{problem_type}")
 async def get_available_models(problem_type: str):
     """
     Trả về danh sách thuật toán ML khả dụng theo loại bài toán.
-    Dùng bởi OpenClaw để hiển thị cho người dùng.
+    Dùng bởi HAgent/frontend để hiển thị cho người dùng.
 
     Args:
         problem_type: "classification" hoặc "regression"

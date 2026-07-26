@@ -1,5 +1,5 @@
 """
-DeerFlow-AutoML Agent Runtime
+HAgent Agent Runtime
 
 Multi-agent orchestration for Automated Machine Learning,
 built on LangGraph harness inspired by DeerFlow 2.0 (ByteDance).

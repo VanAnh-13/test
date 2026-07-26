@@ -1,5 +1,5 @@
 """
-DeerFlow-AutoML — Coordinator (Lead Agent) — Phase 2, SOLID.
+HAgent — Coordinator (Lead Agent) — Phase 2, SOLID.
 
 Coordinator quyết định routing hoặc trả lời trực tiếp.
 Tất cả agent names đọc từ AgentRegistry (YAML config).

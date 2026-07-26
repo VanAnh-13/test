@@ -459,7 +459,7 @@ async def run_eval_suite(
 
 def report_markdown(report: Dict[str, Any]) -> str:
     lines = [
-        "# DeerFlow-AutoML Eval Report (Phase 7)",
+        "# HAgent Eval Report (Phase 7)",
         "",
         f"Scenarios: {report.get('n_scenarios')}",
         f"Modes: {', '.join(report.get('modes') or [])}",

@@ -1,5 +1,5 @@
 """
-DeerFlow-AutoML Tools — HAutoML API wrappers as LangChain Tools.
+HAgent Tools — HAutoML API wrappers as LangChain Tools.
 
 Replaces the old CLI-based hautoml_tools.py with proper async LangChain
 tools that call the HAutoML REST API directly.

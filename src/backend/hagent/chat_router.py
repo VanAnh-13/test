@@ -1,8 +1,8 @@
 """
-HAgent — Chat Router tích hợp DeerFlow-AutoML
+HAgent — Chat Router tích hợp HAgent
 
 Các endpoint chat mount trực tiếp vào FastAPI app chính (app.py).
-Sử dụng LangGraph agent runtime thay vì OpenClaw Gateway.
+Sử dụng LangGraph agent runtime — runtime LangGraph duy nhất.
 Hỗ trợ cả synchronous và SSE streaming responses.
 Lưu lịch sử chat vào MongoDB database AutoML.
 """
@@ -119,7 +119,7 @@ async def _load_world_model(db: AsyncDatabase, user_id: str) -> dict | None:
         return None
 
 
-# ─── Gọi DeerFlow-AutoML Agent ────────────────────────────
+# ─── Gọi HAgent Agent ────────────────────────────
 
 
 async def _call_agent(
@@ -132,7 +132,7 @@ async def _call_agent(
     db_name: str | None = None,
     model_name: str | None = None,
 ) -> dict:
-    """Gọi LangGraph agent runtime — thay thế OpenClaw Gateway."""
+    """Gọi LangGraph agent runtime — runtime LangGraph."""
     error_messages = get_error_messages()
 
     # Tên model sai → 400 kèm danh sách hợp lệ, KHÔNG âm thầm dùng default
@@ -163,7 +163,7 @@ async def _call_agent(
             "sources": result.get("sources", []),
             "suggestions": [],
             "tool_outputs": result.get("tool_outputs", []),
-            "provider": result.get("provider", "deerflow-automl"),
+            "provider": result.get("provider", "hagent"),
             "model": result.get("model", ""),
             "plan_status": result.get("plan_status"),
             "selected_plan": result.get("selected_plan"),
@@ -217,7 +217,7 @@ async def agent_run(
     current_user: dict = Depends(get_current_user),
 ):
     """
-    Internal DeerFlow invoke for HAgent Bridge.
+    Internal agent-runtime invoke for HAgent Bridge.
 
     Runs LangGraph multi-agent only — does NOT write conversation history
     (Bridge owns conversation store). Use this from docker bridge service.
@@ -306,7 +306,7 @@ async def agent_run(
         sources=result.get("sources", []),
         suggestions=result.get("suggestions", []),
         tool_outputs=result.get("tool_outputs", []),
-        provider=result.get("provider", "deerflow-automl"),
+        provider=result.get("provider", "hagent"),
         model=result.get("model", "multi-agent"),
         plan_status=result.get("plan_status"),
         selected_plan=result.get("selected_plan"),
@@ -343,7 +343,7 @@ async def chat(
     client = getattr(db, "client", None)
     db_name = getattr(db, "name", None)
 
-    # Gọi DeerFlow-AutoML Agent
+    # Gọi HAgent Agent
     result = await _call_agent(
         message=req.message,
         user_token=user_token,
@@ -507,7 +507,7 @@ async def chat_with_file(
 
 @router.get("/health")
 async def health_check():
-    """Kiểm tra kết nối — DeerFlow-AutoML agent + HAutoML backend."""
+    """Kiểm tra kết nối — HAgent agent + HAutoML backend."""
     import httpx
     hautoml_cfg = get_hautoml_config()
 
@@ -524,7 +524,7 @@ async def health_check():
     models = list_available_models()
 
     return {
-        "agent_runtime": "deerflow-automl (LangGraph)",
+        "agent_runtime": "hagent (LangGraph)",
         "hautoml_connected": hautoml_ok,
         "available_models": models,
         "mode": "multi-agent",

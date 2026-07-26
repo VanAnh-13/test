@@ -837,6 +837,53 @@ fit GP không bao giờ khấu hao được.
   "meta-ai"}`, hoặc thêm vào `models:` trong agent_matrix_config.yaml.
 - CÒN: T9 Ollama (user cài) → checkpoint train → ma trận.
 
+## 2026-07-27 — DOCKER-BACKEND-002 + OPENCLAW-REMOVE-001 + DEERFLOW-BRAND-001
+
+### Phạm vi (3 yêu cầu user liên tiếp, verify gộp một lần)
+1. "viết lại docker phía backend"; 2. "gỡ toàn bộ mọi thứ liên quan đến
+openclaw"; 3. "Không nói là DeerFlow, mà chỉ dựa trên công nghệ của họ".
+
+### Quyết định
+- MỘT image backend `hautoml-toolkit` (python:3.12-slim + libgl/libgomp)
+  dùng chung toolkit/worker/nano — XÓA worker.dockerfile + nano.dockerfile;
+  worker/nano có build section trong compose (trước không tự build được).
+- `.dockerignore` viết lại — CHẶN `.env*` (lỗ bảo mật: COPY . . từng có
+  thể bake API key vào image); loại .venv/tests/paper/kết quả benchmark.
+- Bridge: +numpy (predictor lazy-import), bỏ hack echo __init__.py.
+- OpenClaw gỡ tận gốc: xóa proxy.py + SOUL.md + skills/ (không consumer
+  python nào đọc — đã grep); compose bỏ service openclaw_gateway + 3
+  volume + HAGENT_RUNTIME_MODE/HAGENT_GATEWAY_URL/HAGENT_HOOKS_TOKEN;
+  bridge bỏ _call_openclaw_gateway + get_gateway_config/get_hooks_config;
+  hagent.yaml bỏ section gateway/hooks/skills/proxy. error_messages
+  chuyển về section top-level (bắt được bug key trùng yaml khi di chuyển).
+- Branding: provider = "hagent" (graph/bridge/router), env
+  HAGENT_DEERFLOW_URL → HAGENT_AGENT_RUN_URL, bỏ DEERFLOW_BASE_URL,
+  _call_deerflow_runtime → _call_agent_runtime, docstring "HAgent — ...".
+  GIỮ attribution: "inspired by DeerFlow 2.0 (ByteDance)" + dòng
+  Reference/Tham chiếu (~10 dòng) — đúng yêu cầu "dựa trên công nghệ".
+- Protected files đụng tới theo yêu cầu trực tiếp của user: compose,
+  app.py (comment-only), requirements.txt (1 dòng comment),
+  bridge/requirements.txt (+numpy).
+
+### Sự cố tự bắt được
+- Chẩn đoán ban đầu "3 dockerfile mất" SAI (glob Dockerfile* không khớp
+  tên thường) — sửa lại thành viết lại thật, đã báo user.
+- sed xóa dòng ENV cuối để lại backslash treo → ENV nuốt RUN trong
+  toolkit dockerfile — bắt ngay khi soát diff, sửa trước khi build.
+
+### Verification
+- grep openclaw = 0 hit; grep brand tokens = 0 hit — PASS
+- pytest -m "not ollama" → **514 passed** — PASS
+- compose config 3 profiles exit 0; build 2 image exit 0 — PASS
+- Smoke up THẬT: mongo/kafka/minio/toolkit/bridge CẢ 5 healthy;
+  toolkit /home 200; bridge health connected:true, provider "hagent";
+  down sạch — PASS
+
+### Handoff
+- MATRIX-META-001 tiếp tục: warmup 120/120 XONG → train checkpoint v2 →
+  hiệu chuẩn meta-ai → pre-flight audit (workflow resume wf_79bde535-bc7)
+  → full 54 ô.
+
 ## Mẫu ghi cho phiên tiếp theo
 
 ```text

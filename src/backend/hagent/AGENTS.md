@@ -1,22 +1,22 @@
-# AGENTS.md — Vận hành HAgent (DeerFlow-AutoML)
+# AGENTS.md — Vận hành HAgent
 
 ## Mục tiêu
 
-HAgent là trợ lý chat HAutoML. Runtime mặc định: **LangGraph multi-agent**
-(hierarchy, campaign, plan executor, world model). OpenClaw chỉ legacy.
+HAgent là trợ lý chat HAutoML. Runtime: **LangGraph multi-agent**
+(hierarchy, campaign, plan executor, world model) — xây dựng trên công nghệ
+multi-agent của LangGraph, tích hợp thẳng vào backend HAutoML.
 
 ## Đọc theo thứ tự
 
-1. `SOUL.md` — identity + quy tắc
-2. `README_HAGENT.md` — kiến trúc Docker/runtime
-3. `skills/hautoml/SKILL.md` — tools
-4. `hagent.yaml` — LLM, planning, campaign, hierarchy, world_model
+1. `README_HAGENT.md` — kiến trúc Docker/runtime
+2. `hagent.yaml` — LLM, planning, campaign, hierarchy, world_model
+3. `agent/tools/automl_tools.py` — danh sách tool (source of truth)
 
 ## Runtime Docker
 
 ```text
 Frontend → HAgent Bridge (:9900)
-              │ HAGENT_RUNTIME_MODE=deerflow (default)
+              │
               ▼
          toolkit (:8585)  /api/v1/chat/agent-run
               │
@@ -25,12 +25,6 @@ Frontend → HAgent Bridge (:9900)
               │ tools
               ▼
          HAutoML APIs + workers
-```
-
-Legacy:
-
-```bash
-HAGENT_RUNTIME_MODE=openclaw docker compose --profile openclaw up
 ```
 
 ## Phạm vi
@@ -43,14 +37,13 @@ HAGENT_RUNTIME_MODE=openclaw docker compose --profile openclaw up
 
 | Path | Vai trò |
 |---|---|
-| `chat_router.py` | FastAPI chat + `/agent-run` (DeerFlow) |
-| `bridge/app.py` | JWT, conversation, forward deerflow/openclaw |
+| `chat_router.py` | FastAPI chat + `/agent-run` (LangGraph) |
+| `bridge/app.py` | JWT, conversation, forward tới agent runtime |
 | `agent/graph.py` | Multi-agent orchestration |
 | `agent/tools/automl_tools.py` | LangChain tools (source of truth) |
-| `skills/hautoml/*` | OpenClaw CLI skill + docs |
 | `world/*` | World model store/query |
 
 ## Khi cập nhật
 
-- Thêm tool → `automl_tools.py` + `SKILL.md` + `tools.yaml`
+- Thêm tool → `automl_tools.py`
 - Đổi runtime → `docker-compose.yaml` + `README_HAGENT.md`

@@ -1,5 +1,5 @@
 """
-DeerFlow-AutoML — Fact Extractor (Phase 3).
+HAgent — Fact Extractor (Phase 3).
 
 Rút trích facts từ tool outputs và AI responses.
 Rule-based extraction — không cần LLM call thêm.

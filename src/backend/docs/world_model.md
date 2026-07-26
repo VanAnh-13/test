@@ -4,7 +4,7 @@ Tham chiếu: [LeWorldModel, arXiv:2603.19312](https://arxiv.org/abs/2603.19312)
 
 ## Mapping
 
-| LeWM | DeerFlow AutoML |
+| LeWM | HAgent AutoML |
 |---|---|
 | Observation `o_t` (pixels) | `AutoMLObservation` (datasets/jobs/focus/phase/goal) |
 | Action `a_t` | `AutoMLAction` (closed tool space) |

@@ -1,5 +1,5 @@
 """
-conftest.py — Pytest fixtures cho DeerFlow-AutoML tests.
+conftest.py — Pytest fixtures cho HAgent tests.
 
 Cung cấp:
 - Mock LLM server (OpenAI-compatible) chạy background
