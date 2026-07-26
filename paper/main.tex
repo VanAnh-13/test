@@ -1,0 +1,112 @@
+% ============================================================
+% HAgent — Steering AutoML Campaigns with a Lightweight Learned
+% World Model: Surprise-Driven Replanning for LLM Multi-Agent AutoML
+%
+% TARGET: ACML 2026 workshop (list announced ~Aug 7; swap the
+% documentclass/style below for the workshop's required style —
+% ACML main track uses PMLR-style acml2026.sty).
+% Until then this compiles with the standard article class.
+% ============================================================
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{natbib}
+
+\title{Steering AutoML Campaigns with a Lightweight Learned World Model:\\
+Surprise-Driven Replanning for LLM Multi-Agent AutoML}
+
+% Double-blind: KHÔNG điền tên tác giả trước khi biết chính sách workshop
+\author{Anonymous Authors\\ \small Submission to an ACML 2026 Workshop}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+% TODO(viết cuối cùng, sau khi có bảng số liệu thật)
+LLM-based multi-agent systems can operate AutoML platforms, but they
+typically spend their training-job budget blindly. We equip a production
+LangGraph multi-agent AutoML system (HAgent, built on the open-source
+HAutoML platform) with a deliberately lightweight learned world model: a
+calibrated deep-ensemble outcome predictor over campaign configurations,
+cross-entropy planning in configuration space, budget-annealed Thompson
+batch planning, and an outcome-space surprise signal that triggers
+campaign replanning on the real agent. On six real tabular datasets with
+real scikit-learn training jobs, we measure the effect of each mechanism
+at equal job budgets, and separately benchmark the platform's five HPO
+strategies at two data scales, showing that strategy rankings invert with
+scale. We release all code, checkpoints, and per-run records.
+\end{abstract}
+
+\section{Introduction}
+% TODO: motivation — budget-blind LLM AutoML agents; contributions list.
+% Claim trung tâm: vòng lặp predict → plan → act → surprise → replan trên
+% agent THẬT, với world model cố ý nhỏ (không phải representation learning).
+\paragraph{Contributions.}
+\begin{enumerate}
+  \item A lightweight world model for AutoML operations: a Gaussian-NLL
+        outcome head with dataset meta-features and explicit
+        algorithm-meta crossing terms, deep-ensembled for calibrated
+        uncertainty (coverage/ECE reported).
+  \item Planning in campaign-configuration space: true CEM with a
+        model-subset (Bernoulli) dimension, and a budget-annealed Thompson
+        batch planner used for surprise-triggered campaign extension on
+        the production agent.
+  \item An honest two-layer evaluation: (i) agent-level conditions
+        (WM-off / WM-on / WM+replanning) with real LLMs and real
+        in-process scikit-learn jobs at equal budgets; (ii) a
+        library-level HPO benchmark across two data scales (150 rows to
+        581k rows / 251\,MB) in which strategy rankings invert.
+\end{enumerate}
+
+\section{Related Work}
+% TODO: 1 đoạn mỗi cụm — LLM agents cho AutoML/DS (AutoML-Agent, AIDE,
+% DS-Agent, SELA, AgentHPO, CAAFE); HPO cổ điển (BO/SMAC, successive
+% halving/Hyperband); world models (LeWM, JEPA, Dreamer) và vì sao
+% chuyển sang miền MLOps rời rạc qua API là đóng góp khác biệt.
+
+\section{System and Method}
+\subsection{HAgent: multi-agent AutoML runtime}
+% TODO: mô tả graph coordinator → hierarchy/campaign → synthesize;
+% campaign = multi-candidate training trên nền tảng HAutoML.
+\subsection{A lightweight world model}
+% TODO: outcome head (features, NLL + MSE warmup — nêu cả bài học vì sao),
+% deep ensemble + calibration, meta-features v2 + crossing terms,
+% leave-one-dataset-out transfer.
+\subsection{Planning in configuration space}
+% TODO: CEM (elite refit, Bernoulli subset dim), budget-annealed Thompson
+% (\sigma_{eff} = \sigma\sqrt{remaining/total}), MPC qua vòng mở rộng.
+\subsection{Surprise-driven replanning on the real agent}
+% TODO: outcome z-score; extension round trong campaign runner (dùng chung
+% cho cả hai route); config-gated; event trail đo được.
+
+\section{Experimental Setup}
+% TODO: 6 datasets thật; điều kiện A/B/C(/C_mpc); model LLM (local + API);
+% budget; seeds; hai tầng đánh giá; per-run records (tokens, USD, SHA).
+% Nêu rõ: job sklearn THẬT chạy in-process; không mock scores.
+
+\section{Results}
+% Bảng sinh tự động — KHÔNG gõ số bằng tay:
+% \input{tables/agent_matrix.tex}
+% \input{tables/hpo_two_scales.tex}
+% TODO: phân tích + kiểm định; ablations.
+
+\section{Limitations}
+% VIẾT THẲNG: số seed hạn chế ở quy mô lớn (n=1 trên covtype); một model
+% RF + một lưới 18 điểm ở tầng thư viện; world model nhỏ theo thiết kế —
+% claim là về VÒNG LẶP, không phải representation learning; chênh lệch
+% chất lượng trên dataset nhỏ không có ý nghĩa thống kê (nêu số).
+
+\section{Conclusion}
+% TODO
+
+\bibliographystyle{plainnat}
+\bibliography{references}
+
+\end{document}

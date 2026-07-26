@@ -1010,6 +1010,37 @@
         "tested_at": "2026-07-27T12:20:00+07:00",
         "notes": "Resume chỉ bỏ qua ô THÀNH CÔNG (ô lỗi chạy lại). Điều kiện A trỏ checkpoint vào path __disabled__ — WM không thể bị nạp lén. Mỗi ô: HAGENT_CONFIG yaml tạm + load_config.cache_clear() + xóa memo outcome model."
       }
+    },
+    {
+      "id": "AGENT-T11-001",
+      "title": "Khung bài báo (paper/main.tex, PMLR-style chờ style workshop ~7/8) + scripts/make_paper_tables.py (JSONL/JSON → bảng LaTeX)",
+      "status": "done",
+      "acceptance_criteria": [
+        "paper/main.tex: skeleton đầy đủ section (intro, related work, method 2 tầng, setup, results với \\input bảng, limitations nêu thẳng n_seeds/scale, conclusion) + references.bib các công trình đối sánh; compile được bằng documentclass chuẩn, ghi chú chỗ swap style ACML khi công bố.",
+        "make_paper_tables.py: đọc agent_matrix_results.jsonl + hpo_real_fair.json + hpo_large_clean.json → paper/tables/*.tex (mean±std theo điều kiện×dataset, đếm extension, tokens/USD; bảng HPO 2 quy mô).",
+        "Test sinh bảng từ dữ liệu synthetic; full suite không hồi quy."
+      ],
+      "allowed_files": [
+        "paper/main.tex",
+        "paper/references.bib",
+        "src/backend/scripts/make_paper_tables.py",
+        "src/backend/tests/test_make_paper_tables.py",
+        "feature_list.json",
+        "claude-progress.md"
+      ],
+      "test_commands": [
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests/test_make_paper_tables.py -q --timeout=180",
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=300"
+      ],
+      "verification": {
+        "status": "passed",
+        "commands_run": [
+          "cd src/backend && .venv/Scripts/python.exe -m pytest tests/test_make_paper_tables.py -q --timeout=180 (5 passed — bảng HPO sinh từ dữ liệu THẬT, có 3.62x covtype)",
+          "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=300 (510 passed)"
+        ],
+        "tested_at": "2026-07-27T13:00:00+07:00",
+        "notes": "main.tex compile được với article chuẩn, ghi chú swap style ACML khi workshop công bố (~7/8); references.bib 13 entry cần verify trước khi nộp; bảng chỉ sinh tự động, KHÔNG gõ số tay."
+      }
     }
   ]
 }
