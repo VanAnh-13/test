@@ -16,9 +16,13 @@ def create_predictor(config: dict | None = None) -> Any:
         from hagent.world.predictor.neural_jepa_v1 import NeuralJepaV1Predictor
 
         return NeuralJepaV1Predictor(cfg)
+    if backend in ("dynamics_ensemble", "dynamics_ensemble_v1"):
+        from hagent.world.predictor.dynamics_ensemble import DynamicsEnsemble
+
+        return DynamicsEnsemble(cfg)
     raise ValueError(
         f"Unsupported world_model.predictor.backend={backend!r}. "
-        f"Supported: tabular_transition_v1, neural_jepa_v1"
+        f"Supported: tabular_transition_v1, neural_jepa_v1, dynamics_ensemble"
     )
 
 

@@ -47,12 +47,49 @@ def classify_surprise(value: float, thresholds: Dict[str, float]) -> str:
     return "low"
 
 
+def compute_normalized_latent_surprise(
+    predicted: LatentState,
+    actual: LatentState,
+    config: dict | None = None,
+) -> SurpriseResult:
+    """
+    Surprise chuẩn hóa theo σ per-dim của predictor (dynamics ensemble):
+    value = RMS của z-score từng chiều — đơn vị z, ngưỡng normalized_thresholds.
+    """
+    cfg = dict(config or {})
+    thresholds = dict(
+        cfg.get("normalized_thresholds") or {"medium": 1.5, "high": 3.0}
+    )
+    sigma_floor = float(cfg.get("sigma_floor", 1e-3))
+    std = list((predicted.meta or {}).get("std") or [])
+    n = min(predicted.dim, actual.dim, len(predicted.vector), len(actual.vector))
+    if n == 0:
+        return SurpriseResult(0.0, "low", predicted.dim, actual.dim)
+    total = 0.0
+    for i in range(n):
+        s = std[i] if i < len(std) else 0.0
+        s = max(float(s), sigma_floor)
+        diff = (actual.vector[i] - predicted.vector[i]) / s
+        total += diff * diff
+    value = math.sqrt(total / n)
+    return SurpriseResult(
+        value=value,
+        level=classify_surprise(value, thresholds),
+        predicted_dim=predicted.dim,
+        actual_dim=actual.dim,
+    )
+
+
 def compute_surprise(
     predicted: LatentState,
     actual: LatentState,
     config: dict | None = None,
 ) -> SurpriseResult:
     cfg = dict(config or {})
+    # Predictor có uncertainty per-dim (dynamics ensemble) → tự chuyển sang
+    # surprise chuẩn hóa; mọi call site (service, hooks) hưởng lợi không cần sửa
+    if (predicted.meta or {}).get("std"):
+        return compute_normalized_latent_surprise(predicted, actual, cfg)
     metric = str(cfg.get("metric") or "l2")
     thresholds = dict(cfg.get("thresholds") or {"medium": 0.15, "high": 0.40})
     value = latent_distance(predicted, actual, metric=metric)

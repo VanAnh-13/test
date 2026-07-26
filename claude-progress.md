@@ -408,6 +408,33 @@
 - Kế tiếp: WM-DYN-001 (hướng D — ensemble transition model + latent surprise
   chuẩn hóa theo σ).
 
+## 2026-07-26 — WM-DYN-001 (hướng D — HOÀN TẤT lộ trình A+B+C+D)
+
+### Phạm vi
+
+- `world/predictor/dynamics_ensemble.py`: K NeuralJepaV1 seed lệch; predict
+  trả mean latent + meta.std per-dim; save/load member_i.npz; factory backend
+  `dynamics_ensemble` (tương thích WorldPredictor — cắm được vào service).
+- `world/surprise.py`: compute_normalized_latent_surprise (RMS z-score
+  per-dim, ngưỡng normalized_thresholds đơn vị z, sigma_floor);
+  compute_surprise TỰ PHÁT HIỆN meta.std → mọi call site hưởng lợi không sửa.
+- Untrained ensemble → identity, KHÔNG bịa std.
+
+### Verification
+
+- 12 passed (test mới); full suite **364 passed, 0 failed**.
+
+### Tổng kết mở rộng world model (A+B+C+D, 26/7)
+
+- A: không gian hành động 3×3 → 3×3×2^k (model subsets, Bernoulli-CEM).
+- B: meta-features v2 + giao chéo algo×meta + warmup NLL → transfer LOO
+  hoạt động (đoán đúng algo tốt nhất trên dataset chưa thấy).
+- C: CEM-MPC budget-annealed Thompson → wm_mpc ĐẠT OPTIMUM synth_models
+  (regret 0.0) vượt random/wm/no_wm.
+- D: dynamics ensemble + surprise chuẩn hóa theo uncertainty.
+- Suite: 207 (baseline) → **364 passed**. Điều kiện benchmark: wm, wm_mpc,
+  no_wm, random, fixed_<algo>; + transfer LOO protocol.
+
 ## Mẫu ghi cho phiên tiếp theo
 
 ```text

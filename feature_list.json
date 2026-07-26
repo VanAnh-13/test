@@ -514,6 +514,40 @@
         "tested_at": "2026-07-26T21:20:00+07:00",
         "notes": "Budget-annealed Thompson (σ_eff=σ·√(remaining_after/total), batch cuối exploit thuần) giải đúng vấn đề random>wm ở budget nhỏ. Đây là kết quả mạnh nhất cho bài báo tới giờ."
       }
+    },
+    {
+      "id": "WM-DYN-001",
+      "title": "Dynamics ensemble (K neural_jepa) + latent surprise chuẩn hóa theo σ per-dim",
+      "status": "done",
+      "acceptance_criteria": [
+        "DynamicsEnsemble: K NeuralJepaV1 seed lệch train cùng trajectories; predict trả mean latent + meta.std per-dim (epistemic); save/load thư mục member_i.npz; factory backend dynamics_ensemble (tương thích WorldPredictor protocol).",
+        "compute_surprise tự phát hiện meta.std → z-score chuẩn hóa (Mahalanobis-diag) với normalized_thresholds riêng (z-units); không có std → hành vi cũ nguyên trạng.",
+        "hagent.yaml: options dynamics ensemble dưới world_model.predictor (backend mặc định giữ nguyên).",
+        "tests/test_dynamics_ensemble.py pass và full suite không hồi quy."
+      ],
+      "allowed_files": [
+        "src/backend/hagent/world/predictor/dynamics_ensemble.py",
+        "src/backend/hagent/world/predictor/factory.py",
+        "src/backend/hagent/world/predictor/__init__.py",
+        "src/backend/hagent/world/surprise.py",
+        "src/backend/hagent/hagent.yaml",
+        "src/backend/tests/test_dynamics_ensemble.py",
+        "feature_list.json",
+        "claude-progress.md"
+      ],
+      "test_commands": [
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests/test_dynamics_ensemble.py -q --timeout=180",
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=180"
+      ],
+      "verification": {
+        "status": "passed",
+        "commands_run": [
+          "cd src/backend && .venv/Scripts/python.exe -m pytest tests/test_dynamics_ensemble.py -q --timeout=180 (12 passed)",
+          "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=180 (364 passed)"
+        ],
+        "tested_at": "2026-07-26T21:50:00+07:00",
+        "notes": "compute_surprise tự phát hiện meta.std → mọi call site (service, hooks, plan_executor) hưởng surprise chuẩn hóa mà không cần sửa; untrained ensemble trả identity KHÔNG bịa std. Test end-to-end: transition đúng phân phối surprise thấp hơn transition lạ."
+      }
     }
   ]
 }

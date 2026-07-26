@@ -1,4 +1,8 @@
 from hagent.world.predictor.base import WorldPredictor
+from hagent.world.predictor.dynamics_ensemble import (
+    DynamicsEnsemble,
+    train_dynamics_ensemble,
+)
 from hagent.world.predictor.ensemble import OutcomeEnsemble, train_outcome_ensemble
 from hagent.world.predictor.factory import (
     create_outcome_ensemble,
@@ -24,6 +28,8 @@ __all__ = [
     "OutcomeEnsemble",
     "train_outcome_ensemble",
     "TabularTransitionV1Predictor",
+    "DynamicsEnsemble",
+    "train_dynamics_ensemble",
     "OutcomeHeadV1",
     "OutcomePrediction",
     "extract_outcome_samples",

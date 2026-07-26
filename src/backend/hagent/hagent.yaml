@@ -117,13 +117,17 @@ world_model:
     goal_types: ["train", "analyze", "evaluate", "list", "respond", "monitor", "unknown"]
     job_statuses: ["pending", "starting", "running", "completed", "failed", "unknown"]
   predictor:
-    # tabular_transition_v1 | neural_jepa_v1
+    # tabular_transition_v1 | neural_jepa_v1 | dynamics_ensemble
     backend: "tabular_transition_v1"
     default_scale: 0.03
     # neural_jepa_v1 options (used when backend=neural_jepa_v1)
     hidden_dim: 128
     checkpoint_path: "./data/world_model/jepa_v1.npz"
     fallback: "tabular_transition_v1"
+    # dynamics_ensemble options (backend=dynamics_ensemble) — meta.std per-dim
+    # kích hoạt surprise chuẩn hóa (normalized_thresholds, đơn vị z)
+    k: 5
+    checkpoint_dir: "./data/world_model/dynamics_ensemble"
   outcome_head:
     # Dự đoán phân phối best_score của job từ (variant config, dataset meta, z)
     enabled: true
@@ -207,6 +211,11 @@ world_model:
     outcome_thresholds:
       medium: 1.5
       high: 3.0
+    # Latent surprise chuẩn hóa (tự kích hoạt khi predictor có meta.std)
+    normalized_thresholds:
+      medium: 1.5
+      high: 3.0
+    sigma_floor: 0.001
   trajectory:
     enabled: true
     collection: "world_trajectories"
