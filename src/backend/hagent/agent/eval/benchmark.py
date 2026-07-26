@@ -54,20 +54,48 @@ class DatasetProfile:
     time_coef: float
     noise: float
     meta: Dict[str, Any] = field(default_factory=lambda: {"n_rows": 1000, "n_cols": 10})
+    # Hiệu ứng model-subset: điểm cộng của model TỐT NHẤT trong subset đã chọn,
+    # trừ dilution cho mỗi model thừa (chọn đúng model > quét cả catalog).
+    # Rỗng = chiều models không tác động (tương thích profile cũ).
+    model_effects: Dict[str, float] = field(default_factory=dict)
+    model_dilution: float = 0.01
+
+    def _model_term(self, models: Sequence[str] | None) -> float:
+        if not self.model_effects:
+            return 0.0
+        chosen = list(models) if models else list(self.model_effects)
+        effects = [self.model_effects.get(str(m), 0.0) for m in chosen]
+        best = max(effects) if effects else 0.0
+        return best - self.model_dilution * max(0, len(chosen) - 1)
 
     @property
     def optimum(self) -> float:
-        return self.base + max(self.algo_bonus.values()) + self.time_coef
+        best_model = max(self.model_effects.values()) if self.model_effects else 0.0
+        return self.base + max(self.algo_bonus.values()) + self.time_coef + best_model
 
-    def expected_score(self, algo: str, time_limit: float) -> float:
+    def expected_score(
+        self,
+        algo: str,
+        time_limit: float,
+        models: Sequence[str] | None = None,
+    ) -> float:
         return (
             self.base
             + self.algo_bonus.get(algo, 0.0)
             + self.time_coef * math.log1p(max(0.0, time_limit)) / math.log1p(max(_TIME_OPTIONS))
+            + self._model_term(models)
         )
 
-    def sample_score(self, algo: str, time_limit: float, rng: np.random.Generator) -> float:
-        return float(self.expected_score(algo, time_limit) + rng.normal(0.0, self.noise))
+    def sample_score(
+        self,
+        algo: str,
+        time_limit: float,
+        rng: np.random.Generator,
+        models: Sequence[str] | None = None,
+    ) -> float:
+        return float(
+            self.expected_score(algo, time_limit, models) + rng.normal(0.0, self.noise)
+        )
 
 
 PROFILES: Dict[str, DatasetProfile] = {
@@ -95,6 +123,22 @@ PROFILES: Dict[str, DatasetProfile] = {
         time_coef=0.0,
         noise=0.02,
     ),
+    # Model subset quyết định phần lớn tín hiệu — không gian hành động lớn
+    # (3 algo × 3 time × 2^4 subset), steering phải thắng rõ round-robin
+    "synth_models": DatasetProfile(
+        name="synth_models",
+        base=0.55,
+        algo_bonus={"grid_search": 0.0, "bayesian_search": 0.05, "genetic_algorithm": 0.02},
+        time_coef=0.04,
+        noise=0.01,
+        model_effects={
+            "DecisionTreeClassifier": 0.00,
+            "RandomForestClassifier": 0.15,
+            "KNeighborsClassifier": 0.04,
+            "SVC": 0.08,
+        },
+        model_dilution=0.02,
+    ),
 }
 
 
@@ -118,16 +162,18 @@ class SimulatedAutoMLEnv:
         if action_type == "start_training":
             algo = str(params.get("search_algorithm") or "grid_search")
             t = float(params.get("time_limit") or _TIME_OPTIONS[0])
+            models = params.get("models") or None
             job_id = f"sim_{len(self.jobs) + 1}_{uuid.uuid4().hex[:6]}"
-            score = self.profile.sample_score(algo, t, self.rng)
+            score = self.profile.sample_score(algo, t, self.rng, models)
             record = {
                 "job_id": job_id,
                 "search_algorithm": algo,
                 "time_limit": t,
+                "models": list(models) if models else None,
                 "best_score": score,
                 # Kỳ vọng không nhiễu của config này — metric steering-quality
                 # phải tính trên giá trị này, không phải max của các draw nhiễu
-                "expected_score": self.profile.expected_score(algo, t),
+                "expected_score": self.profile.expected_score(algo, t, models),
             }
             self.jobs[job_id] = record
             self.submission_log.append(record)
@@ -215,7 +261,11 @@ async def _run_condition_async(
     env = SimulatedAutoMLEnv(profile, seed=seed)
     set_tool_invoker(env.invoke)
     rng = np.random.default_rng(seed + 1)
+    # Chiều model-subset chỉ bật khi profile có model_effects; [] tắt hẳn
+    # (override yaml) để các profile cũ giữ nguyên không gian tìm kiếm
+    model_opts: List[str] = sorted(profile.model_effects) if profile.model_effects else []
     head_cfg = dict(head_config or {"use_latent": False, "hidden_dim": 32})
+    head_cfg.setdefault("model_vocab", model_opts)
     # user_id riêng theo condition — chặn nhiễm chéo qua warm-start memory
     uid = f"bench_{profile.name}_{condition}_{seed}"
     wm_snapshot = {"datasets": {profile.name: dict(profile.meta)}}
@@ -239,6 +289,7 @@ async def _run_condition_async(
                         "warm_start_top_k": 0,
                         "wm_variant_proposal": True,
                         "wm_rank_variants": True,
+                        "model_options": model_opts,
                     },
                     # None (chưa train) = TẮT fallback checkpoint đĩa — không
                     # để model lạ trên máy lọt vào điều kiện thí nghiệm
@@ -258,14 +309,20 @@ async def _run_condition_async(
                     outcome_model=None,
                 )
             elif condition == "random":
-                params_list = [
-                    dict(
+                params_list = []
+                for _ in range(n):
+                    p = dict(
                         _base_params(goal),
                         search_algorithm=str(rng.choice(_ALGOS)),
                         time_limit=int(rng.choice(_TIME_OPTIONS)),
                     )
-                    for _ in range(n)
-                ]
+                    if model_opts:
+                        k = int(rng.integers(1, len(model_opts) + 1))
+                        p["models"] = sorted(
+                            str(m)
+                            for m in rng.choice(model_opts, size=k, replace=False)
+                        )
+                    params_list.append(p)
                 camp = _campaign_from_params(goal, params_list, source="random")
             elif condition.startswith("fixed_"):
                 algo = condition.removeprefix("fixed_")

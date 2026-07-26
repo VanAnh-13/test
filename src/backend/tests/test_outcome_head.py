@@ -63,6 +63,30 @@ class TestOutcomeFeatures:
         x2 = outcome_features(p2, DATASET_META)
         assert not np.allclose(x1, x2)
 
+    def test_model_vocab_multihot(self):
+        vocab = ["DecisionTreeClassifier", "RandomForestClassifier", "SVC"]
+        cfg = {"use_latent": False, "model_vocab": vocab}
+        base = {"search_algorithm": "grid_search"}
+        assert outcome_feature_dim(cfg) == outcome_feature_dim({"use_latent": False}) + 3
+        x_rf = outcome_features(dict(base, models=["RandomForestClassifier"]), config=cfg)
+        x_svc = outcome_features(dict(base, models=["SVC"]), config=cfg)
+        assert not np.allclose(x_rf, x_svc)
+        # model ngoài vocab không tạo feature ma
+        x_alien = outcome_features(dict(base, models=["AlienNet"]), config=cfg)
+        x_alien2 = outcome_features(dict(base, models=["AlienNet2"]), config=cfg)
+        assert np.allclose(x_alien, x_alien2)
+
+    def test_model_vocab_roundtrips_checkpoint(self, tmp_path):
+        vocab = ["RandomForestClassifier", "SVC"]
+        head = OutcomeHeadV1({"use_latent": False, "model_vocab": vocab, "hidden_dim": 16})
+        head.init_random(seed=0)
+        ckpt = str(tmp_path / "vocab.npz")
+        head.save(ckpt)
+        head2 = OutcomeHeadV1({"use_latent": False, "checkpoint_path": ckpt, "hidden_dim": 16})
+        assert head2.feature_cfg["model_vocab"] == vocab
+        p = {"search_algorithm": "grid_search", "models": ["SVC"]}
+        assert head.predict(p).mean == pytest.approx(head2.predict(p).mean)
+
 
 # ── Head lifecycle ───────────────────────────────────────
 

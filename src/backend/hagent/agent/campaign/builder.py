@@ -86,9 +86,12 @@ def _campaign_planner(cfg: dict) -> Any | None:
         planner_cfg = dict(
             (get_world_model_config() or {}).get("campaign_planner") or {}
         )
-        # Không gian tìm kiếm của planner đồng bộ với campaign config
-        planner_cfg.setdefault("search_algorithms", cfg.get("search_algorithms"))
-        planner_cfg.setdefault("time_limit_options", cfg.get("time_limit_options"))
+        # Không gian tìm kiếm của planner đồng bộ với campaign config;
+        # campaign config có key (kể cả []) thì THẮNG yaml — caller (benchmark)
+        # phải kiểm soát được không gian theo từng dataset/điều kiện
+        for key in ("search_algorithms", "time_limit_options", "model_options"):
+            if cfg.get(key) is not None:
+                planner_cfg[key] = cfg.get(key)
         return create_campaign_planner(planner_cfg)
     except Exception:
         return None

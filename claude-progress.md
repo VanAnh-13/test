@@ -334,6 +334,31 @@
   thật): tải OpenML (`scripts/fetch_openml_datasets.py`), cài Ollama, mở rộng
   config space, chạy ma trận chính thức.
 
+## 2026-07-26 — WM-SPACE-001 (hướng A mở rộng world model)
+
+### Phạm vi
+
+- CEM planner: chiều model-subset (Bernoulli per-model, elite refit smoothing,
+  clip [0.02,0.98], min_models) + categorical_dims tùy config (vd. cv_folds);
+  model_options rỗng → hành vi cũ.
+- outcome_features: multi-hot model_vocab (lưu/khôi phục checkpoint; vocab
+  rỗng giữ nguyên chiều cũ).
+- builder: campaign config override search space của planner (kể cả []).
+- Benchmark: DatasetProfile.model_effects + dilution; profile synth_models
+  (3 algo × 3 time × 2^4 subset); random condition sample subset; hagent.yaml
+  khai 6 model catalog thật (assets/system_models/classification.yml).
+
+### Verification
+
+- 74 passed (3 file test), full suite **333 passed**.
+- CLI synth_models (budget 18 × 3 seeds): wm 0.7686 > no_wm 0.7257 —
+  không gian lớn tách rõ steering; random 0.7727 nhỉnh hơn wm ở budget nhỏ
+  → explore/exploit scheduling là việc của WM-MPC-001 (hướng C).
+
+### Handoff
+
+- Kế tiếp: WM-META-001 (hướng B — meta-features giàu + transfer LOO).
+
 ## Mẫu ghi cho phiên tiếp theo
 
 ```text

@@ -65,6 +65,9 @@ def outcome_feature_config(config: dict | None = None) -> Dict[str, Any]:
         "time_limit_norm": float(cfg.get("time_limit_norm", 600.0)),
         "use_latent": bool(cfg.get("use_latent", True)),
         "latent_dim": int(cfg.get("latent_dim", 64)),
+        # Vocab để multi-hot membership của params["models"]; rỗng = tắt
+        # (giữ nguyên chiều feature của checkpoint cũ)
+        "model_vocab": list(cfg.get("model_vocab") or []),
     }
 
 
@@ -108,6 +111,16 @@ def outcome_features(
     models = params.get("models") or []
     n_models = len(models) if isinstance(models, (list, tuple)) else 0
     parts.append(np.array([min(n_models, 10) / 10.0, 1.0 if n_models else 0.0]))
+
+    vocab = fc["model_vocab"]
+    if vocab:
+        member = np.zeros(len(vocab), dtype=np.float64)
+        if isinstance(models, (list, tuple)):
+            model_set = {str(m) for m in models}
+            for i, name in enumerate(vocab):
+                if name in model_set:
+                    member[i] = 1.0
+        parts.append(member)
 
     def _log_scaled(key: str, denom: float) -> float:
         try:
@@ -203,6 +216,7 @@ class OutcomeHeadV1:
             time_limit_norm=self.feature_cfg["time_limit_norm"],
             use_latent=self.feature_cfg["use_latent"],
             latent_dim=self.feature_cfg["latent_dim"],
+            model_vocab=np.array(self.feature_cfg["model_vocab"], dtype=object),
         )
 
     def _try_load(self, path: str) -> None:
@@ -216,7 +230,7 @@ class OutcomeHeadV1:
             self._b1 = np.asarray(data["b1"], dtype=np.float64)
             self._W2 = np.asarray(data["W2"], dtype=np.float64)
             self._b2 = np.asarray(data["b2"], dtype=np.float64)
-            for key in ("search_algorithms", "problem_types", "metrics"):
+            for key in ("search_algorithms", "problem_types", "metrics", "model_vocab"):
                 if key in data:
                     self.feature_cfg[key] = [str(x) for x in data[key].tolist()]
             if "time_limit_norm" in data:

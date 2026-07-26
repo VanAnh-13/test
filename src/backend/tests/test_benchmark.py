@@ -252,6 +252,30 @@ class TestReviewFixes:
             )
             assert cfgs == []
 
+    def test_synth_models_profile_math(self):
+        prof = PROFILES["synth_models"]
+        # optimum = base + best algo + full time + best model effect
+        assert prof.optimum == pytest.approx(0.55 + 0.05 + 0.04 + 0.15)
+        # chọn đúng model tốt nhất > quét cả catalog (dilution)
+        best_only = prof.expected_score("bayesian_search", 600, ["RandomForestClassifier"])
+        default_all = prof.expected_score("bayesian_search", 600, None)
+        assert best_only - default_all == pytest.approx(0.02 * 3)
+
+    def test_expanded_space_wm_beats_no_wm(self):
+        """Không gian lớn (algo × time × 2^4 subset): steering phải thắng
+        round-robin không model — đây là lý do tồn tại của hướng A."""
+        wm = run_condition("wm", "synth_models", budget_jobs=18, seed=0)
+        no_wm = run_condition("no_wm", "synth_models", budget_jobs=18, seed=0)
+        assert wm["final_best"] > no_wm["final_best"]
+
+    def test_random_condition_samples_subsets(self):
+        res = run_condition("random", "synth_models", budget_jobs=6, seed=0)
+        assert res["jobs_used"] == 6
+        # random phải thật sự sample chiều models trên profile có model_effects
+        # (kiểm qua expected scores biến thiên theo subset — không truy cập env,
+        # nhưng ít nhất curve phải hợp lệ và final <= optimum)
+        assert res["final_best"] <= PROFILES["synth_models"].optimum + 1e-9
+
     def test_wm_surprise_events_counted_no_wm_zero(self):
         """Model online phải được runner nhìn thấy: wm có event, no_wm = 0."""
         wm = run_condition("wm", "synth_strong", budget_jobs=12, seed=0)

@@ -1,10 +1,12 @@
 """
-CEM thật trên không gian config campaign — {search_algorithm × time_limit}.
+CEM thật trên không gian config campaign.
 
-Khác cem_lite (liệt kê skeleton hành động), planner này chạy Cross-Entropy
-Method đúng nghĩa trên phân phối categorical từng chiều config:
-  lặp: sample n_candidates → score bằng outcome model (μ + β·σ)
-       → chọn elite theo elite_fraction → refit phân phối có smoothing.
+Các chiều tìm kiếm:
+  - search_algorithm, time_limit: categorical (phân phối refit từ elite).
+  - models: subset của model_options — Bernoulli độc lập từng model,
+    xác suất kèm refit từ elite (chuẩn cross-entropy cho biến nhị phân).
+  - categorical_dims (config): các chiều categorical bổ sung tùy nền tảng
+    (vd. cv_folds) — không cần sửa code khi thêm chiều mới.
 
 Outcome model chưa sẵn sàng → fallback round-robin deterministic (trùng logic
 diversify của builder) để hành vi hệ thống không đổi khi chưa train model.
@@ -14,7 +16,7 @@ from __future__ import annotations
 
 import logging
 import math
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -24,16 +26,8 @@ _DEFAULT_ALGOS = ["grid_search", "bayesian_search", "genetic_algorithm"]
 _DEFAULT_TIME_OPTIONS = [180, 300, 600]
 
 
-def _config_signature(params: Dict[str, Any]) -> tuple:
-    return (
-        params.get("search_algorithm"),
-        params.get("time_limit"),
-        tuple(params.get("models") or []),
-    )
-
-
 class CemConfigV1Planner:
-    """CEM trên các chiều categorical của config một training job."""
+    """CEM trên các chiều categorical + subset của config một training job."""
 
     def __init__(self, config: dict | None = None):
         self.config = dict(config or {})
@@ -43,6 +37,13 @@ class CemConfigV1Planner:
         self.time_options: List[int] = [
             int(t) for t in (self.config.get("time_limit_options") or _DEFAULT_TIME_OPTIONS)
         ]
+        self.model_options: List[str] = list(self.config.get("model_options") or [])
+        self.min_models = max(1, int(self.config.get("min_models", 1)))
+        self.categorical_dims: Dict[str, List[Any]] = {
+            str(k): list(v)
+            for k, v in dict(self.config.get("categorical_dims") or {}).items()
+            if v
+        }
         self.n_candidates = max(4, int(self.config.get("n_candidates", 32)))
         self.n_iterations = max(1, int(self.config.get("n_iterations", 8)))
         self.elite_fraction = min(
@@ -65,6 +66,21 @@ class CemConfigV1Planner:
             )
         return out
 
+    # ── Sampling helpers ─────────────────────────────────
+
+    def _sample_models(
+        self, rng: np.random.Generator, p_model: np.ndarray
+    ) -> Tuple[str, ...]:
+        mask = rng.random(len(self.model_options)) < p_model
+        if mask.sum() < self.min_models:
+            # Ép đủ min_models model có xác suất cao nhất
+            order = np.argsort(-p_model)
+            mask[:] = False
+            mask[order[: self.min_models]] = True
+        return tuple(
+            sorted(m for m, keep in zip(self.model_options, mask) if keep)
+        )
+
     # ── CEM core ─────────────────────────────────────────
 
     def plan_campaign_configs(
@@ -78,8 +94,8 @@ class CemConfigV1Planner:
         higher_is_better: bool = True,
     ) -> List[Dict[str, Any]]:
         """
-        Trả về tối đa n_return dict {search_algorithm, time_limit} distinct,
-        xếp theo score dự đoán (tốt nhất trước).
+        Trả về tối đa n_return dict config distinct (search_algorithm,
+        time_limit, models?, extra dims?), xếp theo score dự đoán.
         """
         n_return = max(1, int(n_return))
         if outcome_model is None or not getattr(outcome_model, "is_ready", False):
@@ -90,15 +106,30 @@ class CemConfigV1Planner:
         n_time = len(self.time_options)
         p_algo = np.full(n_algo, 1.0 / n_algo)
         p_time = np.full(n_time, 1.0 / n_time)
+        p_model = np.full(len(self.model_options), 0.5) if self.model_options else None
+        extra_names = list(self.categorical_dims)
+        p_extra = {
+            name: np.full(len(opts), 1.0 / len(opts))
+            for name, opts in self.categorical_dims.items()
+        }
 
         sign = 1.0 if higher_is_better else -1.0
         scored: Dict[tuple, float] = {}
+        proposals: Dict[tuple, Dict[str, Any]] = {}
 
-        def score_config(algo: str, t: int) -> Optional[float]:
+        def score_config(
+            algo: str,
+            t: int,
+            models: Tuple[str, ...] | None,
+            extra: Dict[str, Any],
+        ) -> Optional[float]:
             params = dict(base_params)
             params["search_algorithm"] = algo
             params["time_limit"] = t
-            key = (algo, t)
+            if models is not None:
+                params["models"] = list(models)
+            params.update(extra)
+            key = (algo, t, models or (), tuple(sorted(extra.items())))
             if key in scored:
                 return scored[key]
             pred = outcome_model.predict(params, dataset_meta, z)
@@ -108,17 +139,31 @@ class CemConfigV1Planner:
             # cộng vào phía "tốt" (sign*(μ+βσ) sẽ thành PHẠT σ khi minimize).
             val = sign * pred.mean + self.exploration_weight * pred.std
             scored[key] = val
+            prop: Dict[str, Any] = {"search_algorithm": algo, "time_limit": t}
+            if models is not None:
+                prop["models"] = list(models)
+            prop.update(extra)
+            proposals[key] = prop
             return val
 
         n_elite = max(1, math.ceil(self.elite_fraction * self.n_candidates))
         for _ in range(self.n_iterations):
-            idx_algo = rng.choice(n_algo, size=self.n_candidates, p=p_algo)
-            idx_time = rng.choice(n_time, size=self.n_candidates, p=p_time)
             batch = []
-            for ia, it in zip(idx_algo, idx_time):
-                val = score_config(self.algorithms[ia], self.time_options[it])
+            for _ in range(self.n_candidates):
+                ia = int(rng.choice(n_algo, p=p_algo))
+                it = int(rng.choice(n_time, p=p_time))
+                models = (
+                    self._sample_models(rng, p_model) if p_model is not None else None
+                )
+                extra = {
+                    name: self.categorical_dims[name][
+                        int(rng.choice(len(self.categorical_dims[name]), p=p_extra[name]))
+                    ]
+                    for name in extra_names
+                }
+                val = score_config(self.algorithms[ia], self.time_options[it], models, extra)
                 if val is not None:
-                    batch.append((val, ia, it))
+                    batch.append((val, ia, it, models, extra))
             if not batch:
                 return self._fallback_configs(n_return)
 
@@ -127,18 +172,35 @@ class CemConfigV1Planner:
 
             new_algo = np.zeros(n_algo)
             new_time = np.zeros(n_time)
-            for _, ia, it in elite:
+            new_model = (
+                np.zeros(len(self.model_options)) if p_model is not None else None
+            )
+            new_extra = {name: np.zeros(len(opts)) for name, opts in self.categorical_dims.items()}
+            for _, ia, it, models, extra in elite:
                 new_algo[ia] += 1.0
                 new_time[it] += 1.0
-            new_algo = (new_algo + self.smoothing) / (new_algo.sum() + self.smoothing * n_algo)
-            new_time = (new_time + self.smoothing) / (new_time.sum() + self.smoothing * n_time)
-            p_algo, p_time = new_algo, new_time
+                if new_model is not None and models is not None:
+                    for m in models:
+                        new_model[self.model_options.index(m)] += 1.0
+                for name in extra_names:
+                    new_extra[name][self.categorical_dims[name].index(extra[name])] += 1.0
 
-        # Xếp mọi config đã chấm điểm, lấy distinct top n_return
+            p_algo = (new_algo + self.smoothing) / (new_algo.sum() + self.smoothing * n_algo)
+            p_time = (new_time + self.smoothing) / (new_time.sum() + self.smoothing * n_time)
+            if new_model is not None:
+                # Bernoulli refit: tần suất xuất hiện trong elite, có smoothing
+                p_model = (new_model + self.smoothing) / (len(elite) + 2.0 * self.smoothing)
+                p_model = np.clip(p_model, 0.02, 0.98)
+            for name in extra_names:
+                counts = new_extra[name]
+                p_extra[name] = (counts + self.smoothing) / (
+                    counts.sum() + self.smoothing * len(self.categorical_dims[name])
+                )
+
         ranked = sorted(scored.items(), key=lambda kv: kv[1], reverse=True)
         out: List[Dict[str, Any]] = []
-        for (algo, t), _ in ranked:
-            out.append({"search_algorithm": algo, "time_limit": t})
+        for key, _ in ranked:
+            out.append(proposals[key])
             if len(out) >= n_return:
                 break
         if not out:

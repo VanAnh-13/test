@@ -183,6 +183,79 @@ class TestCemConfigPlanner:
             create_campaign_planner({"backend": "mcts"})
 
 
+MODEL_EFFECTS = {
+    "DecisionTreeClassifier": 0.00,
+    "RandomForestClassifier": 0.15,
+    "KNeighborsClassifier": 0.04,
+    "SVC": 0.08,
+}
+
+
+def _subset_score(params):
+    """max effect của subset − dilution mỗi model thừa + nền bayes/time."""
+    models = params.get("models") or list(MODEL_EFFECTS)
+    best = max(MODEL_EFFECTS.get(m, 0.0) for m in models)
+    return _bayes600_best(params) + best - 0.02 * (len(models) - 1)
+
+
+class TestModelSubsetDim:
+    def test_finds_best_single_model(self):
+        planner = CemConfigV1Planner(
+            {"seed": 0, "model_options": sorted(MODEL_EFFECTS), "n_iterations": 10}
+        )
+        out = planner.plan_campaign_configs(
+            base_params={},
+            outcome_model=FakeOutcomeModel(_subset_score),
+            n_return=1,
+        )
+        assert out[0]["models"] == ["RandomForestClassifier"]
+        assert out[0]["search_algorithm"] == "bayesian_search"
+        assert out[0]["time_limit"] == 600
+
+    def test_empty_options_no_models_key(self):
+        planner = CemConfigV1Planner({"seed": 0, "model_options": []})
+        out = planner.plan_campaign_configs(
+            base_params={}, outcome_model=FakeOutcomeModel(_bayes600_best), n_return=2
+        )
+        assert all("models" not in c for c in out)
+
+    def test_min_models_honored(self):
+        planner = CemConfigV1Planner(
+            {"seed": 0, "model_options": sorted(MODEL_EFFECTS), "min_models": 2}
+        )
+        out = planner.plan_campaign_configs(
+            base_params={},
+            outcome_model=FakeOutcomeModel(_subset_score),
+            n_return=3,
+        )
+        assert all(len(c["models"]) >= 2 for c in out)
+
+    def test_deterministic_with_models(self):
+        outs = [
+            CemConfigV1Planner(
+                {"seed": 3, "model_options": sorted(MODEL_EFFECTS)}
+            ).plan_campaign_configs(
+                base_params={},
+                outcome_model=FakeOutcomeModel(_subset_score),
+                n_return=3,
+            )
+            for _ in range(2)
+        ]
+        assert outs[0] == outs[1]
+
+    def test_categorical_dims_from_config(self):
+        def cv_score(params):
+            return _bayes600_best(params) + (0.1 if params.get("cv_folds") == 5 else 0.0)
+
+        planner = CemConfigV1Planner(
+            {"seed": 0, "categorical_dims": {"cv_folds": [3, 5, 10]}}
+        )
+        out = planner.plan_campaign_configs(
+            base_params={}, outcome_model=FakeOutcomeModel(cv_score), n_return=1
+        )
+        assert out[0]["cv_folds"] == 5
+
+
 # ── Builder integration ──────────────────────────────────
 
 
@@ -239,7 +312,11 @@ class TestBuilderIntegration:
             )
         )
         sigs = [
-            (v.params.get("search_algorithm"), v.params.get("time_limit"))
+            (
+                v.params.get("search_algorithm"),
+                v.params.get("time_limit"),
+                tuple(v.params.get("models") or []),
+            )
             for v in camp.variants
         ]
         assert len(sigs) == len(set(sigs))

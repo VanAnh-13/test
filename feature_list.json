@@ -404,6 +404,44 @@
         "tested_at": "2026-07-26T19:05:00+07:00",
         "notes": "Nguồn: workflow review 19 agents, 15/15 finding non-minor xác nhận, gộp thành 6 fix A–F. Guard tests trong TestReviewFixes."
       }
+    },
+    {
+      "id": "WM-SPACE-001",
+      "title": "Mở rộng không gian hành động CEM: model subset (Bernoulli-CEM) + chiều categorical tùy config; multi-hot model vocab trong outcome features",
+      "status": "done",
+      "acceptance_criteria": [
+        "CemConfigV1Planner hỗ trợ model_options (Bernoulli per-model, elite refit có smoothing, min_models) và categorical_dims tùy config; đề xuất chứa key models; deterministic theo seed; model_options rỗng → hành vi cũ nguyên trạng.",
+        "outcome_features hỗ trợ model_vocab multi-hot (vocab rỗng → dim không đổi); vocab lưu/khôi phục qua checkpoint.",
+        "Benchmark: profile có model_effects (+dilution) để subset thật sự quan trọng; profile synth_models mới; random condition cũng sample subset; profiles cũ không đổi hành vi.",
+        "hagent.yaml: campaign_planner.model_options = 6 model catalog; outcome_head/ensemble.model_vocab tương ứng.",
+        "Test mới pass và full suite không hồi quy."
+      ],
+      "allowed_files": [
+        "src/backend/hagent/world/planner/cem_config_v1.py",
+        "src/backend/hagent/world/predictor/outcome_head_v1.py",
+        "src/backend/hagent/agent/eval/benchmark.py",
+        "src/backend/hagent/agent/campaign/builder.py",
+        "src/backend/hagent/hagent.yaml",
+        "src/backend/tests/test_cem_config_planner.py",
+        "src/backend/tests/test_outcome_head.py",
+        "src/backend/tests/test_benchmark.py",
+        "feature_list.json",
+        "claude-progress.md"
+      ],
+      "test_commands": [
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests/test_cem_config_planner.py tests/test_outcome_head.py tests/test_benchmark.py -q --timeout=180",
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=180"
+      ],
+      "verification": {
+        "status": "passed",
+        "commands_run": [
+          "cd src/backend && .venv/Scripts/python.exe -m pytest tests/test_cem_config_planner.py tests/test_outcome_head.py tests/test_benchmark.py -q --timeout=180 (74 passed)",
+          "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=180 (333 passed)",
+          "CLI synth_models budget 18 × 3 seeds: wm 0.7686 vs no_wm 0.7257 (tách rõ trên không gian lớn); random 0.7727 — explore/exploit sẽ xử lý ở WM-MPC-001"
+        ],
+        "tested_at": "2026-07-26T20:00:00+07:00",
+        "notes": "builder.py thêm vào whitelist trước khi sửa (override search space qua campaign config). Bernoulli-CEM refit p=(count+smooth)/(n_elite+2·smooth), clip [0.02,0.98]."
+      }
     }
   ]
 }
