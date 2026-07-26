@@ -83,6 +83,31 @@
   Ollama); phát triển theo kế hoạch bài báo (outcome head → ensemble →
   benchmark). HARNESS-001 vẫn `in_progress` (WIP 1/1).
 
+## 2026-07-26 — Baseline môi trường (Giai đoạn 2, không sửa source)
+
+### Phạm vi
+
+- Venv `src/backend/.venv` (Python 3.12.13, uv 0.11.30) + requirements.txt
+  + dev deps (pytest 9.1.1, pytest-asyncio, pytest-timeout).
+- Không sửa file source nào; chỉ cài đặt môi trường (gitignored).
+
+### Verification
+
+- `pytest tests -m "not ollama" --timeout=120` — PASS: **207 passed,
+  7 deselected (ollama), 0 failed** (6.42s).
+- `python scripts/run_agent_harness.py --layer offline,graph
+  --modes single_shot,plan_executor,campaign,hierarchical --tags smoke`
+  — PASS: 16/16 OK (gồm wm_human_train_glass world-model scenarios).
+- Docker 29.6.2 sẵn sàng; Ollama CHƯA cài (cần trước khi chạy thí nghiệm LLM
+  local qwen2.5:14b).
+
+### Rủi ro còn lại
+
+- Flake môi trường: fixture `mock_llm_server` trong `tests/conftest.py` không
+  bắt `httpx.ConnectTimeout` khi poll `/health` → lần chạy đầu lỗi 5 test và
+  leak process chiếm port 11435 (đã kill PID sót). Chạy lại sạch. Cần task
+  riêng để vá except-tuple này.
+
 ## Mẫu ghi cho phiên tiếp theo
 
 ```text
