@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "project": "nckh",
+  "policy": {
+    "wip_limit": 1,
+    "control_files": [
+      "feature_list.json",
+      "claude-progress.md"
+    ],
+    "protected_paths": [
+      ".git/**",
+      ".github/**",
+      "**/.env",
+      "**/.env.*",
+      "**/*secret*",
+      "**/*credential*",
+      "**/*.key",
+      "**/*.pem",
+      "AGENTS.md",
+      "init.sh",
+      "src/backend/app.py",
+      "src/backend/users/utils/security.py",
+      "src/backend/users/utils/authentication.py",
+      "src/backend/hagent/model_work/_internal/**",
+      "src/frontend/src/middleware.ts",
+      "src/frontend/src/pages/api/auth/**",
+      "**/migrations/**",
+      "**/requirements.txt",
+      "**/package.json",
+      "**/package-lock.json",
+      "**/pnpm-lock.yaml",
+      "**/yarn.lock",
+      "**/docker-compose*.yml",
+      "**/docker-compose*.yaml"
+    ]
+  },
+  "current_task_id": "HARNESS-001",
+  "features": [
+    {
+      "id": "HARNESS-001",
+      "title": "Thiết lập Minimal Agent Harness",
+      "status": "in_progress",
+      "acceptance_criteria": [
+        "Có bốn file AGENTS.md, init.sh, feature_list.json và claude-progress.md ở thư mục gốc.",
+        "Quy tắc WIP=1, Definition of Done, Maker-Checker và cấm refactor ngoài phạm vi được ghi rõ.",
+        "Mỗi task có whitelist file chính xác; file nhạy cảm và lõi hệ thống bị khóa mặc định.",
+        "init.sh kiểm tra được cấu trúc trạng thái, giới hạn WIP và bằng chứng test của task done."
+      ],
+      "allowed_files": [
+        "AGENTS.md",
+        "init.sh",
+        "feature_list.json",
+        "claude-progress.md"
+      ],
+      "test_commands": [
+        "bash -n init.sh",
+        "python -m json.tool feature_list.json",
+        "bash init.sh"
+      ],
+      "verification": {
+        "status": "pending",
+        "commands_run": [],
+        "tested_at": null,
+        "notes": "Chưa được phép chuyển task sang done trước khi chạy đủ test_commands."
+      }
+    }
+  ]
+}
