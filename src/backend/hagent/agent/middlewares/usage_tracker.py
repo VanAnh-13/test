@@ -8,6 +8,7 @@ token theo model và quy ra USD theo bảng giá per-1M-token trong config
 
 from __future__ import annotations
 
+import contextvars
 import logging
 import threading
 from typing import Any, Dict, Optional
@@ -15,6 +16,26 @@ from typing import Any, Dict, Optional
 from langchain_core.callbacks import BaseCallbackHandler
 
 logger = logging.getLogger(__name__)
+
+# Tracker của RUN hiện tại — contextvar để mỗi run_agent/stream_agent có
+# tracker riêng kể cả khi nhiều request chạy song song (asyncio task copy
+# context lúc tạo, nên mọi LLM call trong cùng run nhìn thấy đúng tracker).
+_current_tracker: contextvars.ContextVar[Optional["UsageTracker"]] = (
+    contextvars.ContextVar("hagent_usage_tracker", default=None)
+)
+
+
+def set_current_tracker(tracker: Optional["UsageTracker"]) -> contextvars.Token:
+    """Đặt tracker cho run hiện tại; trả token để reset_current_tracker."""
+    return _current_tracker.set(tracker)
+
+
+def get_current_tracker() -> Optional["UsageTracker"]:
+    return _current_tracker.get()
+
+
+def reset_current_tracker(token: contextvars.Token) -> None:
+    _current_tracker.reset(token)
 
 
 class UsageTracker:

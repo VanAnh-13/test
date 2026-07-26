@@ -626,6 +626,28 @@ fit GP không bao giờ khấu hao được.
 
 - Kế tiếp T2: nối usage tracker vào create_chat_model + cost_metrics.
 
+## 2026-07-27 — AGENT-T2-001
+
+### Phạm vi
+
+- `usage_tracker.py`: set/get/reset current tracker qua contextvars — mỗi
+  run một tracker, an toàn song song (task copy context lúc tạo).
+- `create_chat_model(callbacks=...)`: không truyền → tự nhặt tracker từ
+  contextvar; callbacks vào CONSTRUCTOR cả 4 provider (giữ class →
+  bind_tools của coordinator/subagents không vỡ); explicit thắng.
+- `run_agent`/`stream_agent`: tạo tracker từ `llm.usage_tracking`, set
+  contextvar, merge `tracker.summary()` vào `cost_metrics` (tokens + USD giờ
+  xuất hiện trong response API lẫn JSON của run_agent_training).
+- Subagents/coordinator KHÔNG sửa — nhặt tự động.
+
+### Verification
+
+- 19 passed (wiring + tracker); full suite **430 passed, 0 failed**.
+
+### Handoff
+
+- Kế tiếp T3: scripts/train_outcome_model.py + memoize _default_outcome_model.
+
 ## Mẫu ghi cho phiên tiếp theo
 
 ```text

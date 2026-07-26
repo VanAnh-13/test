@@ -722,6 +722,39 @@
         "tested_at": "2026-07-27T05:10:00+07:00",
         "notes": "hagent.yaml thêm vào whitelist TRƯỚC khi sửa: strict resolve lộ ra ci-mock (conftest + CI dùng) chưa từng được đăng ký — bấy lâu sống nhờ chính fallback âm thầm vừa bị chặn; đã đăng ký ci-mock thành entry openai_compatible thật trỏ mock server 11435."
       }
+    },
+    {
+      "id": "AGENT-T2-001",
+      "title": "Nối usage tracker vào vòng đời agent: contextvar per-run, callbacks vào constructor model, tokens/USD vào cost_metrics",
+      "status": "done",
+      "acceptance_criteria": [
+        "usage_tracker.py có set/get/reset current tracker qua contextvars — mỗi run_agent/stream_agent một tracker riêng, an toàn khi chạy song song.",
+        "create_chat_model nhận kwarg callbacks; không truyền thì tự nhặt tracker từ contextvar; callbacks vào CONSTRUCTOR model (giữ class, bind_tools của coordinator/subagents không vỡ).",
+        "run_agent và stream_agent: tạo tracker từ config (llm.usage_tracking), set contextvar, finally reset; merge tracker.summary() vào cost_metrics.",
+        "Subagents/coordinator KHÔNG cần sửa (nhặt tự động qua create_chat_model).",
+        "Test: chạy run_agent với mock LLM server → cost_metrics chứa total_input_tokens/total_calls > 0; hai run song song không lẫn tracker; full suite không hồi quy."
+      ],
+      "allowed_files": [
+        "src/backend/hagent/agent/middlewares/usage_tracker.py",
+        "src/backend/hagent/agent/llm_config.py",
+        "src/backend/hagent/agent/graph.py",
+        "src/backend/tests/test_usage_wiring.py",
+        "feature_list.json",
+        "claude-progress.md"
+      ],
+      "test_commands": [
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests/test_usage_wiring.py tests/test_usage_tracker.py -q --timeout=180",
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=300"
+      ],
+      "verification": {
+        "status": "passed",
+        "commands_run": [
+          "cd src/backend && .venv/Scripts/python.exe -m pytest tests/test_usage_wiring.py tests/test_usage_tracker.py -q --timeout=180 (19 passed)",
+          "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=300 (430 passed)"
+        ],
+        "tested_at": "2026-07-27T06:05:00+07:00",
+        "notes": "Test then chốt: 2 run song song không lẫn tracker (asyncio task copy context); run_agent trả cost_metrics đủ total_input/output_tokens/calls/cost_usd; bind_tools sống vì callbacks vào constructor giữ nguyên class; explicit callbacks thắng contextvar."
+      }
     }
   ]
 }

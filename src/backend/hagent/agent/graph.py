@@ -464,9 +464,19 @@ async def run_agent(
     """Chạy multi-agent graph với middleware pipeline."""
     from langchain_core.messages import HumanMessage
     from hagent.agent.middlewares import create_default_chain
+    from hagent.agent.middlewares.usage_tracker import (
+        create_usage_tracker,
+        reset_current_tracker,
+        set_current_tracker,
+    )
 
     graph = get_automl_graph()
     middleware = create_default_chain()
+
+    # Tracker token/chi phí cho RUN này — mọi create_chat_model bên trong
+    # (coordinator, subagents) tự nhặt qua contextvar
+    usage_tracker = create_usage_tracker()
+    usage_token = set_current_tracker(usage_tracker)
 
     # Durable WM runtime (Mongo when available)
     if wm_service is None or world_store is None:
@@ -534,6 +544,8 @@ async def run_agent(
 
     cost = dict(final_state.get("cost_metrics") or {})
     cost["elapsed_seconds"] = round(time.time() - t0, 3)
+    if usage_tracker is not None:
+        cost.update(usage_tracker.summary())
 
     result = {
         "response": response_text,
@@ -560,6 +572,7 @@ async def run_agent(
     # Middleware post-process
     result = await middleware.run_post(initial_state, result)
 
+    reset_current_tracker(usage_token)
     return result
 
 
@@ -588,7 +601,16 @@ async def stream_agent(
     """Stream multi-agent graph events qua async generator (Phase 5 enriched)."""
     from langchain_core.messages import HumanMessage
 
+    from hagent.agent.middlewares.usage_tracker import (
+        create_usage_tracker,
+        set_current_tracker,
+    )
     from hagent.agent.registry import get_agent_registry
+
+    # Tracker per-run như run_agent; contextvar chết cùng task của request
+    # nên không cần finally quanh generator (đứt giữa chừng không rò rỉ).
+    usage_tracker = create_usage_tracker()
+    set_current_tracker(usage_tracker)
 
     graph = get_automl_graph()
     registry = get_agent_registry()
@@ -750,6 +772,8 @@ async def stream_agent(
 
     cost = dict(final_state_snapshot.get("cost_metrics") or {})
     cost["elapsed_seconds"] = round(time.time() - t0, 3)
+    if usage_tracker is not None:
+        cost.update(usage_tracker.summary())
 
     # Persist world model after stream if store attached
     if middleware is not None and world_store is not None and user_id:

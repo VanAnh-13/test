@@ -141,6 +141,7 @@ def create_chat_model(
     *,
     temperature: float | None = None,
     max_tokens: int | None = None,
+    callbacks: list | None = None,
 ) -> BaseChatModel:
     """
     Tạo LangChain ChatModel từ config.
@@ -174,7 +175,20 @@ def create_chat_model(
             f"Hỗ trợ: {', '.join(sorted(_SUPPORTED_PROVIDERS))}."
         )
 
-    return _build_model(provider, config, api_key, temp, tokens)
+    # Không truyền callbacks tường minh → tự nhặt usage tracker của run
+    # hiện tại (contextvar). Callbacks đi vào CONSTRUCTOR để giữ nguyên class
+    # model — bind_tools của coordinator/subagents vẫn hoạt động.
+    if callbacks is None:
+        from hagent.agent.middlewares.usage_tracker import (
+            UsageTrackingCallback,
+            get_current_tracker,
+        )
+
+        tracker = get_current_tracker()
+        if tracker is not None:
+            callbacks = [UsageTrackingCallback(tracker)]
+
+    return _build_model(provider, config, api_key, temp, tokens, callbacks=callbacks)
 
 
 def _build_model(
@@ -183,6 +197,7 @@ def _build_model(
     api_key: str | None,
     temperature: float,
     max_tokens: int,
+    callbacks: list | None = None,
 ) -> BaseChatModel:
     """Internal: tạo model instance theo provider."""
 
@@ -193,6 +208,7 @@ def _build_model(
             api_key=api_key,
             temperature=temperature,
             max_tokens=max_tokens,
+            callbacks=callbacks,
             **(config.extra or {}),
         )
 
@@ -203,6 +219,7 @@ def _build_model(
             api_key=api_key,
             temperature=temperature,
             max_tokens=max_tokens,
+            callbacks=callbacks,
             **(config.extra or {}),
         )
 
@@ -220,6 +237,7 @@ def _build_model(
             base_url=ollama_url,
             temperature=temperature,
             num_predict=max_tokens,
+            callbacks=callbacks,
             **(config.extra or {}),
         )
 
@@ -236,5 +254,6 @@ def _build_model(
         base_url=config.base_url,
         temperature=temperature,
         max_tokens=max_tokens,
+        callbacks=callbacks,
         **(config.extra or {}),
     )
