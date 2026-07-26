@@ -130,9 +130,21 @@ async def _call_agent(
     world_model: dict | None = None,
     mongo_client=None,
     db_name: str | None = None,
+    model_name: str | None = None,
 ) -> dict:
     """Gọi LangGraph agent runtime — thay thế OpenClaw Gateway."""
     error_messages = get_error_messages()
+
+    # Tên model sai → 400 kèm danh sách hợp lệ, KHÔNG âm thầm dùng default
+    if model_name:
+        from fastapi import HTTPException
+
+        from hagent.agent.llm_config import require_model_config
+
+        try:
+            require_model_config(model_name)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
 
     try:
         from hagent.agent.graph import run_agent
@@ -144,6 +156,7 @@ async def _call_agent(
             world_model=world_model,
             mongo_client=mongo_client,
             db_name=db_name,
+            model_name=model_name,
         )
         return {
             "message": result.get("response", ""),
@@ -247,6 +260,7 @@ async def agent_run(
         world_model=world_model,
         mongo_client=client,
         db_name=str(db_name) if db_name else None,
+        model_name=req.model,
     )
     # Persist agent world_model snapshot back if present
     if result.get("world_model") and client is not None:
@@ -337,6 +351,7 @@ async def chat(
         world_model=world_model,
         mongo_client=client,
         db_name=str(db_name) if db_name else None,
+        model_name=req.model,
     )
 
     # Lưu phản hồi trợ lý
@@ -474,6 +489,7 @@ async def chat_with_file(
         user_token=user_token,
         user_id=str(user_id),
         world_model=world_model,
+        model_name=req.model,
     )
 
     await chat_store.add_message(db, conv_id, user_id, "assistant", result["message"])

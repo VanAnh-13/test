@@ -745,6 +745,37 @@ fit GP không bao giờ khấu hao được.
 - CÒN LẠI: T7 MPC budget, T8 goal_parser, T9 Ollama (cần user cài),
   T10 runner ma trận, T11 khung LaTeX, T12 per-request model.
 
+## 2026-07-27 — AGENT-T7/T8/T12 (8/12 task giai đoạn agent DONE)
+
+### T7 — MPC budget
+
+- Campaign.total_budget (constraints max_jobs, fallback 2n) + spent_budget
+  (tăng mỗi submit), sống qua dict roundtrip; vòng mở rộng tôn trọng budget
+  (cạn → không mở rộng; n_extra cap theo remaining); backend cem_mpc_v1 →
+  plan_batch với remaining/total (spy test xác nhận n=2/remaining=5/total=8).
+
+### T8 — goal_parser thuật toán
+
+- 5 thuật toán bắt được từ EN+VN; phát hiện kèm: constraints.search_algorithm
+  trước đây bị diversify GHI ĐÈ (yêu cầu user vô tác dụng) → ghim variant
+  đầu source='requested'.
+
+### T12 — per-request model
+
+- run_agent/stream_agent(model_name) validate strict TRƯỚC khi chạy graph;
+  contextvar per-run cho coordinator/subagents; req.model truyền thật ở cả
+  3 call site chat_router, tên sai → HTTP 400 kèm danh sách hợp lệ.
+
+### Verification
+
+- 8+21+8 test mới pass; full suite **495 passed, 0 failed**.
+
+### Còn lại
+
+- T9 Ollama (CHỜ USER CÀI), T10 runner ma trận, T11 khung LaTeX,
+  DEPLOY-DOCKER (user yêu cầu thêm — docker-compose*.yaml protected, yêu cầu
+  trực tiếp của user = phê duyệt).
+
 ## Mẫu ghi cho phiên tiếp theo
 
 ```text

@@ -460,15 +460,23 @@ async def run_agent(
     db_name: str | None = None,
     world_store: Any | None = None,
     wm_service: Any | None = None,
+    model_name: str | None = None,
 ) -> dict[str, Any]:
     """Chạy multi-agent graph với middleware pipeline."""
     from langchain_core.messages import HumanMessage
+    from hagent.agent.llm_config import require_model_config, set_current_model_name
     from hagent.agent.middlewares import create_default_chain
     from hagent.agent.middlewares.usage_tracker import (
         create_usage_tracker,
         reset_current_tracker,
         set_current_tracker,
     )
+
+    # Per-request model: validate NGAY (tên sai phải nổ trước khi chạy graph,
+    # caller API đổi thành 400) rồi set contextvar cho cả coordinator/subagents
+    if model_name:
+        require_model_config(model_name)
+    set_current_model_name(model_name)
 
     graph = get_automl_graph()
     middleware = create_default_chain()
@@ -552,7 +560,7 @@ async def run_agent(
         "tool_outputs": list(reversed(tool_outputs)),
         "sources": [],
         "provider": "deerflow-automl",
-        "model": "multi-agent",
+        "model": model_name or "multi-agent",
         "route": final_state.get("current_phase", "direct"),
         "plan_status": final_state.get("plan_status"),
         "selected_plan": final_state.get("selected_plan"),
@@ -597,15 +605,21 @@ async def stream_agent(
     db_name: str | None = None,
     world_store: Any | None = None,
     wm_service: Any | None = None,
+    model_name: str | None = None,
 ):
     """Stream multi-agent graph events qua async generator (Phase 5 enriched)."""
     from langchain_core.messages import HumanMessage
 
+    from hagent.agent.llm_config import require_model_config, set_current_model_name
     from hagent.agent.middlewares.usage_tracker import (
         create_usage_tracker,
         set_current_tracker,
     )
     from hagent.agent.registry import get_agent_registry
+
+    if model_name:
+        require_model_config(model_name)
+    set_current_model_name(model_name)
 
     # Tracker per-run như run_agent; contextvar chết cùng task của request
     # nên không cần finally quanh generator (đứt giữa chừng không rò rỉ).

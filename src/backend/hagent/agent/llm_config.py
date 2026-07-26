@@ -10,6 +10,7 @@ Reference: deerflow/config/app_config.py (model resolution logic)
 
 from __future__ import annotations
 
+import contextvars
 import logging
 import os
 from dataclasses import dataclass, field
@@ -135,6 +136,35 @@ def list_available_models() -> list[dict[str, str]]:
 
 _SUPPORTED_PROVIDERS = {"openai", "anthropic", "ollama", "openai_compatible"}
 
+# Model của RUN hiện tại (per-request) — contextvar như usage tracker:
+# coordinator/subagents gọi create_chat_model() không tên sẽ dùng model này
+_current_model_name: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "hagent_model_name", default=None
+)
+
+
+def set_current_model_name(name: str | None) -> contextvars.Token:
+    return _current_model_name.set(name)
+
+
+def get_current_model_name() -> str | None:
+    return _current_model_name.get()
+
+
+def reset_current_model_name(token: contextvars.Token) -> None:
+    _current_model_name.reset(token)
+
+
+def require_model_config(name: str) -> ModelConfig:
+    """Resolve tên model, RAISE kèm danh sách hợp lệ nếu không tồn tại."""
+    cfg = get_model_config_by_name(name)
+    if cfg is None:
+        raise ValueError(
+            f"Model {name!r} không tồn tại trong cấu hình. "
+            f"Các tên hợp lệ: {[c.name for c in load_llm_configs()]}"
+        )
+    return cfg
+
 
 def create_chat_model(
     name: str | None = None,
@@ -156,6 +186,9 @@ def create_chat_model(
 
     Reference: deerflow/models/__init__.py — create_chat_model()
     """
+    # Ưu tiên: tên truyền tường minh → model per-request (contextvar) → default
+    if not name:
+        name = get_current_model_name()
     if name:
         config = get_model_config_by_name(name)
         if not config:

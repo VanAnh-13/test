@@ -946,6 +946,37 @@
         "tested_at": "2026-07-27T10:50:00+07:00",
         "notes": "12 cụm từ EN+VN được bắt, 4 câu mơ hồ không false-positive; phát hiện kèm: trước đây constraints.search_algorithm bị vòng diversify GHI ĐÈ nên yêu cầu user vô tác dụng với campaign — giờ ghim variant đầu source='requested'."
       }
+    },
+    {
+      "id": "AGENT-T12-001",
+      "title": "Per-request model: req.model → run_agent(model_name) → mọi LLM call trong run (contextvar); tên sai trả 400",
+      "status": "done",
+      "acceptance_criteria": [
+        "run_agent/stream_agent nhận model_name; validate qua registry NGAY ĐẦU (tên sai → ValueError trước khi chạy graph); contextvar per-run để coordinator + subagents cùng dùng model được chọn, không lẫn giữa 2 request song song.",
+        "chat_router: req.model được truyền thật (trước đây schema nhận nhưng bỏ qua); tên sai → HTTP 400 kèm danh sách hợp lệ, KHÔNG âm thầm dùng default.",
+        "Không truyền model → hành vi cũ nguyên trạng; full suite không hồi quy."
+      ],
+      "allowed_files": [
+        "src/backend/hagent/chat_router.py",
+        "src/backend/hagent/agent/graph.py",
+        "src/backend/hagent/agent/llm_config.py",
+        "src/backend/tests/test_per_request_model.py",
+        "feature_list.json",
+        "claude-progress.md"
+      ],
+      "test_commands": [
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests/test_per_request_model.py -q --timeout=180",
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=300"
+      ],
+      "verification": {
+        "status": "passed",
+        "commands_run": [
+          "cd src/backend && .venv/Scripts/python.exe -m pytest tests/test_per_request_model.py -q --timeout=180 (8 passed)",
+          "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=300 (495 passed)"
+        ],
+        "tested_at": "2026-07-27T11:30:00+07:00",
+        "notes": "Tên sai nổ TRƯỚC khi chạy graph (test đếm graph không được invoke); model per-request thấy được bên trong run (coordinator/subagents dùng đúng); 2 request song song không lẫn; req.model truyền ở cả 3 call site chat_router; validate ở _call_agent → HTTP 400."
+      }
     }
   ]
 }
