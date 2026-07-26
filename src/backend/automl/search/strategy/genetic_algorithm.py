@@ -198,8 +198,13 @@ class GeneticAlgorithm(SearchStrategy):
         return population[:size]
 
     def _evaluate_individual(self, individual: Dict[str, float], model: BaseEstimator, X: np.ndarray,
-                             y: np.ndarray) -> dict:
-        """Đánh giá cá thể sử dụng cross-validation với bộ nhớ đệm toàn cục."""
+                             y: np.ndarray, cv_n_jobs: int = None) -> dict:
+        """Đánh giá cá thể sử dụng cross-validation với bộ nhớ đệm toàn cục.
+
+        cv_n_jobs: n_jobs cho cross_validate BÊN TRONG. Khi được gọi từ đường
+        song song theo cá thể, PHẢI là 1 — để n_jobs=-1 lồng trong Parallel
+        sẽ nổ ra n_cores² tiến trình (oversubscription, chậm hơn tuần tự).
+        """
         self._total_evaluations += 1
 
         # Kiểm tra bộ nhớ đệm toàn cục nếu được bật
@@ -224,7 +229,7 @@ class GeneticAlgorithm(SearchStrategy):
                 model, X, y,
                 cv=self.config['cv'],
                 scoring=scoring_metrics,
-                n_jobs=self.config['n_jobs'],
+                n_jobs=cv_n_jobs if cv_n_jobs is not None else self.config['n_jobs'],
                 error_score=self.config['error_score']
             )
 
@@ -684,10 +689,13 @@ class GeneticAlgorithm(SearchStrategy):
         # Chỉ sử dụng song song nếu có đủ công việc để biện minh cho overhead
         if total_work >= (n_jobs * 2) and len(population) > 4:
             optimal_jobs = min(n_jobs, len(population))
-            backend = 'threading' if cv_folds <= 3 else 'loky'
+            # loky (process) mặc định: sklearn fit phần lớn bị GIL khóa nên
+            # threading gần như không tăng tốc; inner cv PHẢI n_jobs=1
+            backend = self.config.get('parallel_backend') or 'loky'
 
             results = Parallel(n_jobs=optimal_jobs, backend=backend)(
-                delayed(self._evaluate_individual)(individual, copy.deepcopy(model), X, y) for individual in population)
+                delayed(self._evaluate_individual)(individual, copy.deepcopy(model), X, y, 1)
+                for individual in population)
             return results
         else:
             # Tuần tự cho quần thể nhỏ

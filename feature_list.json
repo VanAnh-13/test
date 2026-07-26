@@ -548,6 +548,45 @@
         "tested_at": "2026-07-26T21:50:00+07:00",
         "notes": "compute_surprise tự phát hiện meta.std → mọi call site (service, hooks, plan_executor) hưởng surprise chuẩn hóa mà không cần sửa; untrained ensemble trả identity KHÔNG bịa std. Test end-to-end: transition đúng phân phối surprise thấp hơn transition lạ."
       }
+    },
+    {
+      "id": "HPO-IMPROVE-001",
+      "title": "Cải thiện thư viện HPO: fix 2 bug BO, dimension inference cho BO, thêm RandomSearch + SuccessiveHalving, tăng tốc GA/Grid/BO",
+      "status": "done",
+      "acceptance_criteria": [
+        "Fix bug hội tụ BO: chỉ dừng khi đủ `patience` lần LIÊN TIẾP cải thiện < ngưỡng (không dừng ở lần đầu không cải thiện); logic tách thành helper test được.",
+        "Fix crash BO khi scoring=None (fallback test_score).",
+        "BO dimension inference (config infer_dimensions, mặc định bật): list số nguyên → Integer(min,max); list số thực → Real, log-uniform khi span ≥100×; mixed/chuỗi → Categorical như cũ.",
+        "RandomSearchStrategy: n_iter, dedup, enumerate-all khi grid nhỏ, tôn trọng max_time, đúng contract (best_params, best_score, best_all_scores, cv_results, time_limit_reached).",
+        "SuccessiveHalvingStrategy: multi-fidelity theo fraction dữ liệu (eta, rungs), stratified subsample, tôn trọng max_time, cv_results ghi resource_frac.",
+        "Factory đăng ký random_search + successive_halving (kèm alias); tests/test_search_strategies.py pass; full suite không hồi quy.",
+        "TỐC ĐỘ (yêu cầu bổ sung của user): đánh giá ứng viên SONG SONG bằng joblib ở RandomSearch/SH (outer parallelism theo candidate, inner cv n_jobs=1 chống oversubscription), chunked để vẫn tôn trọng max_time; kết quả parallel ≡ serial cùng seed."
+      ],
+      "allowed_files": [
+        "src/backend/automl/search/strategy/bayesian_search.py",
+        "src/backend/automl/search/strategy/random_search.py",
+        "src/backend/automl/search/strategy/successive_halving.py",
+        "src/backend/automl/search/strategy/genetic_algorithm.py",
+        "src/backend/automl/search/strategy/grid_search.py",
+        "src/backend/automl/search/factory/search_strategy_factory.py",
+        "src/backend/tests/test_search_strategies.py",
+        "feature_list.json",
+        "claude-progress.md"
+      ],
+      "test_commands": [
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests/test_search_strategies.py -q --timeout=300",
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=300"
+      ],
+      "verification": {
+        "status": "passed",
+        "commands_run": [
+          "cd src/backend && .venv/Scripts/python.exe -m pytest tests/test_search_strategies.py -q --timeout=300 (31 passed)",
+          "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=300 (395 passed)",
+          "Đo tốc độ workload thực tế (2500×20, RF, 5-fold): GA serial 102s → parallel 33s (3.1×); BO sequential 78s → batch 22s (3.6×)"
+        ],
+        "tested_at": "2026-07-26T23:05:00+07:00",
+        "notes": "Nguyên nhân chậm tìm thấy: (1) GA lồng cross_validate n_jobs=-1 TRONG Parallel → oversubscription n²; (2) GA/Grid dùng backend threading cho workload trung bình — sklearn fit bị GIL khóa nên gần như tuần tự; (3) BO gp_minimize tuần tự từng điểm. Fix: inner cv n_jobs=1 trên đường song song, backend loky mặc định, BO batch ask/tell (constant liar) song song theo lô. Lưu ý: workload đồ chơi (<0.2s/fit) overhead dispatch Windows nuốt lợi ích — speedup chỉ hiện rõ trên workload thật."
+      }
     }
   ]
 }

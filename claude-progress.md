@@ -435,6 +435,44 @@
 - Suite: 207 (baseline) → **364 passed**. Điều kiện benchmark: wm, wm_mpc,
   no_wm, random, fixed_<algo>; + transfer LOO protocol.
 
+## 2026-07-26 — HPO-IMPROVE-001 (cải thiện thuật toán + tốc độ HPO)
+
+### Phạm vi
+
+- **2 bug BO sửa**: (1) check hội tụ dừng ngay iteration đầu không cải thiện
+  sau patience (abs(0)<threshold) → giờ yêu cầu patience bước liên tiếp
+  (`_converged`, có unit test tái hiện bug cũ); (2) crash khi scoring=None.
+- **BO dimension inference** (`infer_dimensions`, mặc định bật): list số
+  nguyên → Integer(min,max); list thực → Real (log-uniform khi span ≥100×);
+  mixed/bool/chuỗi → Categorical như cũ. GP giờ tối ưu trên không gian
+  liên tục thật thay vì chọn giữa vài điểm rời rạc.
+- **RandomSearchStrategy mới** (baseline chuẩn, dedup, enumerate-all khi
+  grid nhỏ) + **SuccessiveHalvingStrategy mới** (multi-fidelity theo fraction
+  dữ liệu, eta=3, stratified subsample, resource_frac trong cv_results).
+- **Tốc độ (yêu cầu bổ sung)**: GA bỏ oversubscription lồng nhau (inner
+  cross_validate n_jobs=-1 TRONG Parallel → n² tiến trình) + backend loky
+  thay threading; Grid backend selector hết chọn threading (GIL-bound) cho
+  workload trung bình; BO thêm batch ask/tell constant-liar
+  (batch_size='auto' theo n_jobs) đánh giá lô điểm song song; Random/SH
+  đánh giá ứng viên song song chunked (inner cv=1).
+- Factory đăng ký random*/successive*/halving/sh + alias.
+
+### Verification
+
+- `pytest tests/test_search_strategies.py` — PASS (31); full suite
+  **395 passed, 0 failed**.
+- Đo workload thực tế (2500×20, RF, 5-fold CV): **GA 102s → 33s (3.1×);
+  BO 78s → 22s (3.6×)**. Workload đồ chơi (<0.2s/fit): overhead dispatch
+  Windows nuốt lợi ích — kỳ vọng đúng.
+
+### Rủi ro còn lại
+
+- BO batch làm giảm nhẹ sample-efficiency so với tuần tự (trade-off chuẩn
+  của constant liar) — batch_size=1 để về hành vi cũ.
+- Dimension inference cho phép BO đề xuất giá trị NGOÀI list gốc (trong
+  range) — đúng mong muốn nhưng khác semantics grid; tắt bằng
+  infer_dimensions=false nếu cần đúng list.
+
 ## Mẫu ghi cho phiên tiếp theo
 
 ```text

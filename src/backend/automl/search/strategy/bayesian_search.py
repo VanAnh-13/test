@@ -6,10 +6,10 @@ from typing import Any, Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
-from sklearn.base import BaseEstimator
+from sklearn.base import BaseEstimator, clone
 from sklearn.model_selection import cross_validate
 from skopt import gp_minimize
-from skopt.space import Categorical
+from skopt.space import Categorical, Integer, Real
 from skopt.utils import use_named_args
 
 from automl.search.strategy.base import SearchStrategy, normalize_param_grid
@@ -94,6 +94,42 @@ class BayesianSearchStrategy(SearchStrategy):
             base_config.update(bayesian_config)
 
         return base_config
+
+    @staticmethod
+    def _infer_dimension(param_name: str, values: list):
+        """
+        Suy ra dimension liên tục từ list giá trị số — GP hoạt động thật sự
+        thay vì chỉ chọn giữa vài điểm rời rạc:
+          - toàn int (không phải bool) → Integer(min, max)
+          - toàn số thực → Real(min, max), prior log-uniform khi span ≥ 100×
+          - mixed / chuỗi / bool / ≤1 giá trị distinct → Categorical (như cũ)
+        """
+        vals = list(values)
+        if len(set(map(str, vals))) <= 1:
+            return Categorical(vals, name=param_name)
+        if any(isinstance(v, bool) for v in vals):
+            return Categorical(vals, name=param_name)
+        if all(isinstance(v, int) for v in vals):
+            return Integer(min(vals), max(vals), name=param_name)
+        if all(isinstance(v, (int, float)) for v in vals):
+            lo, hi = float(min(vals)), float(max(vals))
+            prior = "log-uniform" if lo > 0 and hi / lo >= 100.0 else "uniform"
+            return Real(lo, hi, prior=prior, name=param_name)
+        return Categorical(vals, name=param_name)
+
+    @staticmethod
+    def _converged(best_history: List[float], patience: int, threshold: float) -> bool:
+        """
+        Hội tụ khi cải thiện < threshold trong `patience` bước LIÊN TIẾP
+        gần nhất. Một bước không cải thiện đơn lẻ KHÔNG phải hội tụ —
+        đó chính là lúc BO đang khai thác.
+        """
+        if patience < 1 or len(best_history) < patience + 1:
+            return False
+        recent = best_history[-(patience + 1):]
+        return all(
+            abs(recent[i + 1] - recent[i]) < threshold for i in range(patience)
+        )
 
     def _get_search_space_hash(self, search_space: List) -> str:
         """
@@ -302,6 +338,181 @@ class BayesianSearchStrategy(SearchStrategy):
 
         return combined
 
+    def _resolve_batch_size(self) -> int:
+        """
+        batch_size cho BO song song: 'auto' → effective n_jobs (cap 8);
+        1 → đường gp_minimize tuần tự cũ (giữ nguyên hành vi/warm-start).
+        """
+        raw = self.config.get('batch_size', 'auto')
+        if raw in (None, 'auto'):
+            from joblib import effective_n_jobs
+
+            return max(1, min(8, effective_n_jobs(self.config.get('n_jobs') or 1)))
+        return max(1, int(raw))
+
+    def _evaluate_point(
+        self, model: BaseEstimator, params: Dict[str, Any], X: np.ndarray, y: np.ndarray
+    ) -> Dict[str, float]:
+        """Đánh giá 1 điểm với cv n_jobs=1 (được gọi bên trong Parallel)."""
+        est = clone(model)
+        est.set_params(**params)
+        scoring = self.config.get('scoring')
+        cv_out = cross_validate(
+            estimator=est,
+            X=X,
+            y=y,
+            cv=self.config['cv'],
+            n_jobs=1,
+            scoring=scoring,
+            error_score=self.config['error_score'],
+            return_train_score=False,
+        )
+        all_scores: Dict[str, float] = {}
+        if scoring:
+            for key in scoring:
+                test_key = f'test_{key}'
+                if test_key in cv_out:
+                    all_scores[key] = float(np.mean(cv_out[test_key]))
+        elif 'test_score' in cv_out:
+            all_scores[self.config.get('metric_sort', 'accuracy')] = float(
+                np.mean(cv_out['test_score'])
+            )
+        return all_scores
+
+    def _search_single_grid_batch(
+        self,
+        model: BaseEstimator,
+        X: np.ndarray,
+        y: np.ndarray,
+        search_space: List,
+        param_names: List[str],
+        batch_size: int,
+    ) -> Tuple[Dict, float, Dict, Dict, bool]:
+        """
+        BO theo lô (ask/tell + constant liar): mỗi vòng đề xuất batch_size
+        điểm và đánh giá SONG SONG bằng process — tăng tốc ~batch lần so với
+        gp_minimize tuần tự, đổi lại mất chút sample-efficiency.
+        """
+        from joblib import Parallel, delayed
+        from skopt import Optimizer
+
+        primary_metric = self.config.get('metric_sort', 'accuracy')
+        scoring = self.config.get('scoring') or {}
+        metric_names = list(scoring.keys()) if scoring else [primary_metric]
+        n_calls = int(self.config['n_calls'])
+
+        opt = Optimizer(
+            dimensions=search_space,
+            random_state=self.config['random_state'],
+            acq_func=self.config.get('acq_func', 'EI'),
+            acq_optimizer=self.config.get('acq_optimizer', 'sampling'),
+            n_initial_points=self.config.get('n_initial_points', 5),
+        )
+
+        space_hash = self._get_search_space_hash(search_space)
+        model_name = model.__class__.__name__
+        x0, y0 = self._load_optimizer_state(space_hash, model_name)
+        if x0 and y0 is not None and len(x0):
+            opt.tell(list(x0), list(y0))
+
+        cv_results_: Dict[str, Any] = {
+            'params': [],
+            'mean_test_score': [],
+            'std_test_score': [],
+        }
+        for metric in metric_names:
+            cv_results_[f'mean_test_{metric}'] = []
+            cv_results_[f'std_test_{metric}'] = []
+
+        best_params: Dict[str, Any] = {}
+        best_score = float('-inf')
+        best_all_scores: Dict[str, float] = {}
+        best_history: List[float] = []
+        early_enabled = self.config.get('early_stopping_enabled', True)
+        patience = self.config.get('early_stopping_patience', 5)
+        threshold = self.config.get('convergence_threshold', 0.001)
+
+        evaluated = 0
+        while evaluated < n_calls:
+            b = min(batch_size, n_calls - evaluated)
+            points = opt.ask(n_points=b)
+            t0 = time.time()
+
+            def _one(pt):
+                try:
+                    return self._evaluate_point(
+                        model, dict(zip(param_names, pt)), X, y
+                    )
+                except Exception as exc:
+                    logger.warning("BO batch bỏ qua điểm %s: %s", pt, exc)
+                    return None
+
+            outs = Parallel(n_jobs=b)(delayed(_one)(pt) for pt in points)
+            duration = time.time() - t0
+
+            tell_ys = []
+            for pt, all_scores in zip(points, outs):
+                params = SearchStrategy.convert_numpy_types(
+                    dict(zip(param_names, pt))
+                )
+                all_scores = all_scores or {}
+                score = float(all_scores.get(primary_metric, 0.0))
+                tell_ys.append(-score)
+
+                cv_results_['params'].append(params)
+                cv_results_['mean_test_score'].append(score)
+                cv_results_['std_test_score'].append(0.0)
+                for metric in metric_names:
+                    cv_results_[f'mean_test_{metric}'].append(all_scores.get(metric, 0.0))
+                    cv_results_[f'std_test_{metric}'].append(0.0)
+
+                if score > best_score:
+                    best_score = score
+                    best_params = dict(params)
+                    best_all_scores = dict(all_scores)
+                best_history.append(best_score)
+
+            opt.tell(points, tell_ys)
+            evaluated += b
+
+            if self.config.get('verbose', 0) > 0:
+                logger.info(
+                    "BO batch %d/%d: best=%.4f", evaluated, n_calls, best_score
+                )
+
+            if not self._should_start_next_iteration(iteration_duration=duration):
+                logger.info("BO batch dừng do time limit tại %d/%d", evaluated, n_calls)
+                break
+            if (
+                early_enabled
+                and self._should_apply_early_stopping()
+                and self._converged(best_history, patience, threshold)
+            ):
+                logger.info("BO batch hội tụ tại %d/%d", evaluated, n_calls)
+                break
+
+        # Lưu trạng thái optimizer cho warm start (định dạng như gp_minimize)
+        class _State:
+            x_iters = opt.Xi
+            func_vals = opt.yi
+
+        self._save_optimizer_state(_State, space_hash, model_name)
+
+        if cv_results_['mean_test_score']:
+            scores_arr = np.array(cv_results_['mean_test_score'])
+            cv_results_['rank_test_score'] = (
+                np.argsort(np.argsort(-scores_arr)) + 1
+            ).tolist()
+            for metric in metric_names:
+                m_arr = np.array(cv_results_[f'mean_test_{metric}'])
+                cv_results_[f'rank_test_{metric}'] = (
+                    np.argsort(np.argsort(-m_arr)) + 1
+                ).tolist()
+
+        if best_score == float('-inf'):
+            best_score = 0.0
+        return self._finalize_results(best_params, best_score, best_all_scores, cv_results_)
+
     def _search_single_grid(self, model: BaseEstimator, param_grid: Dict[str, Any],
                X: np.ndarray, y: np.ndarray, **kwargs) -> Tuple[Dict, float, Dict, Dict, bool]:
         """
@@ -318,6 +529,7 @@ class BayesianSearchStrategy(SearchStrategy):
         search_space = []
         param_names = []
 
+        infer_dims = self.config.get('infer_dimensions', True)
         for param_name, param_value in param_grid.items():
             # Nếu param_value là dimension object (Real, Integer, Categorical)
             if hasattr(param_value, 'name'):
@@ -325,13 +537,25 @@ class BayesianSearchStrategy(SearchStrategy):
                     param_value.name = param_name
                 search_space.append(param_value)
                 param_names.append(param_name)
-            # Nếu param_value là list hoặc tuple, chuyển thành Categorical
+            # List/tuple: suy ra Real/Integer khi toàn số (GP tận dụng được
+            # cấu trúc liên tục), fallback Categorical
             elif isinstance(param_value, (list, tuple)):
-                dim = Categorical(param_value, name=param_name)
+                if infer_dims:
+                    dim = self._infer_dimension(param_name, list(param_value))
+                else:
+                    dim = Categorical(param_value, name=param_name)
                 search_space.append(dim)
                 param_names.append(param_name)
             else:
                 raise ValueError(f"Invalid parameter type for {param_name}: {type(param_value)}")
+
+        # Batch BO song song khi batch_size > 1 (mặc định 'auto' theo n_jobs);
+        # batch_size=1 giữ nguyên đường gp_minimize tuần tự
+        batch_size = self._resolve_batch_size()
+        if batch_size > 1:
+            return self._search_single_grid_batch(
+                model, X, y, search_space, param_names, batch_size
+            )
 
         # Danh sách để lưu lịch sử tìm kiếm
         search_history = []
@@ -393,13 +617,16 @@ class BayesianSearchStrategy(SearchStrategy):
             # Lưu trữ tất cả metrics - sẽ được chuyển đổi sau
             objective.last_metrics = {}
 
-            # Lưu trữ tất cả metrics từ scoring_config (dict từ engine.py)
-            # scoring_metrics có dạng: {'accuracy': scorer, 'precision_macro': scorer, 'precision_weighted': scorer, 
-            #                          'recall_macro': scorer, 'recall_weighted': scorer, 'f1_macro': scorer, 'f1_weighted': scorer}
-            for key in scoring_metrics:
-                test_key = f'test_{key}'
-                if test_key in cv_results:
-                    objective.last_metrics[key] = float(np.mean(cv_results[test_key]))
+            # scoring=None → cross_validate trả 'test_score' đơn lẻ
+            if scoring_metrics:
+                for key in scoring_metrics:
+                    test_key = f'test_{key}'
+                    if test_key in cv_results:
+                        objective.last_metrics[key] = float(np.mean(cv_results[test_key]))
+            elif 'test_score' in cv_results:
+                objective.last_metrics[primary_metric] = float(
+                    np.mean(cv_results['test_score'])
+                )
 
             # Chọn điểm số để tối ưu hóa
             score = objective.last_metrics.get(primary_metric, objective.last_metrics.get('accuracy', 0.0))
@@ -481,20 +708,20 @@ class BayesianSearchStrategy(SearchStrategy):
                 logger.info(f"Dừng search tại iteration {iteration}.")
                 return True  # Dừng gp_minimize
 
-            # Kiểm tra điều kiện dừng sớm (chỉ khi không có time limit)
-            if early_stopping_enabled and self._should_apply_early_stopping() and iteration >= early_stopping_patience:
-                # Kiểm tra nếu không có cải thiện trong số lần lặp patience
-                recent_scores = best_score_history[-early_stopping_patience:]
-                if len(set(recent_scores)) == 1:  # Không có cải thiện
-                    logger.info(f"Dừng sớm tại iteration {iteration} (không có cải thiện trong {early_stopping_patience} lần lặp)")
-                    return True  # Điều này sẽ dừng gp_minimize
-
-                # Kiểm tra ngưỡng hội tụ (chỉ khi không có time limit)
-                if self._should_apply_early_stopping() and len(best_score_history) > 1:
-                    recent_improvement = best_score_history[-1] - best_score_history[-2]
-                    if abs(recent_improvement) < convergence_threshold:
-                        logger.info(f"Phát hiện hội tụ tại iteration {iteration} (cải thiện < {convergence_threshold:.4f})")
-                        return True
+            # Kiểm tra điều kiện dừng sớm (chỉ khi không có time limit).
+            # Hội tụ = cải thiện < ngưỡng trong ĐỦ patience bước liên tiếp —
+            # một bước không cải thiện đơn lẻ không được phép dừng BO.
+            if early_stopping_enabled and self._should_apply_early_stopping():
+                if self._converged(
+                    best_score_history,
+                    early_stopping_patience,
+                    convergence_threshold,
+                ):
+                    logger.info(
+                        f"Dừng sớm tại iteration {iteration} (cải thiện < "
+                        f"{convergence_threshold:.4f} trong {early_stopping_patience} lần lặp liên tiếp)"
+                    )
+                    return True
 
             # Lưu log sau mỗi iteration nếu được yêu cầu
             if self.config['save_log']:

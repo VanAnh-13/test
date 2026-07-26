@@ -8,16 +8,20 @@ from automl.search.strategy.base import SearchStrategy
 from automl.search.strategy.grid_search import GridSearchStrategy
 from automl.search.strategy.genetic_algorithm import GeneticAlgorithm
 from automl.search.strategy.bayesian_search import BayesianSearchStrategy
+from automl.search.strategy.random_search import RandomSearchStrategy
+from automl.search.strategy.successive_halving import SuccessiveHalvingStrategy
 
 
 class SearchStrategyFactory:
     """Lớp Factory để tạo các instance của search strategy."""
-    
+
     # Registry của các search strategy có sẵn
     _strategies = {
         'grid_search': GridSearchStrategy,
         'genetic_algorithm': GeneticAlgorithm,
-        'bayesian_search': BayesianSearchStrategy
+        'bayesian_search': BayesianSearchStrategy,
+        'random_search': RandomSearchStrategy,
+        'successive_halving': SuccessiveHalvingStrategy
     }
     
     @classmethod
@@ -47,10 +51,19 @@ class SearchStrategyFactory:
             strategy_class = GeneticAlgorithm
         elif strategy_name.startswith('bayesian') or strategy_name.startswith('bayes') or strategy_name.startswith('skopt'):
             strategy_class = BayesianSearchStrategy
+        elif strategy_name.startswith('random') or strategy_name.startswith('rand'):
+            strategy_class = RandomSearchStrategy
+        elif (
+            strategy_name.startswith('successive')
+            or strategy_name.startswith('halving')
+            or strategy_name in ('sh', 'asha')
+        ):
+            strategy_class = SuccessiveHalvingStrategy
         else:
             raise ValueError(
                 f"Search strategy không xác định: '{strategy_name}'. "
-                f"Các strategy có sẵn: grid*, genetic*/ga*, bayesian*/bayes*/skopt*"
+                f"Các strategy có sẵn: grid*, genetic*/ga*, bayesian*/bayes*/skopt*, "
+                f"random*, successive*/halving*/sh"
             )
         
         # Tạo và trả về instance strategy
@@ -67,7 +80,10 @@ class SearchStrategyFactory:
         Returns:
             Danh sách các pattern tên strategy
         """
-        return ['grid*', 'genetic*/ga*', 'bayesian*/bayes*/skopt*']
+        return [
+            'grid*', 'genetic*/ga*', 'bayesian*/bayes*/skopt*',
+            'random*', 'successive*/halving*/sh',
+        ]
     
     @classmethod
     def is_strategy_available(cls, strategy_name: str) -> bool:
@@ -87,5 +103,10 @@ class SearchStrategyFactory:
             strategy_name.startswith('ga') or
             strategy_name.startswith('bayesian') or
             strategy_name.startswith('bayes') or
-            strategy_name.startswith('skopt')
+            strategy_name.startswith('skopt') or
+            strategy_name.startswith('random') or
+            strategy_name.startswith('rand') or
+            strategy_name.startswith('successive') or
+            strategy_name.startswith('halving') or
+            strategy_name in ('sh', 'asha')
         )

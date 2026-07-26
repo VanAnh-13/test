@@ -69,20 +69,12 @@ class GridSearchStrategy(SearchStrategy):
         if not self.config.get('auto_select_backend', True):
             return 'loky'  # Mặc định nếu không auto select
 
-        # Threading tốt cho:
-        # - Số lượng combinations nhỏ (overhead nhỏ)
-        # - Khi cross-validation đã sử dụng multiprocessing nội bộ
-        if n_combinations <= 4:
+        # sklearn fit phần lớn bị GIL khóa → threading gần như tuần tự.
+        # Chỉ dùng threading khi batch quá nhỏ để overhead spawn process
+        # không đáng: mọi trường hợp còn lại đều loky (process).
+        if n_combinations <= 2:
             return 'threading'
-
-        # Loky (multiprocessing) tốt cho workload lớn
-        # Tính tổng workload = data_size * n_combinations
-        total_workload = data_size * n_combinations
-        if total_workload > 1_000_000:
-            return 'loky'
-
-        # Threading cho các trường hợp trung bình
-        return 'threading'
+        return 'loky'
 
     def _estimate_remaining_time(self, completed: int, total: int, elapsed: float) -> str:
         """
