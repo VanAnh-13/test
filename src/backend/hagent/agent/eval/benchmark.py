@@ -224,6 +224,106 @@ def _base_params(goal: dict) -> dict:
     }
 
 
+def make_transfer_profiles(k: int = 6, seed: int = 0) -> List[DatasetProfile]:
+    """
+    Họ profile cho thí nghiệm transfer: thuật toán tốt nhất PHỤ THUỘC meta
+    theo luật cố định mà outcome head nhìn thấy được qua feature v2:
+      - dataset lớn (log-rows chuẩn hóa > 0.55) → bayesian_search thắng;
+      - dataset nhỏ → grid_search thắng;
+      - frac_categorical > 0.5 → genetic_algorithm được cộng thêm.
+    """
+    rng = np.random.default_rng(seed)
+    profiles: List[DatasetProfile] = []
+    row_options = [200, 500, 1000, 5000, 20000, 100000]
+    for i in range(k):
+        n_rows = int(row_options[int(rng.integers(0, len(row_options)))])
+        frac_cat = float(rng.uniform(0.0, 1.0))
+        big = math.log1p(n_rows) / math.log(1e6) > 0.55
+        bonus = {
+            "grid_search": 0.0 if big else 0.12,
+            "bayesian_search": 0.12 if big else 0.0,
+            "genetic_algorithm": 0.06 if frac_cat > 0.5 else 0.0,
+        }
+        meta = {
+            "n_rows": n_rows,
+            "n_cols": int(rng.integers(5, 50)),
+            "n_classes": int(rng.integers(2, 10)),
+            "class_imbalance": float(rng.uniform(0.3, 0.9)),
+            "frac_categorical": frac_cat,
+            "missing_frac": float(rng.uniform(0.0, 0.2)),
+            "mean_abs_skew": float(rng.uniform(0.0, 2.0)),
+        }
+        profiles.append(
+            DatasetProfile(
+                name=f"transfer_{i}",
+                base=0.60,
+                algo_bonus=bonus,
+                time_coef=0.04,
+                noise=0.01,
+                meta=meta,
+            )
+        )
+    return profiles
+
+
+def generate_offline_samples(
+    profile: DatasetProfile, m: int = 60, seed: int = 0
+) -> List[Dict[str, Any]]:
+    """Sinh sample (config → score) offline từ một profile — dữ liệu pretrain."""
+    rng = np.random.default_rng(seed)
+    samples = []
+    for _ in range(m):
+        algo = _ALGOS[int(rng.integers(0, len(_ALGOS)))]
+        t = _TIME_OPTIONS[int(rng.integers(0, len(_TIME_OPTIONS)))]
+        samples.append(
+            {
+                "params": {
+                    "search_algorithm": algo,
+                    "problem_type": "classification",
+                    "metric": "accuracy",
+                    "time_limit": t,
+                },
+                "dataset_meta": dict(profile.meta),
+                "best_score": profile.sample_score(algo, t, rng),
+            }
+        )
+    return samples
+
+
+def run_transfer_loo(
+    *,
+    k: int = 6,
+    heldout_index: int = 0,
+    budget_jobs: int = 12,
+    seed: int = 0,
+    samples_per_profile: int = 60,
+    profile_seed: int = 0,
+) -> Dict[str, Any]:
+    """
+    Leave-one-dataset-out: pretrain outcome head trên k-1 profile, so
+    wm-pretrained vs wm-scratch trên profile giữ lại.
+    """
+    profiles = make_transfer_profiles(k, seed=profile_seed)
+    held = profiles[heldout_index % len(profiles)]
+    pretrain: List[Dict[str, Any]] = []
+    for i, p in enumerate(profiles):
+        if p.name == held.name:
+            continue
+        pretrain.extend(generate_offline_samples(p, samples_per_profile, seed + i))
+
+    pretrained = run_condition(
+        "wm", held, budget_jobs=budget_jobs, seed=seed, initial_samples=pretrain
+    )
+    scratch = run_condition("wm", held, budget_jobs=budget_jobs, seed=seed)
+    return {
+        "heldout": held.name,
+        "heldout_meta": dict(held.meta),
+        "n_pretrain_samples": len(pretrain),
+        "pretrained": pretrained,
+        "scratch": scratch,
+    }
+
+
 def validate_condition(condition: str) -> None:
     """Raise ValueError nếu condition không hợp lệ — gọi TRƯỚC khi chạy ma trận."""
     if condition in ("wm", "no_wm", "random"):
@@ -249,6 +349,7 @@ async def _run_condition_async(
     min_train_samples: int = 6,
     head_config: dict | None = None,
     train_epochs: int = 60,
+    initial_samples: List[Dict[str, Any]] | None = None,
 ) -> Dict[str, Any]:
     validate_condition(condition)
     goal = {
@@ -270,10 +371,17 @@ async def _run_condition_async(
     uid = f"bench_{profile.name}_{condition}_{seed}"
     wm_snapshot = {"datasets": {profile.name: dict(profile.meta)}}
 
-    samples: List[Dict[str, Any]] = []
+    samples: List[Dict[str, Any]] = list(initial_samples or [])
     outcome_model = None
     wm_trained_after: Optional[int] = None
     outcome_surprise_events: List[dict] = []
+
+    # Pretrained transfer: đủ sample từ dataset khác → có model từ job 0
+    if condition == "wm" and len(samples) >= min_train_samples:
+        outcome_model = train_outcome_head(
+            samples, config=dict(head_cfg), epochs=train_epochs, seed=seed
+        )
+        wm_trained_after = 0
 
     try:
         while env.jobs_used < budget_jobs:

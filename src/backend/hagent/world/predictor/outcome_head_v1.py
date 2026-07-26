@@ -68,6 +68,9 @@ def outcome_feature_config(config: dict | None = None) -> Dict[str, Any]:
         # Vocab để multi-hot membership của params["models"]; rỗng = tắt
         # (giữ nguyên chiều feature của checkpoint cũ)
         "model_vocab": list(cfg.get("model_vocab") or []),
+        # v1: chỉ n_rows/n_cols (checkpoint cũ). v2: đủ META_KEYS_V2 —
+        # điều kiện cần cho transfer xuyên dataset.
+        "meta_profile": str(cfg.get("meta_profile") or "v2"),
     }
 
 
@@ -88,8 +91,11 @@ def outcome_features(
     params = dict(params or {})
     meta = dict(dataset_meta or {})
 
+    algo_oh = _one_hot_with_unknown(
+        params.get("search_algorithm"), fc["search_algorithms"]
+    )
     parts: List[np.ndarray] = [
-        _one_hot_with_unknown(params.get("search_algorithm"), fc["search_algorithms"]),
+        algo_oh,
         _one_hot_with_unknown(params.get("problem_type"), fc["problem_types"]),
         _one_hot_with_unknown(params.get("metric"), fc["metrics"]),
     ]
@@ -129,9 +135,38 @@ def outcome_features(
             val = 0.0
         return min(2.0, math.log1p(max(0.0, val)) / math.log(denom))
 
-    parts.append(
-        np.array([_log_scaled("n_rows", 1e6), _log_scaled("n_cols", 1e3), 1.0])
-    )
+    def _unit(key: str, scale: float = 1.0) -> float:
+        try:
+            val = float(meta.get(key) or 0.0)
+        except (TypeError, ValueError):
+            val = 0.0
+        return max(0.0, min(1.0, val / scale))
+
+    if fc["meta_profile"] == "v2":
+        log_rows = _log_scaled("n_rows", 1e6)
+        frac_cat = _unit("frac_categorical")
+        parts.append(
+            np.array(
+                [
+                    log_rows,
+                    _log_scaled("n_cols", 1e3),
+                    _log_scaled("n_classes", 1e2),
+                    _unit("class_imbalance"),
+                    frac_cat,
+                    _unit("missing_frac"),
+                    _unit("mean_abs_skew", scale=3.0),
+                    1.0,
+                ]
+            )
+        )
+        # Giao chéo tường minh algo × meta — "thuật toán nào tốt phụ thuộc
+        # dataset" phải học được TUYẾN TÍNH, không trông chờ SGD tự tìm
+        # interaction trong MLP nhỏ (đã kiểm chứng SGD thuần fail).
+        parts.append(np.outer(algo_oh, np.array([log_rows, frac_cat])).ravel())
+    else:  # "v1" — chiều feature của checkpoint thế hệ đầu
+        parts.append(
+            np.array([_log_scaled("n_rows", 1e6), _log_scaled("n_cols", 1e3), 1.0])
+        )
 
     if fc["use_latent"]:
         dim = fc["latent_dim"]
@@ -217,6 +252,7 @@ class OutcomeHeadV1:
             use_latent=self.feature_cfg["use_latent"],
             latent_dim=self.feature_cfg["latent_dim"],
             model_vocab=np.array(self.feature_cfg["model_vocab"], dtype=object),
+            meta_profile=self.feature_cfg["meta_profile"],
         )
 
     def _try_load(self, path: str) -> None:
@@ -239,6 +275,10 @@ class OutcomeHeadV1:
                 self.feature_cfg["use_latent"] = bool(data["use_latent"])
             if "latent_dim" in data:
                 self.feature_cfg["latent_dim"] = int(data["latent_dim"])
+            # Checkpoint thế hệ đầu không có meta_profile → chiều v1
+            self.feature_cfg["meta_profile"] = (
+                str(data["meta_profile"]) if "meta_profile" in data else "v1"
+            )
             self._loaded = True
             logger.info("Loaded outcome head checkpoint from %s", path)
         except Exception as exc:
@@ -290,10 +330,13 @@ def train_outcome_head(
     epochs: int = 200,
     lr: float = 0.01,
     seed: int = 0,
+    warmup_epochs: int | None = None,
 ) -> OutcomeHeadV1:
     """
-    SGD trên Gaussian NLL từ samples:
-      sample = {params, dataset_meta?, z?, best_score}
+    SGD từ samples: sample = {params, dataset_meta?, z?, best_score}.
+
+    Warmup MSE (mặc định epochs//3) cho μ trước, rồi mới Gaussian NLL —
+    NLL từ đầu để σ phình sớm làm gradient của μ tắt (model sập về mean).
 
     Trả về head đã train (head.config["train_history"] chứa loss theo epoch).
     """
@@ -325,8 +368,11 @@ def train_outcome_head(
     rng = np.random.default_rng(seed)
     order = np.arange(len(xs))
     history: List[float] = []
+    if warmup_epochs is None:
+        warmup_epochs = max(1, epochs // 3)
     assert head._W1 is not None
     for epoch in range(epochs):
+        warm = epoch < warmup_epochs
         rng.shuffle(order)
         total = 0.0
         for i in order:
@@ -340,9 +386,13 @@ def train_outcome_head(
             err = mu - y
             total += 0.5 * (err * err / var) + math.log(sigma)
 
-            d_mu = err / var
-            d_sigma = (1.0 / sigma) - (err * err) / (sigma * var)
-            d_out = np.array([d_mu, d_sigma * _sigmoid(s_raw)])
+            if warm:
+                # MSE thuần cho μ; σ đứng yên
+                d_out = np.array([2.0 * err, 0.0])
+            else:
+                d_mu = err / var
+                d_sigma = (1.0 / sigma) - (err * err) / (sigma * var)
+                d_out = np.array([d_mu, d_sigma * _sigmoid(s_raw)])
             gnorm = float(np.linalg.norm(d_out))
             if gnorm > 5.0:
                 d_out *= 5.0 / gnorm

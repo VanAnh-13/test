@@ -359,6 +359,32 @@
 
 - Kế tiếp: WM-META-001 (hướng B — meta-features giàu + transfer LOO).
 
+## 2026-07-26 — WM-META-001 (hướng B mở rộng world model)
+
+### Phạm vi
+
+- `world/meta_features.py`: META_KEYS_V2 + meta_features_from_frame (tính từ
+  DataFrame thật — dùng được cho OpenML CSV).
+- `outcome_features` meta_profile v2: 7 meta keys + **giao chéo tường minh
+  algo_onehot × [log_rows, frac_categorical]** (SGD thuần không tự học được
+  interaction — đã chứng minh bằng thí nghiệm); checkpoint cũ fallback v1.
+- `train_outcome_head`: **warmup MSE** (epochs//3) trước Gaussian NLL — NLL
+  từ đầu làm σ phình sớm, μ sập về mean.
+- Benchmark: make_transfer_profiles (best algo phụ thuộc meta theo luật cố
+  định), generate_offline_samples, run_transfer_loo (pretrained vs scratch),
+  run_condition nhận initial_samples (pretrain → có model từ job 0).
+
+### Verification
+
+- `pytest tests/test_meta_features.py` — PASS (11); full suite **344 passed**.
+- Transfer thật: head học 5 profile → đoán đúng thuật toán tốt nhất trên
+  profile CHƯA THẤY; LOO pretrained ≥ scratch cùng seed/budget.
+
+### Handoff
+
+- Kế tiếp: WM-MPC-001 (hướng C — budget-aware batch planning, receding
+  horizon; giải quyết random > wm ở budget nhỏ quan sát tại WM-SPACE-001).
+
 ## Mẫu ghi cho phiên tiếp theo
 
 ```text
