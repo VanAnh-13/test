@@ -467,7 +467,8 @@ class GeneticAlgorithm(SearchStrategy):
         return new_population
 
     def _create_next_generation(self, population: List[Dict[str, float]], fitness_scores: np.ndarray, diversity: float,
-                                generation: int, population_size: int) -> List[Dict[str, float]]:
+                                generation: int, population_size: int,
+                                max_generation: int = None) -> List[Dict[str, float]]:
         """Tạo thế hệ tiếp theo từ quần thể hiện tại.
         
         Args:
@@ -506,8 +507,11 @@ class GeneticAlgorithm(SearchStrategy):
             self.config['crossover_rate'] = original_rate
 
             # Áp dụng đột biến
-            child1 = self._mutate(child1, generation, self.config['generation'])
-            child2 = self._mutate(child2, generation, self.config['generation'])
+            # Số thế hệ THỰC TẾ của lần search này (có thể đã bị trần cắt bớt) —
+            # dùng config sẽ làm annealing tỉ lệ đột biến sai nhịp
+            max_gen = max_generation if max_generation is not None else self.config['generation']
+            child1 = self._mutate(child1, generation, max_gen)
+            child2 = self._mutate(child2, generation, max_gen)
 
             if len(new_population) < population_size:
                 new_population.append(child1)
@@ -766,8 +770,15 @@ class GeneticAlgorithm(SearchStrategy):
                 break
             total_grid_combinations += grid_combos
 
-        # Điều chỉnh kích thước quần thể dựa trên độ phức tạp không gian tham số
-        if self.config.get('adaptive_population', True) and self.config.get('fast_mode', True):
+        # Điều chỉnh kích thước quần thể dựa trên độ phức tạp không gian tham số.
+        # KHÔNG áp dụng khi caller đặt population_size tường minh — khối này
+        # lấy min() nên vẫn cắt budget người dùng xuống (vd. yêu cầu 20 → 8).
+        explicit_keys = getattr(self, '_explicit_config_keys', set())
+        if (
+            'population_size' not in explicit_keys
+            and self.config.get('adaptive_population', True)
+            and self.config.get('fast_mode', True)
+        ):
             # Tính kích thước không gian tham số
             param_space_size = 1
             for param_name, (min_val, max_val) in self.param_bounds.items():
@@ -793,28 +804,29 @@ class GeneticAlgorithm(SearchStrategy):
         # 2. Tổng đánh giá không được vượt tổng số tổ hợp: vượt nghĩa là GA tốn
         #    hơn grid vét cạn mà vẫn chỉ xấp xỉ — đo thực tế: 54 evals vs 18,
         #    chậm gấp 5 lần grid trên cùng dataset.
-        user_set_budget = bool(
-            {'population_size', 'generation'} & getattr(self, '_explicit_config_keys', set())
-        )
+        user_set_budget = bool({'population_size', 'generation'} & explicit_keys)
+        # Số thế hệ dùng cho LẦN SEARCH NÀY — biến cục bộ, không ghi đè
+        # self.config: instance dùng lại cho model khác phải giữ nguyên budget.
+        generations = int(self.config['generation'])
+
         if is_all_categorical and total_grid_combinations <= 100 and not user_set_budget:
-            # Trần = đúng số tổ hợp, áp dụng CẢ HAI CHIỀU. Mặc định 10×5=50
-            # đánh giá cho không gian 9 tổ hợp cũng lãng phí y như phình lên 54.
+            # Đây là TRẦN, chỉ có tác dụng GIẢM. Phiên bản trước nới cả chiều
+            # tăng nên với không gian 42–100 tổ hợp lại chạy tới 2.4× số đánh
+            # giá so với trước khi "sửa" — đúng loại lỗi nó định chữa.
             budget = total_grid_combinations
-            # Giữ ít nhất 2 thế hệ để GA còn là GA (có tiến hóa), trừ khi
-            # không gian quá nhỏ
-            new_pop = max(2, min(actual_population_size, max(2, budget // 2)))
-            new_gen = max(1, budget // new_pop)
-            while new_pop * (new_gen + 1) <= budget:
-                new_gen += 1
-            if (new_pop, new_gen) != (actual_population_size, self.config['generation']):
+            current_total = actual_population_size * generations
+            if current_total > budget:
+                new_pop = max(2, min(actual_population_size, max(2, budget // 2)))
+                new_gen = max(1, min(generations, budget // new_pop))
                 logger.info(
-                    f"GA: Không gian categorical nhỏ ({budget} tổ hợp). "
-                    f"Điều chỉnh population {actual_population_size}→{new_pop}, "
-                    f"generation {self.config['generation']}→{new_gen} "
-                    f"(trần {budget} đánh giá — hơn nữa thì grid vét cạn rẻ hơn)"
+                    f"GA: Không gian categorical nhỏ ({budget} tổ hợp), "
+                    f"budget hiện tại {current_total} đánh giá vượt trần. "
+                    f"Giảm population {actual_population_size}→{new_pop}, "
+                    f"generation {generations}→{new_gen} "
+                    f"(hơn {budget} thì grid vét cạn rẻ hơn)"
                 )
-            actual_population_size = new_pop
-            self.config['generation'] = new_gen
+                actual_population_size = new_pop
+                generations = new_gen
 
         # Tạo quần thể ban đầu sử dụng khởi tạo thông minh hoặc ngẫu nhiên
         if self.config.get('ultra_fast_mode', False):
@@ -850,12 +862,12 @@ class GeneticAlgorithm(SearchStrategy):
         verbose = self.config.get('verbose', 1)
         if verbose > 0:
             logger.info(
-                f"Starting Genetic Algorithm with {actual_population_size} individuals for {self.config['generation']} generations")
+                f"Starting Genetic Algorithm with {actual_population_size} individuals for {generations} generations")
             if verbose > 1:
                 logger.info(f"Early stopping: {'Enabled' if early_stopping_enabled else 'Disabled'}" +
                             (f" (patience: {early_stopping_patience})" if early_stopping_enabled else ""))
 
-        for generation in range(self.config['generation']):
+        for generation in range(generations):
             # Kiểm tra time limit trước mỗi thế hệ (sử dụng base.py)
             if not self._should_start_next_iteration():
                 logger.info(f"Dừng search tại thế hệ {generation + 1}.")
@@ -874,7 +886,7 @@ class GeneticAlgorithm(SearchStrategy):
             # Chỉ báo tiến trình
             if verbose > 0 and (verbose > 1 or generation % 5 == 0 or generation == 0 or generation == self.config[
                 'generation'] - 1):
-                logger.info(f"Thế hệ {generation + 1}/{self.config['generation']} | Đa dạng: {diversity:.4f}")
+                logger.info(f"Thế hệ {generation + 1}/{generations} | Đa dạng: {diversity:.4f}")
 
             # Đánh giá quần thể (với tối ưu hóa cho chế độ siêu nhanh)
             if self.config.get('ultra_fast_mode', False) and generation > 0:
@@ -1003,7 +1015,10 @@ class GeneticAlgorithm(SearchStrategy):
                     logger.info(" Hoàn thành tiêm đa dạng!")
 
             # Tạo thế hệ tiếp theo
-            population = self._create_next_generation(population, fitness_scores, diversity, generation, actual_population_size)
+            population = self._create_next_generation(
+                population, fitness_scores, diversity, generation,
+                actual_population_size, max_generation=generations,
+            )
 
         # Sau tất cả các thế hệ, giải mã cá thể tốt nhất tìm được để lấy siêu tham số tốt nhất
         best_params = self._decode_individual(best_individual) if best_individual else {}

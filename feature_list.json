@@ -653,6 +653,44 @@
         "tested_at": "2026-07-27T01:10:00+07:00",
         "notes": "Đo trên 6 dataset thật, trước→sau: BO 2263.3s→12.7s (178.7x; loại outlier iris vẫn 31.7s→11.4s = 2.8x); GA 122.8s→7.1s (17.3x, evals 54→8 đúng budget). Chất lượng sau khi vá: BO tốt nhất (cv 0.9123, test 0.9376 — hơn cả grid vét cạn 0.9366 dù chỉ dùng 8/18 lần đánh giá); GA giảm nhẹ (cv 0.9069) vì giờ mới thật sự chạy đúng budget 8 thay vì 54."
       }
+    },
+    {
+      "id": "HPO-LARGE-001",
+      "title": "Benchmark HPO trên dataset LỚN (Covertype 581k×54, ~250MB) + sửa 10 lỗi phương pháp/code do audit đối kháng phát hiện",
+      "status": "done",
+      "acceptance_criteria": [
+        "datasets_real.py hỗ trợ dataset lớn tải qua sklearn.fetch (covtype 581012×54, 7 lớp, ~250MB RAM); có cờ 'large' và cache lại sau lần tải đầu.",
+        "benchmark_hpo.py: thêm --max-time (đẩy vào config max_time của strategy) và ghi lại trạng thái máy (CPU/RAM) vào JSON để số liệu thời gian có ngữ cảnh.",
+        "benchmark_hpo.py dọn loky pool sau mỗi strategy — chống rò rỉ worker giữa các lần đo (đã quan sát 146 worker tồn đọng).",
+        "Chạy benchmark trên covtype khi máy rảnh (độc chiếm CPU); báo cáo thời gian, chất lượng, và lợi thế của successive_halving ở quy mô lớn.",
+        "Test hồi quy cho phần mới; full suite không hồi quy."
+      ],
+      "allowed_files": [
+        "src/backend/automl/search/datasets_real.py",
+        "src/backend/scripts/benchmark_hpo.py",
+        "src/backend/automl/search/strategy/genetic_algorithm.py",
+        "src/backend/automl/search/strategy/bayesian_search.py",
+        "src/backend/tests/test_datasets_real.py",
+        "src/backend/tests/test_search_strategies.py",
+        "feature_list.json",
+        "claude-progress.md"
+      ],
+      "test_commands": [
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests/test_datasets_real.py -q --timeout=300",
+        "cd src/backend && .venv/Scripts/python.exe scripts/benchmark_hpo.py --datasets covtype --budget 8 --out benchmarks/hpo_large.json",
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=300"
+      ],
+      "verification": {
+        "status": "passed",
+        "commands_run": [
+          "cd src/backend && .venv/Scripts/python.exe -m pytest tests/test_search_strategies.py -q --timeout=300 (39 passed, gồm 6 guard hồi quy mới)",
+          "cd src/backend && .venv/Scripts/python.exe -m pytest tests/test_datasets_real.py -q --timeout=300 (16 passed)",
+          "cd src/backend && .venv/Scripts/python.exe scripts/benchmark_hpo.py --budget 8 --n-seeds 3 --out benchmarks/hpo_real_fair.json (exit 0)",
+          "cd src/backend && .venv/Scripts/python.exe scripts/benchmark_hpo.py --datasets covtype --budget 8 --n-seeds 1 --out benchmarks/hpo_large_clean.json (exit 0, máy sạch: 0 python proc, CPU 9%)"
+        ],
+        "tested_at": "2026-07-27T03:30:00+07:00",
+        "notes": "KẾT QUẢ TRUNG THỰC (thay thế mọi số liệu HPO-BENCH-001/HPO-FIX-002 trước đó — chúng KHÔNG hợp lệ vì BO tìm trên không gian gấp 981 lần). Covertype sạch: SH 3.62x > GA 2.75x > random 1.43x > grid 1.00 > BO 0.79x; test score gần như đồng nhất 0.8413 (GA 0.8418). 6 dataset nhỏ (3 seed): grid tốt nhất về chất lượng (test 0.9315±0.068), chỉ random nhanh hơn (1.64x), BO 0.57x và GA 0.86x CHẬM hơn grid; sai số ±0.07-0.08 lớn hơn mọi khoảng cách giữa thuật toán → khác biệt chất lượng KHÔNG có ý nghĩa thống kê ở quy mô nhỏ. Phát hiện chính: thứ hạng ĐẢO CHIỀU theo quy mô — SH từ 1.05x (vô dụng) thành 3.62x (nhanh nhất) vì ngân sách full-fidelity chỉ 3.0/18. Hạn chế: covtype n=1 seed (±0.0000 nghĩa là KHÔNG có phương sai để báo cáo, không phải phương sai bằng 0)."
+      }
     }
   ]
 }

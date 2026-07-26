@@ -1,5 +1,6 @@
 import hashlib
 import logging
+import math
 import time
 from collections import Counter
 from typing import Any, Dict, List, Tuple
@@ -342,13 +343,26 @@ class BayesianSearchStrategy(SearchStrategy):
         """
         batch_size cho BO song song: 'auto' → effective n_jobs (cap 8);
         1 → đường gp_minimize tuần tự cũ (giữ nguyên hành vi/warm-start).
+
+        RÀNG BUỘC THEN CHỐT: batch ≤ n_calls / min_adaptive_rounds. Nếu batch
+        ≥ n_calls thì ask() đề xuất TOÀN BỘ budget trước khi quan sát được kết
+        quả nào — không còn một bước Bayesian nào, chỉ là thiết kế tựa ngẫu
+        nhiên cố định, giống hệt nhau trên mọi dataset. Đo thực tế đã dính
+        đúng bẫy này: n_calls=8, batch=8 → 1 vòng, 0 lần thích ứng.
         """
         raw = self.config.get('batch_size', 'auto')
         if raw in (None, 'auto'):
             from joblib import effective_n_jobs
 
-            return max(1, min(8, effective_n_jobs(self.config.get('n_jobs') or 1)))
-        return max(1, int(raw))
+            batch = max(1, min(8, effective_n_jobs(self.config.get('n_jobs') or 1)))
+        else:
+            batch = max(1, int(raw))
+
+        n_calls = int(self.config.get('n_calls', 0) or 0)
+        min_rounds = max(1, int(self.config.get('min_adaptive_rounds', 4)))
+        if n_calls > 0:
+            batch = max(1, min(batch, math.ceil(n_calls / min_rounds)))
+        return batch
 
     def _evaluate_point(
         self, model: BaseEstimator, params: Dict[str, Any], X: np.ndarray, y: np.ndarray
@@ -475,7 +489,11 @@ class BayesianSearchStrategy(SearchStrategy):
                     best_score = score
                     best_params = dict(params)
                     best_all_scores = dict(all_scores)
-                best_history.append(best_score)
+
+            # MỘT mốc lịch sử cho MỖI BATCH. Ghi từng điểm trong batch sẽ khiến
+            # _converged thấy b bước "không cải thiện" liên tiếp ngay trong một
+            # batch và cắt search sớm dù mới chỉ có một vòng quan sát.
+            best_history.append(best_score)
 
             opt.tell(points, tell_ys)
             evaluated += b

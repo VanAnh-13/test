@@ -1,0 +1,1831 @@
+{
+  "budget": 8,
+  "cv": 3,
+  "seeds": [
+    42,
+    43,
+    44
+  ],
+  "n_jobs": -1,
+  "max_time": null,
+  "machine_before": {
+    "cpu_count": 16,
+    "cpu_percent": 27.0,
+    "ram_available_gb": 12.59,
+    "python_processes": 20
+  },
+  "machine_after": {
+    "cpu_count": 16,
+    "cpu_percent": 16.6,
+    "ram_available_gb": 13.1,
+    "python_processes": 4
+  },
+  "param_grid": {
+    "n_estimators": [
+      50,
+      100,
+      200
+    ],
+    "max_depth": [
+      4,
+      8,
+      16
+    ],
+    "min_samples_split": [
+      2,
+      10
+    ]
+  },
+  "datasets": [
+    {
+      "name": "iris",
+      "meta": {
+        "n_rows": 150.0,
+        "n_cols": 4.0,
+        "n_classes": 3.0,
+        "class_imbalance": 0.3333333333333333,
+        "frac_categorical": 0.0,
+        "missing_frac": 0.0,
+        "mean_abs_skew": 0.2529318871876416
+      },
+      "source": "sklearn.datasets.load_iris",
+      "n_rows": 150,
+      "n_cols": 4,
+      "n_classes": 3
+    },
+    {
+      "name": "wine",
+      "meta": {
+        "n_rows": 178.0,
+        "n_cols": 13.0,
+        "n_classes": 3.0,
+        "class_imbalance": 0.398876404494382,
+        "frac_categorical": 0.0,
+        "missing_frac": 0.0,
+        "mean_abs_skew": 0.4325480594191304
+      },
+      "source": "sklearn.datasets.load_wine",
+      "n_rows": 178,
+      "n_cols": 13,
+      "n_classes": 3
+    },
+    {
+      "name": "breast_cancer",
+      "meta": {
+        "n_rows": 569.0,
+        "n_cols": 30.0,
+        "n_classes": 2.0,
+        "class_imbalance": 0.6274165202108963,
+        "frac_categorical": 0.0,
+        "missing_frac": 0.0,
+        "mean_abs_skew": 1.7404066998407544
+      },
+      "source": "sklearn.datasets.load_breast_cancer",
+      "n_rows": 569,
+      "n_cols": 30,
+      "n_classes": 2
+    },
+    {
+      "name": "digits",
+      "meta": {
+        "n_rows": 1797.0,
+        "n_cols": 64.0,
+        "n_classes": 10.0,
+        "class_imbalance": 0.1018363939899833,
+        "frac_categorical": 0.0,
+        "missing_frac": 0.0,
+        "mean_abs_skew": 4.667465092281429
+      },
+      "source": "sklearn.datasets.load_digits",
+      "n_rows": 1797,
+      "n_cols": 64,
+      "n_classes": 10
+    },
+    {
+      "name": "glass",
+      "meta": {
+        "n_rows": 214.0,
+        "n_cols": 9.0,
+        "n_classes": 6.0,
+        "class_imbalance": 0.35514018691588783,
+        "frac_categorical": 0.0,
+        "missing_frac": 0.0,
+        "mean_abs_skew": 2.071040285984989
+      },
+      "source": "assets/end_users/glass.csv",
+      "n_rows": 214,
+      "n_cols": 9,
+      "n_classes": 6
+    },
+    {
+      "name": "online_shoppers",
+      "meta": {
+        "n_rows": 12330.0,
+        "n_cols": 28.0,
+        "n_classes": 2.0,
+        "class_imbalance": 0.8452554744525548,
+        "frac_categorical": 0.0,
+        "missing_frac": 0.0,
+        "mean_abs_skew": 3.969752066032999
+      },
+      "source": "assets/online_shoppers/online_shoppers_intention.csv",
+      "n_rows": 12330,
+      "n_cols": 28,
+      "n_classes": 2
+    }
+  ],
+  "results": [
+    {
+      "dataset": "iris",
+      "strategy": "grid_search",
+      "best_params": {
+        "n_estimators": 200,
+        "max_depth": 16,
+        "min_samples_split": 10
+      },
+      "cv_score": 0.9583333333333334,
+      "test_score": 0.9666666666666667,
+      "seconds": 6.254850699999224,
+      "n_evaluations": 18,
+      "n_distinct_configs": 18,
+      "full_fidelity_budget": 18.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 42
+    },
+    {
+      "dataset": "iris",
+      "strategy": "grid_search",
+      "best_params": {
+        "n_estimators": 200,
+        "max_depth": 16,
+        "min_samples_split": 10
+      },
+      "cv_score": 0.9250000000000002,
+      "test_score": 0.9666666666666667,
+      "seconds": 8.9452429999983,
+      "n_evaluations": 18,
+      "n_distinct_configs": 18,
+      "full_fidelity_budget": 18.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 43
+    },
+    {
+      "dataset": "iris",
+      "strategy": "grid_search",
+      "best_params": {
+        "n_estimators": 200,
+        "max_depth": 16,
+        "min_samples_split": 10
+      },
+      "cv_score": 0.9499999999999998,
+      "test_score": 0.9666666666666667,
+      "seconds": 8.178686999999627,
+      "n_evaluations": 18,
+      "n_distinct_configs": 18,
+      "full_fidelity_budget": 18.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 44
+    },
+    {
+      "dataset": "iris",
+      "strategy": "random_search",
+      "best_params": {
+        "n_estimators": 200,
+        "max_depth": 16,
+        "min_samples_split": 10
+      },
+      "cv_score": 0.9583333333333334,
+      "test_score": 0.9666666666666667,
+      "seconds": 4.5566289000016695,
+      "n_evaluations": 8,
+      "n_distinct_configs": 8,
+      "full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 42
+    },
+    {
+      "dataset": "iris",
+      "strategy": "random_search",
+      "best_params": {
+        "n_estimators": 100,
+        "max_depth": 8,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.9250000000000002,
+      "test_score": 0.9666666666666667,
+      "seconds": 4.421852300001774,
+      "n_evaluations": 8,
+      "n_distinct_configs": 8,
+      "full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 43
+    },
+    {
+      "dataset": "iris",
+      "strategy": "random_search",
+      "best_params": {
+        "n_estimators": 200,
+        "max_depth": 4,
+        "min_samples_split": 10
+      },
+      "cv_score": 0.9499999999999998,
+      "test_score": 0.9666666666666667,
+      "seconds": 4.289146300001448,
+      "n_evaluations": 8,
+      "n_distinct_configs": 8,
+      "full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 44
+    },
+    {
+      "dataset": "iris",
+      "strategy": "bayesian_search",
+      "best_params": {
+        "n_estimators": 200,
+        "max_depth": 8,
+        "min_samples_split": 10
+      },
+      "cv_score": 0.9583333333333334,
+      "test_score": 0.9666666666666667,
+      "seconds": 13.077429800003301,
+      "n_evaluations": 8,
+      "n_distinct_configs": 8,
+      "full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 42
+    },
+    {
+      "dataset": "iris",
+      "strategy": "bayesian_search",
+      "best_params": {
+        "n_estimators": 100,
+        "max_depth": 4,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.9250000000000002,
+      "test_score": 0.9666666666666667,
+      "seconds": 12.00706480000008,
+      "n_evaluations": 8,
+      "n_distinct_configs": 8,
+      "full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 43
+    },
+    {
+      "dataset": "iris",
+      "strategy": "bayesian_search",
+      "best_params": {
+        "n_estimators": 200,
+        "max_depth": 8,
+        "min_samples_split": 10
+      },
+      "cv_score": 0.9499999999999998,
+      "test_score": 0.9666666666666667,
+      "seconds": 13.301356899999519,
+      "n_evaluations": 8,
+      "n_distinct_configs": 7,
+      "full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 44
+    },
+    {
+      "dataset": "iris",
+      "strategy": "genetic_algorithm",
+      "best_params": {
+        "n_estimators": 50,
+        "max_depth": 8,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.9499999999999998,
+      "test_score": 0.9,
+      "seconds": 9.110714700000244,
+      "n_evaluations": 8,
+      "n_distinct_configs": 5,
+      "full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 42
+    },
+    {
+      "dataset": "iris",
+      "strategy": "genetic_algorithm",
+      "best_params": {
+        "n_estimators": 100,
+        "max_depth": 8,
+        "min_samples_split": 10
+      },
+      "cv_score": 0.9250000000000002,
+      "test_score": 0.9666666666666667,
+      "seconds": 9.38945479999893,
+      "n_evaluations": 8,
+      "n_distinct_configs": 5,
+      "full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 43
+    },
+    {
+      "dataset": "iris",
+      "strategy": "genetic_algorithm",
+      "best_params": {
+        "n_estimators": 100,
+        "max_depth": 16,
+        "min_samples_split": 10
+      },
+      "cv_score": 0.9499999999999998,
+      "test_score": 0.9666666666666667,
+      "seconds": 9.151043400001072,
+      "n_evaluations": 8,
+      "n_distinct_configs": 6,
+      "full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 44
+    },
+    {
+      "dataset": "iris",
+      "strategy": "successive_halving",
+      "best_params": {
+        "n_estimators": 200,
+        "max_depth": 16,
+        "min_samples_split": 10
+      },
+      "cv_score": 0.9583333333333334,
+      "test_score": 0.9666666666666667,
+      "seconds": 7.705959499999153,
+      "n_evaluations": 13,
+      "n_distinct_configs": 9,
+      "full_fidelity_budget": 3.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 42
+    },
+    {
+      "dataset": "iris",
+      "strategy": "successive_halving",
+      "best_params": {
+        "n_estimators": 100,
+        "max_depth": 8,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.9250000000000002,
+      "test_score": 0.9666666666666667,
+      "seconds": 7.276057999999466,
+      "n_evaluations": 13,
+      "n_distinct_configs": 9,
+      "full_fidelity_budget": 3.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 43
+    },
+    {
+      "dataset": "iris",
+      "strategy": "successive_halving",
+      "best_params": {
+        "n_estimators": 200,
+        "max_depth": 4,
+        "min_samples_split": 10
+      },
+      "cv_score": 0.9499999999999998,
+      "test_score": 0.9666666666666667,
+      "seconds": 7.505068399997981,
+      "n_evaluations": 13,
+      "n_distinct_configs": 9,
+      "full_fidelity_budget": 3.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 44
+    },
+    {
+      "dataset": "wine",
+      "strategy": "grid_search",
+      "best_params": {
+        "n_estimators": 200,
+        "max_depth": 16,
+        "min_samples_split": 10
+      },
+      "cv_score": 0.9510933806146573,
+      "test_score": 1.0,
+      "seconds": 6.10329549999733,
+      "n_evaluations": 18,
+      "n_distinct_configs": 18,
+      "full_fidelity_budget": 18.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 42
+    },
+    {
+      "dataset": "wine",
+      "strategy": "grid_search",
+      "best_params": {
+        "n_estimators": 200,
+        "max_depth": 16,
+        "min_samples_split": 10
+      },
+      "cv_score": 0.978871158392435,
+      "test_score": 0.9722222222222222,
+      "seconds": 7.964703100002225,
+      "n_evaluations": 18,
+      "n_distinct_configs": 18,
+      "full_fidelity_budget": 18.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 43
+    },
+    {
+      "dataset": "wine",
+      "strategy": "grid_search",
+      "best_params": {
+        "n_estimators": 200,
+        "max_depth": 16,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.9861111111111112,
+      "test_score": 1.0,
+      "seconds": 8.252468900001986,
+      "n_evaluations": 18,
+      "n_distinct_configs": 18,
+      "full_fidelity_budget": 18.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 44
+    },
+    {
+      "dataset": "wine",
+      "strategy": "random_search",
+      "best_params": {
+        "n_estimators": 100,
+        "max_depth": 8,
+        "min_samples_split": 10
+      },
+      "cv_score": 0.9510933806146573,
+      "test_score": 1.0,
+      "seconds": 4.697592000000441,
+      "n_evaluations": 8,
+      "n_distinct_configs": 8,
+      "full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 42
+    },
+    {
+      "dataset": "wine",
+      "strategy": "random_search",
+      "best_params": {
+        "n_estimators": 50,
+        "max_depth": 8,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.978871158392435,
+      "test_score": 0.9444444444444444,
+      "seconds": 4.55036299999847,
+      "n_evaluations": 8,
+      "n_distinct_configs": 8,
+      "full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 43
+    },
+    {
+      "dataset": "wine",
+      "strategy": "random_search",
+      "best_params": {
+        "n_estimators": 50,
+        "max_depth": 8,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.9861111111111112,
+      "test_score": 1.0,
+      "seconds": 4.132650299998204,
+      "n_evaluations": 8,
+      "n_distinct_configs": 8,
+      "full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 44
+    },
+    {
+      "dataset": "wine",
+      "strategy": "bayesian_search",
+      "best_params": {
+        "n_estimators": 100,
+        "max_depth": 16,
+        "min_samples_split": 10
+      },
+      "cv_score": 0.9510933806146573,
+      "test_score": 1.0,
+      "seconds": 13.515122900000279,
+      "n_evaluations": 8,
+      "n_distinct_configs": 8,
+      "full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 42
+    },
+    {
+      "dataset": "wine",
+      "strategy": "bayesian_search",
+      "best_params": {
+        "n_estimators": 50,
+        "max_depth": 8,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.978871158392435,
+      "test_score": 0.9444444444444444,
+      "seconds": 13.697232200000144,
+      "n_evaluations": 8,
+      "n_distinct_configs": 8,
+      "full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 43
+    },
+    {
+      "dataset": "wine",
+      "strategy": "bayesian_search",
+      "best_params": {
+        "n_estimators": 50,
+        "max_depth": 16,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.9861111111111112,
+      "test_score": 1.0,
+      "seconds": 12.775099099999352,
+      "n_evaluations": 8,
+      "n_distinct_configs": 8,
+      "full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 44
+    },
+    {
+      "dataset": "wine",
+      "strategy": "genetic_algorithm",
+      "best_params": {
+        "n_estimators": 100,
+        "max_depth": 8,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.9510933806146573,
+      "test_score": 1.0,
+      "seconds": 9.597069200000988,
+      "n_evaluations": 8,
+      "n_distinct_configs": 5,
+      "full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 42
+    },
+    {
+      "dataset": "wine",
+      "strategy": "genetic_algorithm",
+      "best_params": {
+        "n_estimators": 50,
+        "max_depth": 16,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.978871158392435,
+      "test_score": 0.9444444444444444,
+      "seconds": 9.902869699999428,
+      "n_evaluations": 8,
+      "n_distinct_configs": 5,
+      "full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 43
+    },
+    {
+      "dataset": "wine",
+      "strategy": "genetic_algorithm",
+      "best_params": {
+        "n_estimators": 50,
+        "max_depth": 4,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.9861111111111112,
+      "test_score": 1.0,
+      "seconds": 9.005690399997548,
+      "n_evaluations": 8,
+      "n_distinct_configs": 5,
+      "full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 44
+    },
+    {
+      "dataset": "wine",
+      "strategy": "successive_halving",
+      "best_params": {
+        "n_estimators": 100,
+        "max_depth": 8,
+        "min_samples_split": 10
+      },
+      "cv_score": 0.9510933806146573,
+      "test_score": 1.0,
+      "seconds": 7.9899914000016,
+      "n_evaluations": 13,
+      "n_distinct_configs": 9,
+      "full_fidelity_budget": 3.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 42
+    },
+    {
+      "dataset": "wine",
+      "strategy": "successive_halving",
+      "best_params": {
+        "n_estimators": 50,
+        "max_depth": 8,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.978871158392435,
+      "test_score": 0.9444444444444444,
+      "seconds": 8.274061599997367,
+      "n_evaluations": 13,
+      "n_distinct_configs": 9,
+      "full_fidelity_budget": 3.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 43
+    },
+    {
+      "dataset": "wine",
+      "strategy": "successive_halving",
+      "best_params": {
+        "n_estimators": 50,
+        "max_depth": 8,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.9861111111111112,
+      "test_score": 1.0,
+      "seconds": 7.3122317000015755,
+      "n_evaluations": 13,
+      "n_distinct_configs": 9,
+      "full_fidelity_budget": 3.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 44
+    },
+    {
+      "dataset": "breast_cancer",
+      "strategy": "grid_search",
+      "best_params": {
+        "n_estimators": 100,
+        "max_depth": 16,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.9604537004763566,
+      "test_score": 0.956140350877193,
+      "seconds": 6.594912300002761,
+      "n_evaluations": 18,
+      "n_distinct_configs": 18,
+      "full_fidelity_budget": 18.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 42
+    },
+    {
+      "dataset": "breast_cancer",
+      "strategy": "grid_search",
+      "best_params": {
+        "n_estimators": 200,
+        "max_depth": 16,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.960439177413733,
+      "test_score": 0.9473684210526315,
+      "seconds": 9.344613099998242,
+      "n_evaluations": 18,
+      "n_distinct_configs": 18,
+      "full_fidelity_budget": 18.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 43
+    },
+    {
+      "dataset": "breast_cancer",
+      "strategy": "grid_search",
+      "best_params": {
+        "n_estimators": 100,
+        "max_depth": 16,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.9560532125014524,
+      "test_score": 0.9736842105263158,
+      "seconds": 8.730169900001783,
+      "n_evaluations": 18,
+      "n_distinct_configs": 18,
+      "full_fidelity_budget": 18.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 44
+    },
+    {
+      "dataset": "breast_cancer",
+      "strategy": "random_search",
+      "best_params": {
+        "n_estimators": 200,
+        "max_depth": 8,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.9582607180202162,
+      "test_score": 0.956140350877193,
+      "seconds": 4.873230099998182,
+      "n_evaluations": 8,
+      "n_distinct_configs": 8,
+      "full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 42
+    },
+    {
+      "dataset": "breast_cancer",
+      "strategy": "random_search",
+      "best_params": {
+        "n_estimators": 100,
+        "max_depth": 8,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.960439177413733,
+      "test_score": 0.9473684210526315,
+      "seconds": 4.8450435000013385,
+      "n_evaluations": 8,
+      "n_distinct_configs": 8,
+      "full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 43
+    },
+    {
+      "dataset": "breast_cancer",
+      "strategy": "random_search",
+      "best_params": {
+        "n_estimators": 200,
+        "max_depth": 8,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.9516527245265481,
+      "test_score": 0.9824561403508771,
+      "seconds": 4.7963472999981605,
+      "n_evaluations": 8,
+      "n_distinct_configs": 8,
+      "full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 44
+    },
+    {
+      "dataset": "breast_cancer",
+      "strategy": "bayesian_search",
+      "best_params": {
+        "n_estimators": 100,
+        "max_depth": 8,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.9604537004763566,
+      "test_score": 0.956140350877193,
+      "seconds": 14.809993099999701,
+      "n_evaluations": 8,
+      "n_distinct_configs": 8,
+      "full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 42
+    },
+    {
+      "dataset": "breast_cancer",
+      "strategy": "bayesian_search",
+      "best_params": {
+        "n_estimators": 100,
+        "max_depth": 16,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.960439177413733,
+      "test_score": 0.9473684210526315,
+      "seconds": 13.521224500000244,
+      "n_evaluations": 8,
+      "n_distinct_configs": 8,
+      "full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 43
+    },
+    {
+      "dataset": "breast_cancer",
+      "strategy": "bayesian_search",
+      "best_params": {
+        "n_estimators": 100,
+        "max_depth": 4,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.9516672475891715,
+      "test_score": 0.9824561403508771,
+      "seconds": 13.859033299999282,
+      "n_evaluations": 8,
+      "n_distinct_configs": 8,
+      "full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 44
+    },
+    {
+      "dataset": "breast_cancer",
+      "strategy": "genetic_algorithm",
+      "best_params": {
+        "n_estimators": 100,
+        "max_depth": 8,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.9604537004763566,
+      "test_score": 0.956140350877193,
+      "seconds": 10.30584219999946,
+      "n_evaluations": 8,
+      "n_distinct_configs": 5,
+      "full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 42
+    },
+    {
+      "dataset": "breast_cancer",
+      "strategy": "genetic_algorithm",
+      "best_params": {
+        "n_estimators": 100,
+        "max_depth": 16,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.960439177413733,
+      "test_score": 0.9473684210526315,
+      "seconds": 10.268293699999049,
+      "n_evaluations": 8,
+      "n_distinct_configs": 5,
+      "full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 43
+    },
+    {
+      "dataset": "breast_cancer",
+      "strategy": "genetic_algorithm",
+      "best_params": {
+        "n_estimators": 100,
+        "max_depth": 8,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.9560532125014524,
+      "test_score": 0.9824561403508771,
+      "seconds": 9.953821099999914,
+      "n_evaluations": 8,
+      "n_distinct_configs": 4,
+      "full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 44
+    },
+    {
+      "dataset": "breast_cancer",
+      "strategy": "successive_halving",
+      "best_params": {
+        "n_estimators": 100,
+        "max_depth": 4,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.9582752410828395,
+      "test_score": 0.956140350877193,
+      "seconds": 8.75164919999952,
+      "n_evaluations": 13,
+      "n_distinct_configs": 9,
+      "full_fidelity_budget": 3.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 42
+    },
+    {
+      "dataset": "breast_cancer",
+      "strategy": "successive_halving",
+      "best_params": {
+        "n_estimators": 100,
+        "max_depth": 8,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.960439177413733,
+      "test_score": 0.9473684210526315,
+      "seconds": 8.185250400001678,
+      "n_evaluations": 13,
+      "n_distinct_configs": 9,
+      "full_fidelity_budget": 3.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 43
+    },
+    {
+      "dataset": "breast_cancer",
+      "strategy": "successive_halving",
+      "best_params": {
+        "n_estimators": 200,
+        "max_depth": 8,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.9516527245265481,
+      "test_score": 0.9824561403508771,
+      "seconds": 8.655498299998726,
+      "n_evaluations": 13,
+      "n_distinct_configs": 9,
+      "full_fidelity_budget": 3.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 44
+    },
+    {
+      "dataset": "digits",
+      "strategy": "grid_search",
+      "best_params": {
+        "n_estimators": 100,
+        "max_depth": 16,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.9742519137091162,
+      "test_score": 0.9611111111111111,
+      "seconds": 7.0072175999994215,
+      "n_evaluations": 18,
+      "n_distinct_configs": 18,
+      "full_fidelity_budget": 18.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 42
+    },
+    {
+      "dataset": "digits",
+      "strategy": "grid_search",
+      "best_params": {
+        "n_estimators": 200,
+        "max_depth": 16,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.9728601252609602,
+      "test_score": 0.9888888888888889,
+      "seconds": 10.642010300001857,
+      "n_evaluations": 18,
+      "n_distinct_configs": 18,
+      "full_fidelity_budget": 18.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 43
+    },
+    {
+      "dataset": "digits",
+      "strategy": "grid_search",
+      "best_params": {
+        "n_estimators": 200,
+        "max_depth": 16,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.9714683368128044,
+      "test_score": 0.975,
+      "seconds": 10.241566799999418,
+      "n_evaluations": 18,
+      "n_distinct_configs": 18,
+      "full_fidelity_budget": 18.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 44
+    },
+    {
+      "dataset": "digits",
+      "strategy": "random_search",
+      "best_params": {
+        "n_estimators": 200,
+        "max_depth": 8,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.9728601252609604,
+      "test_score": 0.9611111111111111,
+      "seconds": 5.512978499999008,
+      "n_evaluations": 8,
+      "n_distinct_configs": 8,
+      "full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 42
+    },
+    {
+      "dataset": "digits",
+      "strategy": "random_search",
+      "best_params": {
+        "n_estimators": 200,
+        "max_depth": 16,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.9728601252609602,
+      "test_score": 0.9888888888888889,
+      "seconds": 5.706420499998785,
+      "n_evaluations": 8,
+      "n_distinct_configs": 8,
+      "full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 43
+    },
+    {
+      "dataset": "digits",
+      "strategy": "random_search",
+      "best_params": {
+        "n_estimators": 200,
+        "max_depth": 8,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.9659011830201809,
+      "test_score": 0.9638888888888889,
+      "seconds": 5.35694710000098,
+      "n_evaluations": 8,
+      "n_distinct_configs": 8,
+      "full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 44
+    },
+    {
+      "dataset": "digits",
+      "strategy": "bayesian_search",
+      "best_params": {
+        "n_estimators": 200,
+        "max_depth": 8,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.9728601252609604,
+      "test_score": 0.9611111111111111,
+      "seconds": 16.163275099999737,
+      "n_evaluations": 8,
+      "n_distinct_configs": 8,
+      "full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 42
+    },
+    {
+      "dataset": "digits",
+      "strategy": "bayesian_search",
+      "best_params": {
+        "n_estimators": 200,
+        "max_depth": 16,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.9728601252609602,
+      "test_score": 0.9888888888888889,
+      "seconds": 16.618657700000767,
+      "n_evaluations": 8,
+      "n_distinct_configs": 8,
+      "full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 43
+    },
+    {
+      "dataset": "digits",
+      "strategy": "bayesian_search",
+      "best_params": {
+        "n_estimators": 100,
+        "max_depth": 16,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.9686847599164926,
+      "test_score": 0.9722222222222222,
+      "seconds": 15.951447699997516,
+      "n_evaluations": 8,
+      "n_distinct_configs": 8,
+      "full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 44
+    },
+    {
+      "dataset": "digits",
+      "strategy": "genetic_algorithm",
+      "best_params": {
+        "n_estimators": 100,
+        "max_depth": 16,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.9742519137091162,
+      "test_score": 0.9611111111111111,
+      "seconds": 10.119758900000306,
+      "n_evaluations": 8,
+      "n_distinct_configs": 5,
+      "full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 42
+    },
+    {
+      "dataset": "digits",
+      "strategy": "genetic_algorithm",
+      "best_params": {
+        "n_estimators": 100,
+        "max_depth": 16,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.9700765483646485,
+      "test_score": 0.9861111111111112,
+      "seconds": 10.819706999998743,
+      "n_evaluations": 8,
+      "n_distinct_configs": 5,
+      "full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 43
+    },
+    {
+      "dataset": "digits",
+      "strategy": "genetic_algorithm",
+      "best_params": {
+        "n_estimators": 100,
+        "max_depth": 8,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.9672929714683368,
+      "test_score": 0.9611111111111111,
+      "seconds": 10.171893999999156,
+      "n_evaluations": 8,
+      "n_distinct_configs": 4,
+      "full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 44
+    },
+    {
+      "dataset": "digits",
+      "strategy": "successive_halving",
+      "best_params": {
+        "n_estimators": 200,
+        "max_depth": 8,
+        "min_samples_split": 10
+      },
+      "cv_score": 0.9679888656924147,
+      "test_score": 0.9638888888888889,
+      "seconds": 8.745783300000767,
+      "n_evaluations": 13,
+      "n_distinct_configs": 9,
+      "full_fidelity_budget": 3.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 42
+    },
+    {
+      "dataset": "digits",
+      "strategy": "successive_halving",
+      "best_params": {
+        "n_estimators": 200,
+        "max_depth": 16,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.9728601252609602,
+      "test_score": 0.9888888888888889,
+      "seconds": 8.966130199998588,
+      "n_evaluations": 13,
+      "n_distinct_configs": 9,
+      "full_fidelity_budget": 3.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 43
+    },
+    {
+      "dataset": "digits",
+      "strategy": "successive_halving",
+      "best_params": {
+        "n_estimators": 200,
+        "max_depth": 8,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.9659011830201809,
+      "test_score": 0.9638888888888889,
+      "seconds": 9.018369500001427,
+      "n_evaluations": 13,
+      "n_distinct_configs": 9,
+      "full_fidelity_budget": 3.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 44
+    },
+    {
+      "dataset": "glass",
+      "strategy": "grid_search",
+      "best_params": {
+        "n_estimators": 200,
+        "max_depth": 16,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.7192982456140351,
+      "test_score": 0.8372093023255814,
+      "seconds": 6.014456100001553,
+      "n_evaluations": 18,
+      "n_distinct_configs": 18,
+      "full_fidelity_budget": 18.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 42
+    },
+    {
+      "dataset": "glass",
+      "strategy": "grid_search",
+      "best_params": {
+        "n_estimators": 200,
+        "max_depth": 16,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.7719298245614034,
+      "test_score": 0.7906976744186046,
+      "seconds": 7.960534699999698,
+      "n_evaluations": 18,
+      "n_distinct_configs": 18,
+      "full_fidelity_budget": 18.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 43
+    },
+    {
+      "dataset": "glass",
+      "strategy": "grid_search",
+      "best_params": {
+        "n_estimators": 100,
+        "max_depth": 16,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.7426900584795323,
+      "test_score": 0.7674418604651163,
+      "seconds": 8.210031900001923,
+      "n_evaluations": 18,
+      "n_distinct_configs": 18,
+      "full_fidelity_budget": 18.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 44
+    },
+    {
+      "dataset": "glass",
+      "strategy": "random_search",
+      "best_params": {
+        "n_estimators": 100,
+        "max_depth": 4,
+        "min_samples_split": 10
+      },
+      "cv_score": 0.7134502923976608,
+      "test_score": 0.7209302325581395,
+      "seconds": 4.609192000003532,
+      "n_evaluations": 8,
+      "n_distinct_configs": 8,
+      "full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 42
+    },
+    {
+      "dataset": "glass",
+      "strategy": "random_search",
+      "best_params": {
+        "n_estimators": 200,
+        "max_depth": 16,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.7719298245614034,
+      "test_score": 0.7906976744186046,
+      "seconds": 4.259395200002473,
+      "n_evaluations": 8,
+      "n_distinct_configs": 8,
+      "full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 43
+    },
+    {
+      "dataset": "glass",
+      "strategy": "random_search",
+      "best_params": {
+        "n_estimators": 200,
+        "max_depth": 8,
+        "min_samples_split": 10
+      },
+      "cv_score": 0.7134502923976608,
+      "test_score": 0.7674418604651163,
+      "seconds": 4.4368304000017815,
+      "n_evaluations": 8,
+      "n_distinct_configs": 8,
+      "full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 44
+    },
+    {
+      "dataset": "glass",
+      "strategy": "bayesian_search",
+      "best_params": {
+        "n_estimators": 200,
+        "max_depth": 16,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.7192982456140351,
+      "test_score": 0.8372093023255814,
+      "seconds": 13.578551900001912,
+      "n_evaluations": 8,
+      "n_distinct_configs": 8,
+      "full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 42
+    },
+    {
+      "dataset": "glass",
+      "strategy": "bayesian_search",
+      "best_params": {
+        "n_estimators": 50,
+        "max_depth": 16,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.7660818713450293,
+      "test_score": 0.7441860465116279,
+      "seconds": 12.850722200000746,
+      "n_evaluations": 8,
+      "n_distinct_configs": 8,
+      "full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 43
+    },
+    {
+      "dataset": "glass",
+      "strategy": "bayesian_search",
+      "best_params": {
+        "n_estimators": 100,
+        "max_depth": 16,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.7426900584795323,
+      "test_score": 0.7674418604651163,
+      "seconds": 12.813588600001822,
+      "n_evaluations": 8,
+      "n_distinct_configs": 8,
+      "full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 44
+    },
+    {
+      "dataset": "glass",
+      "strategy": "genetic_algorithm",
+      "best_params": {
+        "n_estimators": 100,
+        "max_depth": 16,
+        "min_samples_split": 10
+      },
+      "cv_score": 0.7017543859649122,
+      "test_score": 0.7906976744186046,
+      "seconds": 9.589078600001812,
+      "n_evaluations": 8,
+      "n_distinct_configs": 6,
+      "full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 42
+    },
+    {
+      "dataset": "glass",
+      "strategy": "genetic_algorithm",
+      "best_params": {
+        "n_estimators": 50,
+        "max_depth": 16,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.7660818713450293,
+      "test_score": 0.7441860465116279,
+      "seconds": 9.467903700002353,
+      "n_evaluations": 8,
+      "n_distinct_configs": 5,
+      "full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 43
+    },
+    {
+      "dataset": "glass",
+      "strategy": "genetic_algorithm",
+      "best_params": {
+        "n_estimators": 100,
+        "max_depth": 8,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.7251461988304094,
+      "test_score": 0.7906976744186046,
+      "seconds": 9.20931500000006,
+      "n_evaluations": 8,
+      "n_distinct_configs": 4,
+      "full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 44
+    },
+    {
+      "dataset": "glass",
+      "strategy": "successive_halving",
+      "best_params": {
+        "n_estimators": 100,
+        "max_depth": 4,
+        "min_samples_split": 10
+      },
+      "cv_score": 0.7134502923976608,
+      "test_score": 0.7209302325581395,
+      "seconds": 8.213812199999666,
+      "n_evaluations": 13,
+      "n_distinct_configs": 9,
+      "full_fidelity_budget": 3.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 42
+    },
+    {
+      "dataset": "glass",
+      "strategy": "successive_halving",
+      "best_params": {
+        "n_estimators": 200,
+        "max_depth": 16,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.7719298245614034,
+      "test_score": 0.7906976744186046,
+      "seconds": 8.42353550000189,
+      "n_evaluations": 13,
+      "n_distinct_configs": 9,
+      "full_fidelity_budget": 3.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 43
+    },
+    {
+      "dataset": "glass",
+      "strategy": "successive_halving",
+      "best_params": {
+        "n_estimators": 200,
+        "max_depth": 8,
+        "min_samples_split": 10
+      },
+      "cv_score": 0.7134502923976608,
+      "test_score": 0.7674418604651163,
+      "seconds": 9.14568270000018,
+      "n_evaluations": 13,
+      "n_distinct_configs": 9,
+      "full_fidelity_budget": 3.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 44
+    },
+    {
+      "dataset": "online_shoppers",
+      "strategy": "grid_search",
+      "best_params": {
+        "n_estimators": 200,
+        "max_depth": 16,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.9043998377939984,
+      "test_score": 0.8982157339821574,
+      "seconds": 12.091370399997686,
+      "n_evaluations": 18,
+      "n_distinct_configs": 18,
+      "full_fidelity_budget": 18.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 42
+    },
+    {
+      "dataset": "online_shoppers",
+      "strategy": "grid_search",
+      "best_params": {
+        "n_estimators": 50,
+        "max_depth": 16,
+        "min_samples_split": 10
+      },
+      "cv_score": 0.9047039740470398,
+      "test_score": 0.9038929440389294,
+      "seconds": 14.445544099999097,
+      "n_evaluations": 18,
+      "n_distinct_configs": 18,
+      "full_fidelity_budget": 18.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 43
+    },
+    {
+      "dataset": "online_shoppers",
+      "strategy": "grid_search",
+      "best_params": {
+        "n_estimators": 200,
+        "max_depth": 16,
+        "min_samples_split": 10
+      },
+      "cv_score": 0.9049067315490672,
+      "test_score": 0.8949716139497161,
+      "seconds": 15.136983899999905,
+      "n_evaluations": 18,
+      "n_distinct_configs": 18,
+      "full_fidelity_budget": 18.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 44
+    },
+    {
+      "dataset": "online_shoppers",
+      "strategy": "random_search",
+      "best_params": {
+        "n_estimators": 50,
+        "max_depth": 16,
+        "min_samples_split": 10
+      },
+      "cv_score": 0.9038929440389295,
+      "test_score": 0.8998377939983779,
+      "seconds": 9.83582970000134,
+      "n_evaluations": 8,
+      "n_distinct_configs": 8,
+      "full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 42
+    },
+    {
+      "dataset": "online_shoppers",
+      "strategy": "random_search",
+      "best_params": {
+        "n_estimators": 200,
+        "max_depth": 8,
+        "min_samples_split": 10
+      },
+      "cv_score": 0.9031832927818328,
+      "test_score": 0.9063260340632603,
+      "seconds": 9.613471699998627,
+      "n_evaluations": 8,
+      "n_distinct_configs": 8,
+      "full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 43
+    },
+    {
+      "dataset": "online_shoppers",
+      "strategy": "random_search",
+      "best_params": {
+        "n_estimators": 200,
+        "max_depth": 8,
+        "min_samples_split": 10
+      },
+      "cv_score": 0.9048053527980535,
+      "test_score": 0.8998377939983779,
+      "seconds": 8.393099799999618,
+      "n_evaluations": 8,
+      "n_distinct_configs": 8,
+      "full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 44
+    },
+    {
+      "dataset": "online_shoppers",
+      "strategy": "bayesian_search",
+      "best_params": {
+        "n_estimators": 200,
+        "max_depth": 16,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.9043998377939984,
+      "test_score": 0.8982157339821574,
+      "seconds": 25.98549179999827,
+      "n_evaluations": 8,
+      "n_distinct_configs": 8,
+      "full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 42
+    },
+    {
+      "dataset": "online_shoppers",
+      "strategy": "bayesian_search",
+      "best_params": {
+        "n_estimators": 50,
+        "max_depth": 16,
+        "min_samples_split": 10
+      },
+      "cv_score": 0.9047039740470398,
+      "test_score": 0.9038929440389294,
+      "seconds": 23.87769599999956,
+      "n_evaluations": 8,
+      "n_distinct_configs": 8,
+      "full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 43
+    },
+    {
+      "dataset": "online_shoppers",
+      "strategy": "bayesian_search",
+      "best_params": {
+        "n_estimators": 200,
+        "max_depth": 8,
+        "min_samples_split": 10
+      },
+      "cv_score": 0.9048053527980535,
+      "test_score": 0.8998377939983779,
+      "seconds": 23.854233300000487,
+      "n_evaluations": 8,
+      "n_distinct_configs": 8,
+      "full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 44
+    },
+    {
+      "dataset": "online_shoppers",
+      "strategy": "genetic_algorithm",
+      "best_params": {
+        "n_estimators": 100,
+        "max_depth": 8,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.9039943227899432,
+      "test_score": 0.9014598540145985,
+      "seconds": 13.467797400000563,
+      "n_evaluations": 8,
+      "n_distinct_configs": 5,
+      "full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 42
+    },
+    {
+      "dataset": "online_shoppers",
+      "strategy": "genetic_algorithm",
+      "best_params": {
+        "n_estimators": 50,
+        "max_depth": 8,
+        "min_samples_split": 10
+      },
+      "cv_score": 0.9028791565287916,
+      "test_score": 0.9047039740470397,
+      "seconds": 15.593113499999163,
+      "n_evaluations": 8,
+      "n_distinct_configs": 5,
+      "full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 43
+    },
+    {
+      "dataset": "online_shoppers",
+      "strategy": "genetic_algorithm",
+      "best_params": {
+        "n_estimators": 100,
+        "max_depth": 8,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.9046025952960259,
+      "test_score": 0.8990267639902676,
+      "seconds": 12.866997499997524,
+      "n_evaluations": 8,
+      "n_distinct_configs": 4,
+      "full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 44
+    },
+    {
+      "dataset": "online_shoppers",
+      "strategy": "successive_halving",
+      "best_params": {
+        "n_estimators": 200,
+        "max_depth": 16,
+        "min_samples_split": 10
+      },
+      "cv_score": 0.9030819140308192,
+      "test_score": 0.8990267639902676,
+      "seconds": 12.226510799999232,
+      "n_evaluations": 13,
+      "n_distinct_configs": 9,
+      "full_fidelity_budget": 3.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 42
+    },
+    {
+      "dataset": "online_shoppers",
+      "strategy": "successive_halving",
+      "best_params": {
+        "n_estimators": 100,
+        "max_depth": 8,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.9032811837213365,
+      "test_score": 0.9051094890510949,
+      "seconds": 9.092910699997446,
+      "n_evaluations": 13,
+      "n_distinct_configs": 9,
+      "full_fidelity_budget": 3.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 43
+    },
+    {
+      "dataset": "online_shoppers",
+      "strategy": "successive_halving",
+      "best_params": {
+        "n_estimators": 100,
+        "max_depth": 8,
+        "min_samples_split": 10
+      },
+      "cv_score": 0.9046025952960259,
+      "test_score": 0.9030819140308192,
+      "seconds": 9.564870099999098,
+      "n_evaluations": 13,
+      "n_distinct_configs": 9,
+      "full_fidelity_budget": 3.0,
+      "n_off_grid_configs": 0,
+      "time_limited": false,
+      "seed": 44
+    }
+  ],
+  "summary": {
+    "grid_search": {
+      "mean_cv": 0.9162702289817243,
+      "std_cv": 0.08105395186306678,
+      "mean_test": 0.931491351881026,
+      "std_test": 0.06761381915377836,
+      "mean_within_cell_std_test": 0.011344567757725958,
+      "total_seconds": 162.11865930000204,
+      "mean_evals": 18.0,
+      "mean_distinct_configs": 18.0,
+      "mean_full_fidelity_budget": 18.0,
+      "n_off_grid_configs": 0,
+      "speedup_vs_grid_total": 1.0,
+      "n_runs": 18
+    },
+    "random_search": {
+      "mean_cv": 0.9134497242183153,
+      "std_cv": 0.08506379644399518,
+      "mean_test": 0.9238538686175508,
+      "std_test": 0.07979255770411257,
+      "mean_within_cell_std_test": 0.014275609869351174,
+      "total_seconds": 98.88701860000583,
+      "mean_evals": 8.0,
+      "mean_distinct_configs": 8.0,
+      "mean_full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "speedup_vs_grid_total": 1.639433179351536,
+      "n_runs": 18
+    },
+    "bayesian_search": {
+      "mean_cv": 0.9154640810803834,
+      "std_cv": 0.08137008688403298,
+      "mean_test": 0.9279675144593978,
+      "std_test": 0.07306254046669909,
+      "mean_within_cell_std_test": 0.015738171010024955,
+      "total_seconds": 282.2572209000027,
+      "mean_evals": 8.0,
+      "mean_distinct_configs": 7.944444444444445,
+      "mean_full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "speedup_vs_grid_total": 0.574364966760007,
+      "n_runs": 18
+    },
+    "genetic_algorithm": {
+      "mean_cv": 0.9130056502670533,
+      "std_cv": 0.08566188710564417,
+      "mean_test": 0.9223804450440309,
+      "std_test": 0.07345605300119926,
+      "mean_within_cell_std_test": 0.018093667978992888,
+      "total_seconds": 187.9903647999963,
+      "mean_evals": 8.0,
+      "mean_distinct_configs": 4.888888888888889,
+      "mean_full_fidelity_budget": 8.0,
+      "n_off_grid_configs": 0,
+      "speedup_vs_grid_total": 0.8623774919128473,
+      "n_runs": 18
+    },
+    "successive_halving": {
+      "mean_cv": 0.9131290223807288,
+      "std_cv": 0.0848879551253972,
+      "mean_test": 0.924075775439214,
+      "std_test": 0.07984554445728698,
+      "mean_within_cell_std_test": 0.014069598869713035,
+      "total_seconds": 155.05337349999536,
+      "mean_evals": 13.0,
+      "mean_distinct_configs": 9.0,
+      "mean_full_fidelity_budget": 3.0,
+      "n_off_grid_configs": 0,
+      "speedup_vs_grid_total": 1.0455667983257835,
+      "n_runs": 18
+    }
+  }
+}

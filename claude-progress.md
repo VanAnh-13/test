@@ -524,6 +524,86 @@
   trên); full suite **413 passed, 0 failed**.
 - Artifact: `benchmarks/hpo_real_before.json`, `hpo_real_after.json` + log.
 
+## 2026-07-27 — HPO-LARGE-001 ⚠️ ĐÍNH CHÍNH SỐ LIỆU + benchmark quy mô lớn
+
+### ⚠️ Số liệu HPO-BENCH-001 / HPO-FIX-002 KHÔNG HỢP LỆ — đã thay thế
+
+Audit đối kháng 31 agent xác nhận **28 lỗi non-minor**, hai lỗi phá hỏng
+tuyên bố chính:
+
+1. **BO không tìm cùng không gian.** `infer_dimensions` (chính tính năng
+   "cải thiện" của HPO-IMPROVE-001) biến `[50,100,200]` thành
+   `Integer(50,200)` → không gian **17.667 điểm vs 18** = gấp 981 lần. Bằng
+   chứng: BO trả `n_estimators=97, max_depth=12` — không có trong lưới. Phản
+   chứng của auditor: ép cùng 18 điểm thì BO được 0.9330, **THUA** grid
+   0.9366. Tuyên bố "BO thắng grid vét cạn" là artifact, không phải hiệu quả
+   lấy mẫu.
+2. **Nhánh "Bayesian" không hề Bayesian.** batch_size=8=n_calls → `ask()` đề
+   xuất cả budget trước khi quan sát bất kỳ kết quả nào: **0 vòng thích ứng**,
+   8 điểm giống hệt nhau trên mọi dataset.
+
+Ngoài ra: 178.7x có 98.6% từ một outlier không tái hiện; `mean_speedup` dùng
+trung bình cộng của tỉ số (thiên vị lên); grid luôn chạy đầu nên gánh warm-up;
+GA "8 evals" chỉ 5 cấu hình phân biệt; SH không công bố fidelity.
+
+### 5 lỗi code đã vá (bản vá HPO-FIX-002 trước đó CHƯA ĐỦ)
+
+- GA: khối `adaptive_population` vẫn cắt budget khi user yêu cầu NHIỀU hơn →
+  bỏ qua khi `population_size` đặt tường minh.
+- GA: `self.config['generation'] = new_gen` rò rỉ budget thu nhỏ sang model
+  sau → dùng biến cục bộ `generations`, truyền vào `_create_next_generation`.
+- GA: trần "cả hai chiều" vẫn nới lên với không gian 42–100 tổ hợp (tới 2.4×)
+  → trần CHỈ GIẢM.
+- BO: `batch ≤ ceil(n_calls / min_adaptive_rounds)` (mặc định 4 vòng).
+- BO: lịch sử early-stop ghi MỘT mốc mỗi batch (trước ghi từng điểm → cắt
+  sớm ngay trong batch đầu).
+
+### 5 lỗi phương pháp đã vá trong benchmark
+
+`infer_dimensions=False` (cùng không gian), warm-up theo từng dataset,
+speedup = tỉ số TỔNG (không phải trung bình tỉ số), `--n-seeds` có sai số,
+công bố `n_distinct_configs` + `full_fidelity_budget` + `n_off_grid_configs`,
+dọn loky pool giữa các lần đo, cảnh báo khi CPU bận.
+
+### KẾT QUẢ TRUNG THỰC
+
+**6 dataset nhỏ (3 seed):** grid tốt nhất chất lượng (test 0.9315±0.068);
+random 1.64× là thứ duy nhất nhanh hơn; BO **0.57×** và GA **0.86×** CHẬM hơn
+grid; SH 1.05×. Sai số ±0.07–0.08 **lớn hơn mọi khoảng cách giữa các thuật
+toán** → khác biệt chất lượng không có ý nghĩa thống kê ở quy mô này.
+
+**Covertype 581.012×54, 251MB (máy sạch: 0 python proc, CPU 9%):**
+
+| strategy | test | evals | full-fid | giây | ×grid |
+|---|---|---|---|---|---|
+| successive_halving | 0.8413 | 13 | **3.0** | **238.3** | **3.62×** |
+| genetic_algorithm | 0.8418 | 8 (5 distinct) | 8.0 | 313.9 | 2.75× |
+| random_search | 0.8413 | 8 | 8.0 | 603.0 | 1.43× |
+| grid_search | 0.8413 | 18 | 18.0 | 861.9 | 1.00× |
+| bayesian_search | 0.8413 | 8 | 8.0 | 1086.1 | 0.79× |
+
+**Phát hiện chính cho bài báo: thứ hạng ĐẢO CHIỀU theo quy mô.** SH từ 1.05×
+(vô dụng, dữ liệu nhỏ) thành **3.62× (nhanh nhất)** ở 251MB — vì ngân sách
+quy đổi full-fidelity chỉ 3.0 so với 18 của grid, mà độ chính xác y hệt. Đúng
+lý thuyết multi-fidelity: chỉ lãi khi một fit đủ đắt (đo được: 15.6s full vs
+2.1s trên 1/9). BO chậm hơn grid ở CẢ HAI quy mô — với 8 đánh giá, chi phí
+fit GP không bao giờ khấu hao được.
+
+### Hạn chế nêu rõ
+
+- Covertype **n=1 seed** (~50 phút/lần chạy): cột ±0.0000 nghĩa là KHÔNG có
+  phương sai để báo cáo, KHÔNG phải phương sai bằng 0.
+- Một model (RandomForest), một lưới 18 tổ hợp, cv=3.
+- Bản chạy nhiễu (CPU 52%) vs sạch chênh <15% và giữ nguyên thứ hạng → thứ
+  hạng ổn định, con số tuyệt đối thì không.
+
+### Verification
+
+- `pytest tests/test_search_strategies.py` — PASS (39, gồm 6 guard hồi quy);
+  `tests/test_datasets_real.py` — PASS (16).
+- Artifact: `benchmarks/hpo_real_fair.json`, `hpo_large_clean.json`
+  (+ `hpo_large.json` bản nhiễu để đối chiếu).
+
 ## Mẫu ghi cho phiên tiếp theo
 
 ```text

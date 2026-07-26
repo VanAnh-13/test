@@ -233,6 +233,72 @@ class TestParallelCandidates:
         assert "Parallel(n_jobs=b)" not in src
         assert "self.config.get('n_jobs')" in src
 
+    def test_bo_batch_never_swallows_whole_budget(self):
+        """Regression: batch=n_calls → ask() đề xuất cả budget trước khi quan
+        sát được gì, BO không còn một bước thích ứng nào (thiết kế tựa ngẫu
+        nhiên cố định, giống hệt nhau trên mọi dataset)."""
+        for n_calls in (4, 8, 20, 40):
+            s = BayesianSearchStrategy(**dict(FAST_CFG, n_jobs=-1), n_calls=n_calls)
+            batch = s._resolve_batch_size()
+            rounds = -(-n_calls // batch)
+            assert batch < n_calls or n_calls == 1, (
+                f"n_calls={n_calls}: batch={batch} nuốt trọn budget"
+            )
+            assert rounds >= 4, f"n_calls={n_calls}: chỉ {rounds} vòng thích ứng"
+
+    def test_bo_min_adaptive_rounds_configurable(self):
+        s = BayesianSearchStrategy(
+            **dict(FAST_CFG, n_jobs=-1), n_calls=8, min_adaptive_rounds=2
+        )
+        assert s._resolve_batch_size() == 4  # 8/2
+
+    def test_ga_does_not_mutate_instance_generation(self):
+        """Regression: cap ghi đè self.config['generation'], rò rỉ budget bị
+        thu nhỏ sang mọi model dùng lại cùng instance."""
+        from automl.search.strategy.genetic_algorithm import GeneticAlgorithm
+
+        s = GeneticAlgorithm(**FAST_CFG, elite_size=1)
+        before = s.config["generation"]
+        s.search(DecisionTreeClassifier(random_state=0), GRID, X, y)
+        assert s.config["generation"] == before
+
+    def test_ga_honours_explicit_population_larger_than_adaptive(self):
+        """Regression: khối adaptive_population lấy min() nên vẫn cắt budget
+        người dùng xuống khi họ yêu cầu NHIỀU hơn."""
+        from automl.search.strategy.genetic_algorithm import GeneticAlgorithm
+
+        big_grid = {
+            "max_depth": [2, 4, 6, 8, 10],
+            "min_samples_split": [2, 4, 6, 8, 10],
+            "min_samples_leaf": [1, 2, 3, 4],
+        }  # 100 tổ hợp — đủ để cap không cắt
+        s = GeneticAlgorithm(**FAST_CFG, population_size=20, generation=2, elite_size=1)
+        _, _, _, cv, _ = _unpack(
+            s.search(DecisionTreeClassifier(random_state=0), big_grid, X, y)
+        )
+        # 20×2 = 40 đánh giá; nếu bị cắt xuống adaptive (~8) thì ≤ 16
+        assert len(cv["params"]) > 20, (
+            f"chỉ {len(cv['params'])} đánh giá — budget 20×2 bị cắt"
+        )
+
+    def test_ga_cap_never_inflates_budget(self):
+        """Regression: bản vá trước nới cả chiều tăng → không gian 42–100 tổ
+        hợp chạy tới 2.4× số đánh giá so với trước khi 'sửa'."""
+        from automl.search.strategy.genetic_algorithm import GeneticAlgorithm
+
+        mid_grid = {
+            "max_depth": [2, 4, 6, 8, 10, 12, 14],
+            "min_samples_split": [2, 4, 6, 8, 10, 12],
+        }  # 42 tổ hợp
+        s = GeneticAlgorithm(**FAST_CFG, elite_size=1)
+        default_budget = s.config["population_size"] * s.config["generation"]
+        _, _, _, cv, _ = _unpack(
+            s.search(DecisionTreeClassifier(random_state=0), mid_grid, X, y)
+        )
+        assert len(cv["params"]) <= default_budget, (
+            f"{len(cv['params'])} đánh giá > budget mặc định {default_budget}"
+        )
+
     def test_grid_backend_prefers_loky(self):
         from automl.search.strategy.grid_search import GridSearchStrategy
 

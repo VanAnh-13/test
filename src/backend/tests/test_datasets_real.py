@@ -15,17 +15,19 @@ from automl.search.datasets_real import (
 )
 
 
+SMALL = {"iris", "wine", "breast_cancer", "digits", "glass", "online_shoppers"}
+
+
 class TestRegistry:
-    def test_six_datasets(self):
-        assert len(REGISTRY) == 6
-        assert set(available_datasets()) == {
-            "iris",
-            "wine",
-            "breast_cancer",
-            "digits",
-            "glass",
-            "online_shoppers",
-        }
+    def test_small_datasets_registered(self):
+        assert set(available_datasets(include_large=False)) == SMALL
+
+    def test_large_dataset_registered_but_opt_in(self):
+        """covtype (~250MB) phải có trong registry nhưng KHÔNG nằm trong
+        mặc định — nếu không, mọi lần chạy benchmark đều kéo dài hàng chục phút."""
+        assert "covtype" in available_datasets()
+        assert "covtype" not in available_datasets(include_large=False)
+        assert REGISTRY["covtype"]["large"] is True
 
     def test_unknown_raises(self):
         with pytest.raises(KeyError):
@@ -97,8 +99,8 @@ class TestMetaFeatures:
 
 
 class TestBulkLoad:
-    def test_load_all(self):
-        ds = load_real_datasets()
+    def test_load_all_small(self):
+        ds = load_real_datasets(available_datasets(include_large=False))
         assert len(ds) == 6
         assert all(d["X"].shape[0] == len(d["y"]) for d in ds)
 

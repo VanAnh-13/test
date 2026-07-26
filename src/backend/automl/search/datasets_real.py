@@ -40,7 +40,17 @@ REGISTRY: Dict[str, Dict[str, Any]] = {
         "path": "assets/online_shoppers/online_shoppers_intention.csv",
         "target": "Revenue",
     },
+    # Quy mô lớn: 581.012×54 ≈ 250MB RAM. Lần đầu cần mạng (~75MB tải từ
+    # figshare, KHÔNG qua OpenML), sau đó sklearn cache ở ~/scikit_learn_data.
+    "covtype": {
+        "kind": "sklearn_fetch",
+        "loader": "fetch_covtype",
+        "large": True,
+    },
 }
+
+# Dataset cần tải lần đầu / tốn RAM lớn — benchmark nên chạy riêng
+LARGE_DATASETS = [name for name, spec in REGISTRY.items() if spec.get("large")]
 
 
 def _encode_frame(df: pd.DataFrame, target: str) -> tuple:
@@ -77,7 +87,7 @@ def load_dataset(name: str) -> Dict[str, Any]:
         raise KeyError(f"Unknown dataset {name!r}. Available: {', '.join(REGISTRY)}")
     spec = REGISTRY[name]
 
-    if spec["kind"] == "sklearn":
+    if spec["kind"] in ("sklearn", "sklearn_fetch"):
         from sklearn import datasets as skd
 
         bunch = getattr(skd, spec["loader"])()
@@ -120,5 +130,7 @@ def load_real_datasets(names: Optional[List[str]] = None) -> List[Dict[str, Any]
     return out
 
 
-def available_datasets() -> List[str]:
-    return list(REGISTRY)
+def available_datasets(include_large: bool = True) -> List[str]:
+    if include_large:
+        return list(REGISTRY)
+    return [n for n, spec in REGISTRY.items() if not spec.get("large")]
