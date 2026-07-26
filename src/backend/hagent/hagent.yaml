@@ -303,6 +303,16 @@ llm:
       temperature: 0.0
       max_tokens: 4096
 
+    # Meta AI (OpenAI-compatible, endpoint riêng của user) — key qua env,
+    # KHÔNG BAO GIỜ đặt key literal ở đây: repo public
+    - name: "meta-ai"
+      provider: "openai_compatible"
+      model: "${META_AI_MODEL:-muse-spark-1.1}"
+      base_url: "${META_AI_BASE_URL:-https://api.meta.ai/v1}"
+      api_key: "${META_AI_API_KEY}"
+      temperature: 0.0
+      max_tokens: 4096
+
     # Mock LLM cho test/CI — trỏ vào tests/mock_llm_server.py (OpenAI-compatible).
     # PHẢI là entry thật: resolve model giờ strict, tên không đăng ký sẽ raise
     # (trước đây ci-mock sống nhờ fallback âm thầm về openai-gpt4o-mini).

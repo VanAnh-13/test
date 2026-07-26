@@ -1072,6 +1072,41 @@
         "tested_at": "2026-07-27T13:40:00+07:00",
         "notes": "docker-compose.yaml protected — sửa theo yêu cầu trực tiếp của user. Healthcheck 4 service; bridge depends_on toolkit service_healthy (proxy chỉ lên khi agent thật sẵn sàng); toolkit chờ mongo healthy. deploy.llm.env.example điền đủ (file trước đó RỖNG); docs/deploy.md quy trình 6 bước gồm train checkpoint + smoke --require-live."
       }
+    },
+    {
+      "id": "LLM-META-001",
+      "title": "Đăng ký endpoint OpenAI-compatible của user (api.meta.ai, model muse-spark-1.1) — key CHỈ trong .env local",
+      "status": "done",
+      "acceptance_criteria": [
+        "hagent.yaml thêm entry meta-ai (openai_compatible) tham chiếu ${META_AI_API_KEY}/${META_AI_BASE_URL}/${META_AI_MODEL} — KHÔNG BAO GIỜ chứa key literal (repo public).",
+        ".env local (PROTECTED — user cung cấp key trực tiếp để cấu hình = phê duyệt) chứa key; xác nhận .env KHÔNG bị git track trước khi commit.",
+        "Smoke live: create_chat_model('meta-ai') gọi thật 1 prompt, trả lời đúng, usage tracker đếm được token.",
+        "deploy.llm.env.example bổ sung dòng META_AI_* (placeholder rỗng)."
+      ],
+      "allowed_files": [
+        "src/backend/hagent/hagent.yaml",
+        "src/backend/.env",
+        "src/backend/deploy.llm.env.example",
+        "feature_list.json",
+        "claude-progress.md"
+      ],
+      "test_commands": [
+        "cd src/backend && git check-ignore .env",
+        "cd src/backend && .venv/Scripts/python.exe -c \"from hagent.agent.llm_config import require_model_config; print(require_model_config('meta-ai').model)\"",
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=300"
+      ],
+      "verification": {
+        "status": "passed",
+        "commands_run": [
+          "git check-ignore .env (GITIGNORED-OK)",
+          "require_model_config('meta-ai') → provider=openai_compatible model=muse-spark-1.1 (resolve OK)",
+          "Smoke live: model.invoke('15+27?') → '15 + 27 = 42'; usage tracker in=23 out=390 calls=1",
+          "git grep key trên tracked files → exit 1 (key KHÔNG có trong repo)",
+          "pytest -m 'not ollama' (510 passed)"
+        ],
+        "tested_at": "2026-07-27T14:30:00+07:00",
+        "notes": ".env protected — user cung cấp key trực tiếp để cấu hình = phê duyệt; key chỉ trong .env (ignored), hagent.yaml chỉ tham chiếu ${META_AI_API_KEY}. GET /v1/models của endpoint chỉ có đúng 1 model: muse-spark-1.1."
+      }
     }
   ]
 }

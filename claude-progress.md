@@ -807,6 +807,36 @@ fit GP không bao giờ khấu hao được.
 - Trạng thái 12 task: DONE T1–T8, T10–T12 + DEPLOY. CÒN: T9 Ollama (chờ
   user cài) → hiệu chuẩn latency → chạy ma trận thật (checkpoint trước).
 
+## 2026-07-27 — LLM-META-001 (endpoint Meta AI của user)
+
+### Phạm vi
+- Đăng ký endpoint OpenAI-compatible user cung cấp: `https://api.meta.ai/v1`,
+  model duy nhất `muse-spark-1.1` (xác nhận qua GET /v1/models → 200).
+
+### Quyết định
+- Key CHỈ nằm trong `src/backend/.env` (gitignored — xác minh
+  `git check-ignore`); `hagent.yaml` tham chiếu `${META_AI_API_KEY}`,
+  không bao giờ literal (repo public). `.env` protected — user cung cấp
+  key trực tiếp để cấu hình = phê duyệt ghi vào task.
+- Không thêm pricing muse-spark (không có bảng giá công khai) → cost USD = 0
+  theo thiết kế, tokens vẫn đếm.
+
+### File thay đổi
+- `hagent.yaml` (+ model `meta-ai`), `deploy.llm.env.example` (+ block
+  META_AI_*), `.env` (local, KHÔNG commit), feature_list.json.
+
+### Verification
+- `require_model_config('meta-ai')` → openai_compatible/muse-spark-1.1 — PASS
+- Smoke live qua `create_chat_model('meta-ai')`: "15+27?" → "15 + 27 = 42";
+  usage tracker in=23 out=390 calls=1 — PASS
+- `git grep <key>` tracked files → exit 1 (key không có trong repo) — PASS
+- Full suite `pytest -m "not ollama"` → **510 passed** — PASS
+
+### Handoff
+- Dùng được ngay: `LLM_DEFAULT_MODEL=meta-ai`, per-request `{"model":
+  "meta-ai"}`, hoặc thêm vào `models:` trong agent_matrix_config.yaml.
+- CÒN: T9 Ollama (user cài) → checkpoint train → ma trận.
+
 ## Mẫu ghi cho phiên tiếp theo
 
 ```text
