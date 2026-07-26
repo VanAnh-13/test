@@ -361,6 +361,49 @@
         "tested_at": "2026-07-26T18:10:00+07:00",
         "notes": "Chưa tải dữ liệu thật (cần mạng, chạy khi bắt đầu thí nghiệm): python scripts/fetch_openml_datasets.py"
       }
+    },
+    {
+      "id": "REVIEW-FIX-001",
+      "title": "Sửa 6 lỗi được xác nhận từ adversarial review (train/serve skew, regret nhiễu, warm-start leak, model fallback, dấu CEM, CLI validation)",
+      "status": "done",
+      "acceptance_criteria": [
+        "A: builder truyền dataset_meta (từ world_model snapshot) vào planner + ranking; default use_latent=false cho outcome_head/ensemble để train/serve đồng nhất.",
+        "B: benchmark tính curve/regret/jobs_to_95 trên expected_score của config đã submit (surface biết trước); điểm quan sát nhiễu vẫn báo cáo riêng.",
+        "C: collect_warm_start_configs(top_k<=0) trả []; benchmark dùng user_id riêng theo condition.",
+        "D: campaign_step nhận outcome_model tường minh ('auto'/None/model — None tắt hẳn fallback đĩa); build_campaign tương tự; benchmark truyền model online vào cả builder lẫn runner.",
+        "E: CEM acquisition = sign*mean + beta*std (optimism đúng cả khi minimize).",
+        "F: run_benchmark.py và run_benchmark_matrix validate conditions trước khi chạy.",
+        "Toàn bộ test cập nhật tương ứng; full suite không hồi quy."
+      ],
+      "allowed_files": [
+        "src/backend/hagent/agent/campaign/builder.py",
+        "src/backend/hagent/agent/campaign/runner.py",
+        "src/backend/hagent/agent/campaign/warm_start.py",
+        "src/backend/hagent/world/planner/cem_config_v1.py",
+        "src/backend/hagent/agent/eval/benchmark.py",
+        "src/backend/scripts/run_benchmark.py",
+        "src/backend/hagent/hagent.yaml",
+        "src/backend/tests/test_benchmark.py",
+        "src/backend/tests/test_cem_config_planner.py",
+        "src/backend/tests/test_outcome_surprise.py",
+        "feature_list.json",
+        "claude-progress.md"
+      ],
+      "test_commands": [
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests/test_benchmark.py tests/test_cem_config_planner.py tests/test_outcome_surprise.py -q --timeout=180",
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=180",
+        "cd src/backend && .venv/Scripts/python.exe scripts/run_benchmark.py --conditions wm,no_wm,random,fixed_grid_search --profiles synth_noisy --budget 12 --seeds 2 --out benchmarks/smoke2.json"
+      ],
+      "verification": {
+        "status": "passed",
+        "commands_run": [
+          "cd src/backend && .venv/Scripts/python.exe -m pytest tests/test_benchmark.py tests/test_cem_config_planner.py tests/test_outcome_surprise.py -q --timeout=180 (55 passed)",
+          "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=180 (323 passed)",
+          "cd src/backend && .venv/Scripts/python.exe scripts/run_benchmark.py --conditions wm,no_wm,random,fixed_grid_search --profiles synth_noisy --budget 12 --seeds 2 (fixed_grid regret 0.6667 — hết bias max-nhiễu; wm regret 0.0)"
+        ],
+        "tested_at": "2026-07-26T19:05:00+07:00",
+        "notes": "Nguồn: workflow review 19 agents, 15/15 finding non-minor xác nhận, gộp thành 6 fix A–F. Guard tests trong TestReviewFixes."
+      }
     }
   ]
 }

@@ -58,15 +58,24 @@ def _base_train_params(goal: dict, user_id: str | None) -> Dict[str, Any]:
 _LOWER_IS_BETTER_METRICS = {"mae", "mse", "rmse", "rmsle", "loss"}
 
 
-def _resolve_outcome_model(outcome_model: Any | None) -> Any | None:
-    if outcome_model is not None:
-        return outcome_model if getattr(outcome_model, "is_ready", False) else None
-    try:
-        from hagent.agent.campaign.wm_hooks import _default_outcome_model
-
-        return _default_outcome_model()
-    except Exception:
+def _resolve_outcome_model(outcome_model: Any) -> Any | None:
+    """
+    Sentinel "auto" → model mặc định từ config (checkpoint trên đĩa).
+    None → TẮT hẳn (không fallback — benchmark cần để tránh nhiễm checkpoint rác).
+    Object → dùng nếu is_ready.
+    """
+    if outcome_model is None:
         return None
+    if isinstance(outcome_model, str):
+        if outcome_model != "auto":
+            return None
+        try:
+            from hagent.agent.campaign.wm_hooks import _default_outcome_model
+
+            return _default_outcome_model()
+        except Exception:
+            return None
+    return outcome_model if getattr(outcome_model, "is_ready", False) else None
 
 
 def _campaign_planner(cfg: dict) -> Any | None:
@@ -92,7 +101,7 @@ async def build_campaign(
     world_model: dict | None = None,
     fact_store: Any | None = None,
     config: dict | None = None,
-    outcome_model: Any | None = None,
+    outcome_model: Any = "auto",
 ) -> Campaign:
     """Create campaign with diversified + warm-started training variants."""
     cfg = dict(_campaign_config())
@@ -153,6 +162,14 @@ async def build_campaign(
             )
         )
 
+    # Meta của dataset đích — cùng phân phối feature với lúc train outcome head
+    dataset_meta: dict | None = None
+    ds_id = base.get("dataset_id")
+    if ds_id and isinstance(world_model, dict):
+        ds_entry = (world_model.get("datasets") or {}).get(ds_id)
+        if isinstance(ds_entry, dict):
+            dataset_meta = dict(ds_entry)
+
     # 2a) World-model proposals cho các slot còn lại (CEM trên config space).
     #     Model chưa sẵn sàng → bỏ qua, rơi về round-robin như cũ.
     model = None
@@ -163,6 +180,7 @@ async def build_campaign(
             metric = str(base.get("metric") or "").lower()
             proposals = planner.plan_campaign_configs(
                 base_params=base,
+                dataset_meta=dataset_meta,
                 outcome_model=model,
                 n_return=n - len(variants),
                 higher_is_better=metric not in _LOWER_IS_BETTER_METRICS,
@@ -266,6 +284,7 @@ async def build_campaign(
                 ranked = rank_variants_by_outcome(
                     variants[:n],
                     head=model,
+                    dataset_meta=dataset_meta,
                     higher_is_better=metric not in _LOWER_IS_BETTER_METRICS,
                 )
                 variants = [v for v, _ in ranked]

@@ -125,6 +125,9 @@ class SimulatedAutoMLEnv:
                 "search_algorithm": algo,
                 "time_limit": t,
                 "best_score": score,
+                # Kỳ vọng không nhiễu của config này — metric steering-quality
+                # phải tính trên giá trị này, không phải max của các draw nhiễu
+                "expected_score": self.profile.expected_score(algo, t),
             }
             self.jobs[job_id] = record
             self.submission_log.append(record)
@@ -175,6 +178,18 @@ def _base_params(goal: dict) -> dict:
     }
 
 
+def validate_condition(condition: str) -> None:
+    """Raise ValueError nếu condition không hợp lệ — gọi TRƯỚC khi chạy ma trận."""
+    if condition in ("wm", "no_wm", "random"):
+        return
+    if condition.startswith("fixed_") and condition.removeprefix("fixed_") in _ALGOS:
+        return
+    raise ValueError(
+        f"Unknown benchmark condition: {condition!r}. "
+        f"Valid: wm, no_wm, random, fixed_<algo> with algo in {_ALGOS}"
+    )
+
+
 # ── Core: run one condition ──────────────────────────────
 
 
@@ -189,6 +204,7 @@ async def _run_condition_async(
     head_config: dict | None = None,
     train_epochs: int = 60,
 ) -> Dict[str, Any]:
+    validate_condition(condition)
     goal = {
         "goal_type": "train",
         "dataset_id": profile.name,
@@ -200,6 +216,9 @@ async def _run_condition_async(
     set_tool_invoker(env.invoke)
     rng = np.random.default_rng(seed + 1)
     head_cfg = dict(head_config or {"use_latent": False, "hidden_dim": 32})
+    # user_id riêng theo condition — chặn nhiễm chéo qua warm-start memory
+    uid = f"bench_{profile.name}_{condition}_{seed}"
+    wm_snapshot = {"datasets": {profile.name: dict(profile.meta)}}
 
     samples: List[Dict[str, Any]] = []
     outcome_model = None
@@ -213,25 +232,30 @@ async def _run_condition_async(
             if condition == "wm":
                 camp = await build_campaign(
                     goal,
-                    user_id=f"bench_{profile.name}_{seed}",
+                    user_id=uid,
+                    world_model=wm_snapshot,
                     config={
                         "n_job_candidates": n,
                         "warm_start_top_k": 0,
                         "wm_variant_proposal": True,
                         "wm_rank_variants": True,
                     },
+                    # None (chưa train) = TẮT fallback checkpoint đĩa — không
+                    # để model lạ trên máy lọt vào điều kiện thí nghiệm
                     outcome_model=outcome_model,
                 )
             elif condition == "no_wm":
                 camp = await build_campaign(
                     goal,
-                    user_id=f"bench_{profile.name}_{seed}",
+                    user_id=uid,
+                    world_model=wm_snapshot,
                     config={
                         "n_job_candidates": n,
                         "warm_start_top_k": 0,
                         "wm_variant_proposal": False,
                         "wm_rank_variants": False,
                     },
+                    outcome_model=None,
                 )
             elif condition == "random":
                 params_list = [
@@ -245,8 +269,6 @@ async def _run_condition_async(
                 camp = _campaign_from_params(goal, params_list, source="random")
             elif condition.startswith("fixed_"):
                 algo = condition.removeprefix("fixed_")
-                if algo not in _ALGOS:
-                    raise ValueError(f"Unknown fixed condition algorithm: {algo!r}")
                 params_list = [
                     dict(
                         _base_params(goal),
@@ -256,7 +278,7 @@ async def _run_condition_async(
                     for _ in range(n)
                 ]
                 camp = _campaign_from_params(goal, params_list, source=condition)
-            else:
+            else:  # đã validate ở đầu hàm — chỉ còn "random" rơi vào nhánh trên
                 raise ValueError(f"Unknown benchmark condition: {condition!r}")
 
             events: List[dict] = []
@@ -264,10 +286,13 @@ async def _run_condition_async(
             while camp.status not in ("done", "failed") and ticks < _MAX_TICKS:
                 camp = await campaign_step(
                     camp,
-                    user_id=f"bench_{profile.name}_{seed}",
+                    user_id=uid,
                     user_token=None,
-                    world_model={"datasets": {profile.name: dict(profile.meta)}},
+                    world_model=wm_snapshot,
                     surprise_events=events,
+                    # Model train online đo surprise cho wm; các condition khác
+                    # tắt hẳn (None) để không đụng checkpoint đĩa
+                    outcome_model=outcome_model if condition == "wm" else None,
                 )
                 ticks += 1
             outcome_surprise_events.extend(
@@ -293,8 +318,15 @@ async def _run_condition_async(
     finally:
         set_tool_invoker(None)
 
-    scores = [r["best_score"] for r in env.submission_log[:budget_jobs]]
+    # Steering-quality metrics tính trên EXPECTED score của config đã submit —
+    # so max của điểm nhiễu với optimum không nhiễu sẽ bị lệch bởi
+    # max-order-statistic (~noise·E[max N] > cả khoảng cách giữa các policy
+    # trên profile nhiễu). Điểm quan sát (nhiễu) vẫn báo cáo riêng.
+    log = env.submission_log[:budget_jobs]
+    scores = [r["expected_score"] for r in log]
+    observed_scores = [r["best_score"] for r in log]
     curve = best_so_far_curve(scores)
+    observed_curve = best_so_far_curve(observed_scores)
     final_best = curve[-1] if curve else None
     threshold = profile.base + 0.95 * (profile.optimum - profile.base)
     return {
@@ -304,8 +336,11 @@ async def _run_condition_async(
         "budget_jobs": budget_jobs,
         "jobs_used": env.jobs_used,
         "scores": scores,
+        "observed_scores": observed_scores,
         "curve": curve,
+        "observed_curve": observed_curve,
         "final_best": final_best,
+        "observed_final_best": observed_curve[-1] if observed_curve else None,
         "optimum": profile.optimum,
         "regret": (profile.optimum - final_best) if final_best is not None else None,
         "normalized_regret": (
@@ -341,6 +376,14 @@ def run_benchmark_matrix(
     **kwargs,
 ) -> List[Dict[str, Any]]:
     """Chạy đủ ma trận conditions × profiles × seeds, trả list kết quả."""
+    # Fail-fast: một condition sai chính tả không được phép đốt cả ma trận
+    for condition in conditions:
+        validate_condition(condition)
+    for prof_name in profiles:
+        if prof_name not in PROFILES:
+            raise ValueError(
+                f"Unknown profile {prof_name!r}. Available: {', '.join(PROFILES)}"
+            )
     results = []
     for prof_name in profiles:
         for condition in conditions:

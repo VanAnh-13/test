@@ -41,9 +41,11 @@ class FakeOutcomeModel:
         self.score_fn = score_fn
         self.std = std
         self.calls = 0
+        self.seen_dataset_meta: list = []
 
     def predict(self, params, dataset_meta=None, z=None):
         self.calls += 1
+        self.seen_dataset_meta.append(dataset_meta)
         return OutcomePrediction(
             mean=float(self.score_fn(params)), std=self.std,
             meta={"predictor": "fake"},
@@ -147,6 +149,24 @@ class TestCemConfigPlanner:
             == "genetic_algorithm"
         )
 
+    def test_exploration_bonus_correct_sign_when_minimizing(self):
+        """Khi minimize, σ cao vẫn phải là BONUS khám phá, không phải phạt."""
+
+        class VarStd(FakeOutcomeModel):
+            def predict(self, params, dataset_meta=None, z=None):
+                if params.get("search_algorithm") == "genetic_algorithm":
+                    return OutcomePrediction(mean=1.0, std=0.3)
+                return OutcomePrediction(mean=1.0, std=0.01)
+
+        explore = CemConfigV1Planner({"seed": 0, "exploration_weight": 0.5})
+        out = explore.plan_campaign_configs(
+            base_params={"metric": "mae"},
+            outcome_model=VarStd(lambda p: 0),
+            n_return=1,
+            higher_is_better=False,
+        )
+        assert out[0]["search_algorithm"] == "genetic_algorithm"
+
     def test_respects_custom_space(self):
         planner = CemConfigV1Planner(
             {"search_algorithms": ["grid_search"], "time_limit_options": [42], "seed": 0}
@@ -223,6 +243,33 @@ class TestBuilderIntegration:
             for v in camp.variants
         ]
         assert len(sigs) == len(set(sigs))
+
+    def test_builder_passes_dataset_meta_from_world_model(self):
+        """Chống train/serve skew: meta từ snapshot phải tới được model."""
+        model = FakeOutcomeModel(_bayes600_best)
+        meta = {"n_rows": 777, "n_cols": 9}
+        camp = run(
+            build_campaign(
+                GOAL,
+                user_id="u1",
+                world_model={"datasets": {"ds1": meta}},
+                config={"n_job_candidates": 3},
+                outcome_model=model,
+            )
+        )
+        assert len(camp.variants) == 3
+        assert any(m == meta for m in model.seen_dataset_meta)
+        assert all(m == meta for m in model.seen_dataset_meta if m is not None)
+
+    def test_builder_explicit_none_disables_model(self):
+        """outcome_model=None phải tắt hẳn — không rơi về checkpoint đĩa."""
+        camp = run(
+            build_campaign(
+                GOAL, user_id="u1", config={"n_job_candidates": 3},
+                outcome_model=None,
+            )
+        )
+        assert all(v.source != "wm_planner" for v in camp.variants)
 
     def test_builder_with_trained_head(self):
         """Đường đi thật: head numpy train từ synthetic data."""

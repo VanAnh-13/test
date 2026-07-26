@@ -182,6 +182,7 @@ async def campaign_step(
     fact_store: Any | None = None,
     wm_service: Any | None = None,
     surprise_events: list | None = None,
+    outcome_model: Any = "auto",
 ) -> Campaign:
     """
     One graph tick of the campaign:
@@ -190,6 +191,9 @@ async def campaign_step(
     - when all terminal → compare + mark done
 
     Optional wm_service records LeWM surprise on submit/poll.
+    outcome_model: "auto" → model mặc định từ config cho outcome surprise;
+    None → tắt hẳn; object → dùng model được truyền (benchmark dùng model
+    train online tại đây).
     """
     goal = campaign.goal or {}
     wm_snap = dict(world_model or {"user_id": user_id or ""})
@@ -286,7 +290,11 @@ async def campaign_step(
             logger.debug("campaign poll WM step: %s", exc)
 
         # Outcome-space surprise — chỉ đúng lúc variant chuyển sang completed
-        if prev_status != "completed" and variant.status == "completed":
+        if (
+            prev_status != "completed"
+            and variant.status == "completed"
+            and outcome_model is not None
+        ):
             try:
                 from hagent.agent.campaign.wm_hooks import campaign_outcome_surprise
                 from hagent.bridge.config import get_world_model_config
@@ -300,6 +308,9 @@ async def campaign_step(
                     outcome = campaign_outcome_surprise(
                         variant=variant,
                         dataset_meta=meta,
+                        outcome_model=(
+                            None if isinstance(outcome_model, str) else outcome_model
+                        ),
                         surprise_config=surprise_cfg,
                     )
                     if outcome:

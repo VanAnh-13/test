@@ -176,3 +176,86 @@ class TestMatrix:
         assert len(results) == 4
         keys = {(r["condition"], r["seed"]) for r in results}
         assert keys == {("random", 0), ("random", 1), ("no_wm", 0), ("no_wm", 1)}
+
+    def test_matrix_fails_fast_on_bad_condition(self):
+        """Condition sai phải raise TRƯỚC khi đốt bất kỳ run nào."""
+        with pytest.raises(ValueError):
+            run_benchmark_matrix(
+                conditions=["random", "fixed_gridsearch"],  # typo
+                profiles=["synth_flat"],
+                budget_jobs=4,
+                seeds=[0],
+            )
+
+    def test_matrix_fails_fast_on_bad_profile(self):
+        with pytest.raises(ValueError):
+            run_benchmark_matrix(
+                conditions=["random"], profiles=["nope"], budget_jobs=4, seeds=[0]
+            )
+
+
+class TestReviewFixes:
+    """Guard cho các lỗi đã xác nhận qua adversarial review."""
+
+    def test_metrics_use_expected_scores_not_noisy_max(self):
+        """fixed_grid trên synth_noisy phải có regret LỚN (steering tệ),
+        không bị max-of-noise che mất."""
+        res = run_condition(
+            "fixed_grid_search", "synth_noisy", budget_jobs=20, seed=0
+        )
+        prof = PROFILES["synth_noisy"]
+        # expected score của grid@600 thấp hơn optimum đúng bằng bonus bayesian
+        assert res["final_best"] == pytest.approx(
+            prof.expected_score("grid_search", 600)
+        )
+        assert res["normalized_regret"] > 0.5
+        assert res["jobs_to_95pct"] is None
+        # điểm quan sát (nhiễu) vẫn được báo cáo riêng
+        assert len(res["observed_scores"]) == 20
+        assert res["observed_final_best"] >= max(res["observed_scores"]) - 1e-12
+
+    def test_expected_curve_matches_scores(self):
+        res = run_condition("random", "synth_noisy", budget_jobs=8, seed=3)
+        assert res["curve"] == best_so_far_curve(res["scores"])
+        assert res["observed_curve"] == best_so_far_curve(res["observed_scores"])
+
+    def test_warm_start_top_k_zero_disables_all_sources(self):
+        """top_k=0 phải tắt cả warm-start từ memory (chống nhiễm chéo)."""
+        import asyncio
+        import tempfile
+
+        from hagent.agent.campaign.warm_start import collect_warm_start_configs
+        from hagent.agent.memory import Fact, LocalFactStore
+
+        with tempfile.TemporaryDirectory() as td:
+            store = LocalFactStore(td)
+            arun(
+                store.save(
+                    "u1",
+                    Fact(
+                        key="warm_start_classification",
+                        content='{"search_algorithm": "bayesian_search"}',
+                        category="model",
+                        source="campaign",
+                        confidence=0.9,
+                    ),
+                )
+            )
+            cfgs = arun(
+                collect_warm_start_configs(
+                    world_model=None,
+                    user_id="u1",
+                    problem_type="classification",
+                    top_k=0,
+                    fact_store=store,
+                )
+            )
+            assert cfgs == []
+
+    def test_wm_surprise_events_counted_no_wm_zero(self):
+        """Model online phải được runner nhìn thấy: wm có event, no_wm = 0."""
+        wm = run_condition("wm", "synth_strong", budget_jobs=12, seed=0)
+        no_wm = run_condition("no_wm", "synth_strong", budget_jobs=12, seed=0)
+        assert wm["wm_trained_after_jobs"] is not None
+        assert wm["n_outcome_surprise_events"] > 0
+        assert no_wm["n_outcome_surprise_events"] == 0

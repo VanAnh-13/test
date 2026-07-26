@@ -245,6 +245,68 @@ class TestRunnerIntegration:
             e for e in events if e.get("type") == "campaign_outcome_surprise"
         ]
 
+    def test_explicit_none_disables_events(self, monkeypatch):
+        """campaign_step(outcome_model=None) tắt hẳn — kể cả khi default có model."""
+        import hagent.agent.campaign.wm_hooks as wm_hooks
+
+        monkeypatch.setattr(
+            wm_hooks, "_default_outcome_model", lambda: _trained_head()
+        )
+
+        async def fake(action_type, params):
+            if action_type == "start_training":
+                return {"job_id": "j1", "status": 0}
+            return {
+                "id": params.get("job_id"),
+                "status": "completed",
+                "best_score": 0.82,
+            }
+
+        set_tool_invoker(fake)
+        from hagent.agent.campaign.runner import campaign_step
+
+        camp = run(build_campaign(GOAL, user_id="u1", config={"n_job_candidates": 1}))
+        events: list = []
+        run(
+            campaign_step(
+                camp, user_id="u1", user_token=None, world_model={},
+                surprise_events=events, outcome_model=None,
+            )
+        )
+        assert not [
+            e for e in events if e.get("type") == "campaign_outcome_surprise"
+        ]
+
+    def test_explicit_model_used_by_runner(self):
+        """Model truyền trực tiếp vào campaign_step được dùng, không cần default."""
+        head = _trained_head()
+
+        async def fake(action_type, params):
+            if action_type == "start_training":
+                return {"job_id": "j1", "status": 0}
+            return {
+                "id": params.get("job_id"),
+                "status": "completed",
+                "best_score": 0.82,
+            }
+
+        set_tool_invoker(fake)
+        from hagent.agent.campaign.runner import campaign_step
+
+        camp = run(build_campaign(GOAL, user_id="u1", config={"n_job_candidates": 1}))
+        events: list = []
+        run(
+            campaign_step(
+                camp, user_id="u1", user_token=None,
+                world_model={"datasets": {"ds1": DATASET_META}},
+                surprise_events=events, outcome_model=head,
+            )
+        )
+        outcome_events = [
+            e for e in events if e.get("type") == "campaign_outcome_surprise"
+        ]
+        assert len(outcome_events) == 1
+
     def test_event_fires_once_per_completion(self, monkeypatch):
         """Tick thứ hai sau khi đã completed không phát thêm event."""
         import hagent.agent.campaign.wm_hooks as wm_hooks

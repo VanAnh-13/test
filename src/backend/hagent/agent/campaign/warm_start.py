@@ -134,6 +134,10 @@ async def collect_warm_start_configs(
     top_k: int = 3,
     fact_store: Any | None = None,
 ) -> List[Dict[str, Any]]:
+    # top_k <= 0 nghĩa là TẮT warm-start hoàn toàn — kể cả nguồn memory
+    # (benchmark dựa vào điều này để cô lập các condition).
+    if top_k <= 0:
+        return []
     wm_cfgs = configs_from_world_model(
         world_model, problem_type=problem_type, top_k=top_k
     )

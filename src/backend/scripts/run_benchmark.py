@@ -51,8 +51,15 @@ def _main() -> int:
     )
     args = parser.parse_args()
 
+    from hagent.agent.eval.benchmark import validate_condition
+
     conditions = [c.strip() for c in args.conditions.split(",") if c.strip()]
     profiles = [p.strip() for p in args.profiles.split(",") if p.strip()]
+    for c in conditions:
+        try:
+            validate_condition(c)
+        except ValueError as exc:
+            parser.error(str(exc))
     for p in profiles:
         if p not in PROFILES:
             parser.error(f"Unknown profile {p!r}. Available: {', '.join(PROFILES)}")

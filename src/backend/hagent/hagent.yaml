@@ -129,7 +129,9 @@ world_model:
     enabled: true
     backend: "outcome_head_v1"
     hidden_dim: 64
-    use_latent: true
+    # use_latent=false: latent z KHÔNG có tại thời điểm build campaign —
+    # bật lên sẽ gây lệch phân phối train/serve (train có z, predict z=0)
+    use_latent: false
     latent_dim: 64
     checkpoint_path: "./data/world_model/outcome_head_v1.npz"
     time_limit_norm: 600
@@ -145,7 +147,8 @@ world_model:
     enabled: true
     k: 5
     hidden_dim: 64
-    use_latent: true
+    # use_latent=false: đồng bộ với outcome_head (tránh train/serve skew)
+    use_latent: false
     latent_dim: 64
     checkpoint_dir: "./data/world_model/outcome_ensemble"
     time_limit_norm: 600

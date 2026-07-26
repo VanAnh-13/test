@@ -303,6 +303,37 @@
 - CI benchmark.yml cần user phê duyệt (.github/** protected).
 - Danh sách workshop ACML 2026 (~07/08) → chốt venue + page limit.
 
+## 2026-07-26 — REVIEW-FIX-001 (sau adversarial review 19 agents)
+
+### Phạm vi — 6 lỗi xác nhận, đều đã sửa
+
+- A (critical, train/serve skew): builder truyền `dataset_meta` từ world_model
+  snapshot vào CEM planner + ranking; `use_latent: false` mặc định cho
+  outcome_head/ensemble (z không có tại thời điểm build campaign).
+- B (critical, metric): benchmark tính curve/regret/jobs_to_95 trên
+  EXPECTED score của config đã submit (điểm nhiễu báo cáo riêng
+  `observed_*`) — hết bias max-order-statistic trên profile nhiễu.
+- C (critical, contamination): `collect_warm_start_configs(top_k<=0)` → []
+  (tắt cả nguồn memory); benchmark dùng user_id riêng theo condition.
+- D (major): `build_campaign`/`campaign_step` nhận `outcome_model` sentinel
+  "auto"/None/model — None TẮT hẳn fallback checkpoint đĩa; benchmark truyền
+  model online vào runner nên `n_outcome_surprise_events` đo đúng model.
+- E (major): CEM acquisition sửa thành `sign*μ + β·σ` (optimism đúng cả khi
+  minimize).
+- F (major): validate conditions/profiles TRƯỚC khi chạy ma trận (CLI +
+  run_benchmark_matrix) — typo không đốt kết quả đã chạy.
+
+### Verification
+
+- 3 file test liên quan: 55 passed; full suite: **323 passed, 0 failed**.
+- CLI synth_noisy: fixed_grid regret 0.6667 (đúng bản chất), wm regret 0.0.
+
+### Handoff
+
+- Giai đoạn 3 + review hardening HOÀN TẤT. Sẵn sàng Giai đoạn 4 (thí nghiệm
+  thật): tải OpenML (`scripts/fetch_openml_datasets.py`), cài Ollama, mở rộng
+  config space, chạy ma trận chính thức.
+
 ## Mẫu ghi cho phiên tiếp theo
 
 ```text

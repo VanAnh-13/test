@@ -104,7 +104,9 @@ class CemConfigV1Planner:
             pred = outcome_model.predict(params, dataset_meta, z)
             if pred is None:
                 return None
-            val = sign * (pred.mean + self.exploration_weight * pred.std)
+            # Optimism-in-face-of-uncertainty đúng cả hai chiều: bonus σ luôn
+            # cộng vào phía "tốt" (sign*(μ+βσ) sẽ thành PHẠT σ khi minimize).
+            val = sign * pred.mean + self.exploration_weight * pred.std
             scored[key] = val
             return val
 
