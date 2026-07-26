@@ -215,6 +215,9 @@ class RealJobEnv:
             save_log=False,
             verbose=0,
             max_time=float(params.get("time_limit") or self.job_cfg.get("time_limit") or 60),
+            # BO mặc định infer_dimensions=True sẽ tự nới grid thành không
+            # gian liên tục — mọi thuật toán PHẢI cùng không gian 18 điểm
+            infer_dimensions=False,
         )
         strategy = SearchStrategyFactory.create_strategy(algo, cfg)
         grid = dict(self.job_cfg.get("param_grid") or {})

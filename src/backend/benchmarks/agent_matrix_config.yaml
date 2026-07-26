@@ -11,7 +11,7 @@
 
 conditions: [A, B, C]
 datasets: [iris, wine, breast_cancer, digits, glass, online_shoppers]
-models: [openai-gpt4o-mini]
+models: [meta-ai]
 seeds: [0, 1, 2]
 
 # Tham số job thật (giữ nhỏ để mỗi job vài giây trên dataset nhỏ)
