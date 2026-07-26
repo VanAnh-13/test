@@ -755,6 +755,36 @@
         "tested_at": "2026-07-27T06:05:00+07:00",
         "notes": "Test then chốt: 2 run song song không lẫn tracker (asyncio task copy context); run_agent trả cost_metrics đủ total_input/output_tokens/calls/cost_usd; bind_tools sống vì callbacks vào constructor giữ nguyên class; explicit callbacks thắng contextvar."
       }
+    },
+    {
+      "id": "AGENT-T3-001",
+      "title": "Pipeline checkpoint outcome model: scripts/train_outcome_model.py (Mongo/JSONL → head+ensemble → path yaml) + memoize _default_outcome_model",
+      "status": "done",
+      "acceptance_criteria": [
+        "Script train từ Mongo world_trajectories HOẶC --trajectories-jsonl (artifact versionable); config head/ensemble đọc từ world_model.* trong hagent.yaml (một nguồn sự thật cho vocab); ghi checkpoint đúng path yaml; in SHA256 + số sample + NLL cuối; --dry-run đếm sample; fail rõ ràng khi < --min-samples.",
+        "_default_outcome_model memoize theo mtime của checkpoint (hiện dựng lại ensemble từ đĩa MỖI lần variant hoàn thành); file đổi → tự nạp lại.",
+        "Test không cần Mongo (JSONL + tmp paths); checkpoint script sinh ra nạp được qua đường auto của builder; full suite không hồi quy."
+      ],
+      "allowed_files": [
+        "src/backend/scripts/train_outcome_model.py",
+        "src/backend/hagent/agent/campaign/wm_hooks.py",
+        "src/backend/tests/test_train_outcome_model.py",
+        "feature_list.json",
+        "claude-progress.md"
+      ],
+      "test_commands": [
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests/test_train_outcome_model.py -q --timeout=180",
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=300"
+      ],
+      "verification": {
+        "status": "passed",
+        "commands_run": [
+          "cd src/backend && .venv/Scripts/python.exe -m pytest tests/test_train_outcome_model.py -q --timeout=180 (7 passed)",
+          "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=300 (437 passed)"
+        ],
+        "tested_at": "2026-07-27T06:50:00+07:00",
+        "notes": "Test then chốt: checkpoint script sinh ra nạp được qua chính _default_outcome_model (đường auto production); memoize trả cùng object tới khi mtime đổi; thiếu sample fail to tiếng."
+      }
     }
   ]
 }

@@ -52,19 +52,56 @@ async def campaign_wm_step(
         return None, next_world_model or world_model
 
 
+# Memo theo dấu vân mtime của checkpoint — hàm này bị gọi MỖI lần một variant
+# hoàn thành; không memo thì ensemble bị dựng lại từ đĩa liên tục.
+_outcome_model_cache: dict = {"fingerprint": None, "model": None}
+
+
+def _checkpoint_fingerprint(wm_cfg: dict) -> tuple:
+    """(path, mtime) của head + mọi member ensemble; đổi file → đổi vân."""
+    from pathlib import Path
+
+    parts = []
+    head_path = (wm_cfg.get("outcome_head") or {}).get("checkpoint_path")
+    if head_path:
+        p = Path(head_path)
+        parts.append((str(p), p.stat().st_mtime if p.is_file() else None))
+    ens_dir = (wm_cfg.get("outcome_ensemble") or {}).get("checkpoint_dir")
+    if ens_dir:
+        d = Path(ens_dir)
+        if d.is_dir():
+            for p in sorted(d.glob("member_*.npz")):
+                parts.append((str(p), p.stat().st_mtime))
+        else:
+            parts.append((str(d), None))
+    return tuple(parts)
+
+
 def _default_outcome_model() -> Any | None:
-    """Ensemble từ config nếu sẵn sàng, fallback single head; None nếu không có."""
+    """Ensemble từ config nếu sẵn sàng, fallback single head; None nếu không có.
+
+    Memoized: chỉ nạp lại khi checkpoint trên đĩa thay đổi (mtime)."""
     try:
         from hagent.bridge.config import get_world_model_config
         from hagent.world.predictor import create_outcome_ensemble, create_outcome_head
 
         wm_cfg = get_world_model_config()
+        fingerprint = _checkpoint_fingerprint(wm_cfg)
+        if fingerprint == _outcome_model_cache["fingerprint"]:
+            return _outcome_model_cache["model"]
+
+        model = None
         ens = create_outcome_ensemble(dict(wm_cfg.get("outcome_ensemble") or {}))
         if ens is not None and ens.is_ready:
-            return ens
-        head = create_outcome_head(dict(wm_cfg.get("outcome_head") or {}))
-        if head is not None and head.is_ready:
-            return head
+            model = ens
+        else:
+            head = create_outcome_head(dict(wm_cfg.get("outcome_head") or {}))
+            if head is not None and head.is_ready:
+                model = head
+
+        _outcome_model_cache["fingerprint"] = fingerprint
+        _outcome_model_cache["model"] = model
+        return model
     except Exception as exc:
         logger.debug("outcome model init failed: %s", exc)
     return None

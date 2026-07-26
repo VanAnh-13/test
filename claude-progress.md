@@ -648,6 +648,30 @@ fit GP không bao giờ khấu hao được.
 
 - Kế tiếp T3: scripts/train_outcome_model.py + memoize _default_outcome_model.
 
+## 2026-07-27 — AGENT-T3-001
+
+### Phạm vi
+
+- `scripts/train_outcome_model.py`: train head + ensemble từ Mongo
+  world_trajectories hoặc --trajectories-jsonl (artifact versionable), config
+  đọc từ world_model.* trong hagent.yaml (một nguồn sự thật cho vocab), ghi
+  checkpoint đúng path yaml, in SHA256 + NLL; --dry-run; fail rõ khi thiếu
+  sample. Đây chính là bước "nối WM vào agent thật" — đường auto của
+  builder/runner đã trỏ sẵn vào các path này.
+- `wm_hooks._default_outcome_model`: memoize theo mtime checkpoint (trước
+  đây dựng lại ensemble từ đĩa MỖI lần một variant hoàn thành).
+
+### Verification
+
+- 7 passed (test mới, không cần Mongo); full suite **437 passed**.
+- Test then chốt: checkpoint script sinh ra nạp được qua chính
+  `_default_outcome_model` — đúng đường production.
+
+### Handoff
+
+- Kế tiếp T4: bật random_search + successive_halving cho campaign, version
+  checkpoint v2 (đổi vocab = đổi chiều feature).
+
 ## Mẫu ghi cho phiên tiếp theo
 
 ```text
