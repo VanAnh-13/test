@@ -299,6 +299,68 @@
         "tested_at": "2026-07-26T17:35:00+07:00",
         "notes": "smoke.json là artifact local (đã exclude khỏi git). CI benchmark.yml chưa tạo vì .github/** protected — cần user phê duyệt riêng."
       }
+    },
+    {
+      "id": "USAGE-001",
+      "title": "Token/cost tracker cho LLM calls (LangChain callback, pricing từ config)",
+      "status": "done",
+      "acceptance_criteria": [
+        "UsageTracker: record/summary/reset, cost theo bảng giá per-1M-token từ config, model không có giá → cost 0 nhưng vẫn đếm token.",
+        "UsageTrackingCallback (langchain_core BaseCallbackHandler): parse token_usage từ llm_output và usage_metadata từ generations, không crash khi thiếu.",
+        "Factory create_usage_tracker đọc llm.usage_tracking trong hagent.yaml.",
+        "tests/test_usage_tracker.py pass và full suite không hồi quy."
+      ],
+      "allowed_files": [
+        "src/backend/hagent/agent/middlewares/usage_tracker.py",
+        "src/backend/hagent/hagent.yaml",
+        "src/backend/tests/test_usage_tracker.py",
+        "feature_list.json",
+        "claude-progress.md"
+      ],
+      "test_commands": [
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests/test_usage_tracker.py -q --timeout=120",
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=180"
+      ],
+      "verification": {
+        "status": "passed",
+        "commands_run": [
+          "cd src/backend && .venv/Scripts/python.exe -m pytest tests/test_usage_tracker.py -q --timeout=120 (12 passed)",
+          "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=180 (307 passed)"
+        ],
+        "tested_at": "2026-07-26T17:55:00+07:00",
+        "notes": "Parse cả token_usage (llm_output) lẫn usage_metadata (generations); thread-safe; model không có giá → cost 0."
+      }
+    },
+    {
+      "id": "DATA-OPENML-001",
+      "title": "Script tải bộ dataset OpenML cho benchmark (sklearn fetch_openml, không thêm dependency)",
+      "status": "done",
+      "acceptance_criteria": [
+        "Registry 8 datasets (credit-g, diabetes, vehicle, blood-transfusion, banknote, kc1, phoneme, wine-quality-red) theo data_id cố định.",
+        "normalize_frame: đổi tên cột target về 'target', bỏ hàng thiếu target — testable không cần mạng.",
+        "CLI: --list, --datasets, --out; ghi CSV + manifest.json vào assets/openml/.",
+        "tests/test_fetch_openml.py pass (không gọi mạng) và full suite không hồi quy."
+      ],
+      "allowed_files": [
+        "src/backend/scripts/fetch_openml_datasets.py",
+        "src/backend/tests/test_fetch_openml.py",
+        "feature_list.json",
+        "claude-progress.md"
+      ],
+      "test_commands": [
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests/test_fetch_openml.py -q --timeout=120",
+        "cd src/backend && .venv/Scripts/python.exe scripts/fetch_openml_datasets.py --list"
+      ],
+      "verification": {
+        "status": "passed",
+        "commands_run": [
+          "cd src/backend && .venv/Scripts/python.exe -m pytest tests/test_fetch_openml.py -q --timeout=120 (5 passed)",
+          "cd src/backend && .venv/Scripts/python.exe scripts/fetch_openml_datasets.py --list (exit 0, in đủ 8 datasets)",
+          "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=180 (312 passed)"
+        ],
+        "tested_at": "2026-07-26T18:10:00+07:00",
+        "notes": "Chưa tải dữ liệu thật (cần mạng, chạy khi bắt đầu thí nghiệm): python scripts/fetch_openml_datasets.py"
+      }
     }
   ]
 }

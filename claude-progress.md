@@ -274,6 +274,35 @@
 
 - Kế tiếp: USAGE-001 (token/cost tracker) rồi DATA-OPENML-001 (fetch script).
 
+## 2026-07-26 — USAGE-001 + DATA-OPENML-001 (hoàn tất Giai đoạn 3)
+
+### Phạm vi
+
+- USAGE-001: `agent/middlewares/usage_tracker.py` — UsageTracker (thread-safe,
+  cost per-1M-token từ `llm.usage_tracking.pricing`), UsageTrackingCallback
+  (parse token_usage lẫn usage_metadata), factory.
+- DATA-OPENML-001: `scripts/fetch_openml_datasets.py` — registry 8 datasets
+  theo data_id cố định, normalize_frame, CLI --list/--datasets/--out, ghi
+  CSV + manifest.json vào assets/openml/. Chưa tải dữ liệu thật (cần mạng).
+
+### Verification
+
+- `pytest tests/test_usage_tracker.py` — PASS (12), `tests/test_fetch_openml.py`
+  — PASS (5), CLI --list — PASS.
+- Full suite cuối: **312 passed, 0 failed** (từ 207 baseline → +105 test mới).
+
+### Trạng thái Giai đoạn 3 (kế hoạch ACML): 7/7 hạng mục DONE
+
+1. outcome_head_v1 ✓  2. ensemble + calibration ✓  3. outcome surprise ✓
+4. CEM config planner + builder ✓  5. benchmark layer + CLI ✓
+6. usage tracker ✓  7. OpenML fetcher ✓
+
+### Còn chờ bên ngoài
+
+- Tải OpenML data + cài Ollama trước khi chạy thí nghiệm thật (Giai đoạn 4).
+- CI benchmark.yml cần user phê duyệt (.github/** protected).
+- Danh sách workshop ACML 2026 (~07/08) → chốt venue + page limit.
+
 ## Mẫu ghi cho phiên tiếp theo
 
 ```text

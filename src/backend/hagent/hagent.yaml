@@ -213,6 +213,20 @@ llm:
   # Override bằng env var LLM_DEFAULT_MODEL nếu cần (CI/CD)
   default_model: "${LLM_DEFAULT_MODEL:-openai-gpt4o-mini}"
 
+  # Token/cost tracking cho thí nghiệm (USD per 1M tokens; model local để trống = 0)
+  usage_tracking:
+    enabled: true
+    pricing:
+      gpt-4o-mini:
+        input_per_1m: 0.15
+        output_per_1m: 0.60
+      gpt-4o:
+        input_per_1m: 2.50
+        output_per_1m: 10.00
+      claude-sonnet-4-20250514:
+        input_per_1m: 3.00
+        output_per_1m: 15.00
+
   models:
     - name: "openai-gpt4o-mini"
       provider: "openai"
