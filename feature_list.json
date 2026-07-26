@@ -63,6 +63,37 @@
         "tested_at": null,
         "notes": "Chưa được phép chuyển task sang done trước khi chạy đủ test_commands."
       }
+    },
+    {
+      "id": "GIT-SETUP-001",
+      "title": "Khởi tạo Git repo từ VanAnh-13/test, nhánh hagent",
+      "status": "done",
+      "acceptance_criteria": [
+        "Thư mục gốc là git worktree, nhánh hagent tạo từ origin/features/deerflow-automl (7a397ad).",
+        "4 file harness được commit nguyên trạng; recovery-manifest.txt giữ local qua .git/info/exclude.",
+        "Cây src/ rỗng (Google Drive sync lỗi) đã cách ly sang D:/Homeworks/nckh-hollow, không xóa cứng.",
+        "git status sạch và bash init.sh pass sau khi setup."
+      ],
+      "allowed_files": [
+        "feature_list.json",
+        "claude-progress.md",
+        "recovery-manifest.txt"
+      ],
+      "test_commands": [
+        "bash init.sh",
+        "git status --porcelain",
+        "python -m py_compile src/backend/app.py"
+      ],
+      "verification": {
+        "status": "passed",
+        "commands_run": [
+          "bash init.sh",
+          "git status --porcelain",
+          "python -m py_compile src/backend/app.py"
+        ],
+        "tested_at": "2026-07-26T15:00:00+07:00",
+        "notes": "Setup hạ tầng: checkout từ remote không phải edit; không sửa file nào trong protected_paths. Nested .git rỗng (0 commit) của src/backend đi theo cây quarantine."
+      }
     }
   ]
 }
