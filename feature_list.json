@@ -977,6 +977,39 @@
         "tested_at": "2026-07-27T11:30:00+07:00",
         "notes": "Tên sai nổ TRƯỚC khi chạy graph (test đếm graph không được invoke); model per-request thấy được bên trong run (coordinator/subagents dùng đúng); 2 request song song không lẫn; req.model truyền ở cả 3 call site chat_router; validate ở _call_agent → HTTP 400."
       }
+    },
+    {
+      "id": "AGENT-T10-001",
+      "title": "Runner ma trận thí nghiệm: conditions×datasets×models×seeds, job sklearn THẬT in-process, JSONL resumable",
+      "status": "done",
+      "acceptance_criteria": [
+        "RealJobEnv: tool invoker in-process — start_training chạy THẬT SearchStrategyFactory trên dataset thật (datasets_real), trả best_score thật; get_dataset_info/list từ registry. LLM thật + job thật, không cần docker.",
+        "Điều kiện A (wm off) / B (wm on) / C (B + surprise_extension) / C_mpc (C + cem_mpc_v1) render thành yaml tạm từ hagent.yaml gốc + HAGENT_CONFIG + load_config.cache_clear() mỗi ô.",
+        "JSONL mỗi ô: cell key, response tóm tắt, route, campaign (variants/sources/best/extension_rounds), đếm events, cost_metrics (tokens/USD), SHA checkpoint + git, giây, seed; RESUMABLE (ô có rồi thì bỏ qua); --dry-run liệt kê ô.",
+        "Test không cần LLM: enumeration/resume/render-yaml/RealJobEnv trên iris grid nhỏ; full suite không hồi quy."
+      ],
+      "allowed_files": [
+        "src/backend/scripts/run_experiment_matrix.py",
+        "src/backend/benchmarks/agent_matrix_config.yaml",
+        "src/backend/tests/test_experiment_matrix.py",
+        "feature_list.json",
+        "claude-progress.md"
+      ],
+      "test_commands": [
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests/test_experiment_matrix.py -q --timeout=300",
+        "cd src/backend && .venv/Scripts/python.exe scripts/run_experiment_matrix.py --dry-run",
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=300"
+      ],
+      "verification": {
+        "status": "passed",
+        "commands_run": [
+          "cd src/backend && .venv/Scripts/python.exe -m pytest tests/test_experiment_matrix.py -q --timeout=300 (10 passed — gồm job sklearn THẬT trên iris đạt >0.8)",
+          "cd src/backend && .venv/Scripts/python.exe scripts/run_experiment_matrix.py --dry-run (54 ô đúng cấu hình)",
+          "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=300 (505 passed)"
+        ],
+        "tested_at": "2026-07-27T12:20:00+07:00",
+        "notes": "Resume chỉ bỏ qua ô THÀNH CÔNG (ô lỗi chạy lại). Điều kiện A trỏ checkpoint vào path __disabled__ — WM không thể bị nạp lén. Mỗi ô: HAGENT_CONFIG yaml tạm + load_config.cache_clear() + xóa memo outcome model."
+      }
     }
   ]
 }
