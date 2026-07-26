@@ -172,6 +172,26 @@
 
 - Kế tiếp: WM-ENSEMBLE-001 (deep ensemble K seeds + world/calibration.py).
 
+## 2026-07-26 — WM-ENSEMBLE-001
+
+### Phạm vi
+
+- `world/predictor/ensemble.py`: OutcomeEnsemble (K OutcomeHeadV1, seed lệch),
+  mixture moments μ*, σ*² (aleatoric + epistemic), save/load thư mục
+  member_{i}.npz, `train_outcome_ensemble`.
+- `world/calibration.py`: interval_coverage, ECE (PIT), reliability_table,
+  sharpness — stdlib NormalDist, không thêm dependency.
+- Factory `create_outcome_ensemble`, config `world_model.outcome_ensemble`.
+
+### Verification
+
+- `pytest tests/test_world_model_calibration.py` — PASS (20 passed)
+- `pytest tests -m "not ollama"` — PASS (251 passed, 0 failed)
+
+### Handoff
+
+- Kế tiếp: WM-SURPRISE-001 (outcome-space surprise + nối wm_hooks).
+
 ## Mẫu ghi cho phiên tiếp theo
 
 ```text

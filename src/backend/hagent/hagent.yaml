@@ -140,6 +140,15 @@ world_model:
     problem_types:
       - "classification"
       - "regression"
+  outcome_ensemble:
+    # Deep ensemble K outcome heads — epistemic + aleatoric uncertainty
+    enabled: true
+    k: 5
+    hidden_dim: 64
+    use_latent: true
+    latent_dim: 64
+    checkpoint_dir: "./data/world_model/outcome_ensemble"
+    time_limit_norm: 600
   planner:
     backend: "cem_lite"
     horizon: 4

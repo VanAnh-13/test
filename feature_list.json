@@ -160,6 +160,41 @@
         "tested_at": "2026-07-26T15:55:00+07:00",
         "notes": "Gaussian NLL (aleatoric σ), một lớp ẩn tanh, grad-clip; feature: one-hot algo/problem/metric + time_limit/models/dataset log-scaled + latent z tùy chọn."
       }
+    },
+    {
+      "id": "WM-ENSEMBLE-001",
+      "title": "Deep ensemble K outcome heads + module calibration (coverage, ECE, reliability)",
+      "status": "done",
+      "acceptance_criteria": [
+        "OutcomeEnsemble gộp K OutcomeHeadV1 (seed khác nhau): μ* = mean(μᵢ), σ*² = mean(σᵢ²+μᵢ²) − μ*² (mixture moments); meta ghi epistemic std.",
+        "Save/load ensemble qua thư mục checkpoint (member_i.npz); is_ready khi ≥1 member.",
+        "world/calibration.py: interval_coverage, expected_calibration_error (PIT-based), reliability_table, sharpness — dùng statistics.NormalDist, không thêm dependency.",
+        "Factory create_outcome_ensemble + config world_model.outcome_ensemble trong hagent.yaml.",
+        "tests/test_world_model_calibration.py pass và full suite không hồi quy."
+      ],
+      "allowed_files": [
+        "src/backend/hagent/world/predictor/ensemble.py",
+        "src/backend/hagent/world/calibration.py",
+        "src/backend/hagent/world/predictor/factory.py",
+        "src/backend/hagent/world/predictor/__init__.py",
+        "src/backend/hagent/hagent.yaml",
+        "src/backend/tests/test_world_model_calibration.py",
+        "feature_list.json",
+        "claude-progress.md"
+      ],
+      "test_commands": [
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests/test_world_model_calibration.py -q --timeout=120",
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=120"
+      ],
+      "verification": {
+        "status": "passed",
+        "commands_run": [
+          "cd src/backend && .venv/Scripts/python.exe -m pytest tests/test_world_model_calibration.py -q --timeout=120 (20 passed)",
+          "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=120 (251 passed)"
+        ],
+        "tested_at": "2026-07-26T16:10:00+07:00",
+        "notes": "Mixture moments σ*² = E[σᵢ²+μᵢ²]−μ*²; calibration dùng statistics.NormalDist (PIT-based ECE); test kiểm chứng coverage đúng 0.9±0.03 với dự đoán calibrated tổng hợp."
+      }
     }
   ]
 }

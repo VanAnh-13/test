@@ -36,3 +36,13 @@ def create_outcome_head(config: dict | None = None) -> Any:
         f"Unsupported world_model.outcome_head.backend={backend!r}. "
         f"Supported: outcome_head_v1"
     )
+
+
+def create_outcome_ensemble(config: dict | None = None) -> Any:
+    """Outcome ensemble from world_model.outcome_ensemble config. None when disabled."""
+    cfg = dict(config or {})
+    if not cfg.get("enabled", True):
+        return None
+    from hagent.world.predictor.ensemble import OutcomeEnsemble
+
+    return OutcomeEnsemble(cfg)

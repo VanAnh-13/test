@@ -1,5 +1,10 @@
 from hagent.world.predictor.base import WorldPredictor
-from hagent.world.predictor.factory import create_outcome_head, create_predictor
+from hagent.world.predictor.ensemble import OutcomeEnsemble, train_outcome_ensemble
+from hagent.world.predictor.factory import (
+    create_outcome_ensemble,
+    create_outcome_head,
+    create_predictor,
+)
 from hagent.world.predictor.neural_jepa_v1 import NeuralJepaV1Predictor
 from hagent.world.predictor.outcome_head_v1 import (
     OutcomeHeadV1,
@@ -15,6 +20,9 @@ __all__ = [
     "WorldPredictor",
     "create_predictor",
     "create_outcome_head",
+    "create_outcome_ensemble",
+    "OutcomeEnsemble",
+    "train_outcome_ensemble",
     "TabularTransitionV1Predictor",
     "OutcomeHeadV1",
     "OutcomePrediction",
