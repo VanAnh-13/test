@@ -124,6 +124,22 @@ world_model:
     hidden_dim: 128
     checkpoint_path: "./data/world_model/jepa_v1.npz"
     fallback: "tabular_transition_v1"
+  outcome_head:
+    # Dự đoán phân phối best_score của job từ (variant config, dataset meta, z)
+    enabled: true
+    backend: "outcome_head_v1"
+    hidden_dim: 64
+    use_latent: true
+    latent_dim: 64
+    checkpoint_path: "./data/world_model/outcome_head_v1.npz"
+    time_limit_norm: 600
+    search_algorithms:
+      - "grid_search"
+      - "bayesian_search"
+      - "genetic_algorithm"
+    problem_types:
+      - "classification"
+      - "regression"
   planner:
     backend: "cem_lite"
     horizon: 4

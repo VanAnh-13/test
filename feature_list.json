@@ -34,12 +34,12 @@
       "**/docker-compose*.yaml"
     ]
   },
-  "current_task_id": "HARNESS-001",
+  "current_task_id": null,
   "features": [
     {
       "id": "HARNESS-001",
       "title": "Thiết lập Minimal Agent Harness",
-      "status": "in_progress",
+      "status": "done",
       "acceptance_criteria": [
         "Có bốn file AGENTS.md, init.sh, feature_list.json và claude-progress.md ở thư mục gốc.",
         "Quy tắc WIP=1, Definition of Done, Maker-Checker và cấm refactor ngoài phạm vi được ghi rõ.",
@@ -58,10 +58,14 @@
         "bash init.sh"
       ],
       "verification": {
-        "status": "pending",
-        "commands_run": [],
-        "tested_at": null,
-        "notes": "Chưa được phép chuyển task sang done trước khi chạy đủ test_commands."
+        "status": "passed",
+        "commands_run": [
+          "bash -n init.sh (exit 0)",
+          "python -m json.tool feature_list.json (exit 0)",
+          "PYTHONIOENCODING=utf-8 bash init.sh (exit 0, OK: JSON hợp lệ)"
+        ],
+        "tested_at": "2026-07-26T15:30:00+07:00",
+        "notes": "4 file harness tồn tại và đã được commit vào git (nhánh hagent); validator init.sh kiểm tra đủ WIP, whitelist, bằng chứng test. Console Windows cần PYTHONIOENCODING=utf-8."
       }
     },
     {
@@ -121,6 +125,40 @@
         ],
         "tested_at": "2026-07-26T15:20:00+07:00",
         "notes": "Xác nhận port 11435 không còn listener sau khi suite kết thúc (không leak). Lỗi gốc quan sát trên Windows: ConnectTimeout lọt except → 5 test error + leak process gây bind 10048 ở lần chạy sau."
+      }
+    },
+    {
+      "id": "WM-OUTCOME-001",
+      "title": "Outcome head v1 — dự đoán phân phối best_score của job từ (variant config, dataset meta, z)",
+      "status": "done",
+      "acceptance_criteria": [
+        "OutcomeHeadV1 (numpy-only, .npz checkpoint, factory-registered) dự đoán mean + std của best_score cho một variant config.",
+        "Có hàm trích feature từ (params, dataset_meta, latent z) và hàm train từ samples; có extract_outcome_samples từ trajectory docs.",
+        "Có helper rank_variants_by_outcome xếp hạng CampaignVariant theo mean dự đoán.",
+        "Config world_model.outcome_head trong hagent.yaml; không hard-code tại call site.",
+        "tests/test_outcome_head.py pass và full suite không hồi quy."
+      ],
+      "allowed_files": [
+        "src/backend/hagent/world/predictor/outcome_head_v1.py",
+        "src/backend/hagent/world/predictor/factory.py",
+        "src/backend/hagent/world/predictor/__init__.py",
+        "src/backend/hagent/hagent.yaml",
+        "src/backend/tests/test_outcome_head.py",
+        "feature_list.json",
+        "claude-progress.md"
+      ],
+      "test_commands": [
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests/test_outcome_head.py -q --timeout=120",
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=120"
+      ],
+      "verification": {
+        "status": "passed",
+        "commands_run": [
+          "cd src/backend && .venv/Scripts/python.exe -m pytest tests/test_outcome_head.py -q --timeout=120 (24 passed)",
+          "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=120 (231 passed)"
+        ],
+        "tested_at": "2026-07-26T15:55:00+07:00",
+        "notes": "Gaussian NLL (aleatoric σ), một lớp ẩn tanh, grad-clip; feature: one-hot algo/problem/metric + time_limit/models/dataset log-scaled + latent z tùy chọn."
       }
     }
   ]

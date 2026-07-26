@@ -144,6 +144,34 @@
 - HARNESS-001 vẫn `in_progress` (WIP 1/1). Tiếp theo theo kế hoạch:
   Giai đoạn 3 — outcome head, ensemble + calibration, benchmark layer.
 
+## 2026-07-26 — WM-OUTCOME-001
+
+### Phạm vi
+
+- HARNESS-001 đóng hợp lệ (3 test_commands pass) trước khi mở task mới.
+- Thêm `hagent/world/predictor/outcome_head_v1.py`: OutcomeHeadV1 (MLP 1 lớp
+  ẩn, output [μ, s], σ = softplus(s)+1e-3), train Gaussian NLL grad-clip,
+  `outcome_features` (one-hot algo/problem/metric + time_limit/models/dataset
+  log-scaled + latent z tùy chọn), `extract_outcome_samples` từ trajectory
+  docs (dedup theo job id), `rank_variants_by_outcome`.
+- Factory `create_outcome_head` + export `__init__`; config
+  `world_model.outcome_head` trong `hagent.yaml`.
+
+### Verification
+
+- `pytest tests/test_outcome_head.py` — PASS (24 passed)
+- `pytest tests -m "not ollama"` — PASS (231 passed, 0 failed)
+
+### Rủi ro còn lại
+
+- Head chưa được nối vào campaign builder/compare (thuộc WM-CEM-001).
+- σ aleatoric đơn lẻ chưa đủ cho calibration claim — cần ensemble
+  (WM-ENSEMBLE-001 kế tiếp).
+
+### Handoff
+
+- Kế tiếp: WM-ENSEMBLE-001 (deep ensemble K seeds + world/calibration.py).
+
 ## Mẫu ghi cho phiên tiếp theo
 
 ```text

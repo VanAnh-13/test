@@ -20,3 +20,19 @@ def create_predictor(config: dict | None = None) -> Any:
         f"Unsupported world_model.predictor.backend={backend!r}. "
         f"Supported: tabular_transition_v1, neural_jepa_v1"
     )
+
+
+def create_outcome_head(config: dict | None = None) -> Any:
+    """Outcome head from world_model.outcome_head config. None when disabled."""
+    cfg = dict(config or {})
+    if not cfg.get("enabled", True):
+        return None
+    backend = str(cfg.get("backend") or "outcome_head_v1").lower()
+    if backend in ("outcome_head_v1", "outcome_v1"):
+        from hagent.world.predictor.outcome_head_v1 import OutcomeHeadV1
+
+        return OutcomeHeadV1(cfg)
+    raise ValueError(
+        f"Unsupported world_model.outcome_head.backend={backend!r}. "
+        f"Supported: outcome_head_v1"
+    )
