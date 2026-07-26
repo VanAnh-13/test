@@ -228,6 +228,41 @@
         "tested_at": "2026-07-26T16:35:00+07:00",
         "notes": "Event chỉ phát đúng lúc chuyển trạng thái sang completed (test tick thứ hai không phát lại); σ floor 1e-6 chống chia 0."
       }
+    },
+    {
+      "id": "WM-CEM-001",
+      "title": "CEM thật trên không gian config campaign + nối outcome model vào builder",
+      "status": "done",
+      "acceptance_criteria": [
+        "CemConfigV1Planner: CEM đúng nghĩa (sample từ phân phối categorical, chọn elite theo elite_fraction, refit có smoothing, lặp n_iterations) trên không gian {search_algorithm × time_limit}; score = μ + exploration_weight·σ từ outcome model; deterministic theo seed.",
+        "Outcome model chưa sẵn sàng → planner fallback round-robin deterministic, builder giữ nguyên hành vi cũ (test cũ pass nguyên trạng).",
+        "build_campaign dùng planner đề xuất config cho slot diversified (gate campaign.wm_variant_proposal) và xếp thứ tự variant theo mean dự đoán (gate campaign.wm_rank_variants); warm-start giữ nguyên.",
+        "Factory create_campaign_planner + config world_model.campaign_planner trong hagent.yaml.",
+        "tests/test_cem_config_planner.py pass và full suite không hồi quy."
+      ],
+      "allowed_files": [
+        "src/backend/hagent/world/planner/cem_config_v1.py",
+        "src/backend/hagent/world/planner/factory.py",
+        "src/backend/hagent/world/planner/__init__.py",
+        "src/backend/hagent/agent/campaign/builder.py",
+        "src/backend/hagent/hagent.yaml",
+        "src/backend/tests/test_cem_config_planner.py",
+        "feature_list.json",
+        "claude-progress.md"
+      ],
+      "test_commands": [
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests/test_cem_config_planner.py -q --timeout=120",
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=120"
+      ],
+      "verification": {
+        "status": "passed",
+        "commands_run": [
+          "cd src/backend && .venv/Scripts/python.exe -m pytest tests/test_cem_config_planner.py -q --timeout=120 (14 passed)",
+          "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=120 (278 passed)"
+        ],
+        "tested_at": "2026-07-26T17:00:00+07:00",
+        "notes": "CEM: categorical sampling + elite refit + Laplace smoothing, cache score theo config, UCB-style score μ+βσ; builder: đề xuất wm_cem_* cho slot trống + rank thứ tự submit; test xác nhận tìm đúng argmax (bayesian/600) và exploration_weight đổi lựa chọn."
+      }
     }
   ]
 }

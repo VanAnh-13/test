@@ -55,6 +55,36 @@ def _base_train_params(goal: dict, user_id: str | None) -> Dict[str, Any]:
     return {k: v for k, v in params.items() if v is not None}
 
 
+_LOWER_IS_BETTER_METRICS = {"mae", "mse", "rmse", "rmsle", "loss"}
+
+
+def _resolve_outcome_model(outcome_model: Any | None) -> Any | None:
+    if outcome_model is not None:
+        return outcome_model if getattr(outcome_model, "is_ready", False) else None
+    try:
+        from hagent.agent.campaign.wm_hooks import _default_outcome_model
+
+        return _default_outcome_model()
+    except Exception:
+        return None
+
+
+def _campaign_planner(cfg: dict) -> Any | None:
+    try:
+        from hagent.bridge.config import get_world_model_config
+        from hagent.world.planner.factory import create_campaign_planner
+
+        planner_cfg = dict(
+            (get_world_model_config() or {}).get("campaign_planner") or {}
+        )
+        # Không gian tìm kiếm của planner đồng bộ với campaign config
+        planner_cfg.setdefault("search_algorithms", cfg.get("search_algorithms"))
+        planner_cfg.setdefault("time_limit_options", cfg.get("time_limit_options"))
+        return create_campaign_planner(planner_cfg)
+    except Exception:
+        return None
+
+
 async def build_campaign(
     goal: dict,
     *,
@@ -62,6 +92,7 @@ async def build_campaign(
     world_model: dict | None = None,
     fact_store: Any | None = None,
     config: dict | None = None,
+    outcome_model: Any | None = None,
 ) -> Campaign:
     """Create campaign with diversified + warm-started training variants."""
     cfg = dict(_campaign_config())
@@ -122,7 +153,51 @@ async def build_campaign(
             )
         )
 
-    # 2) Diversify remaining slots by search algorithm / time budget
+    # 2a) World-model proposals cho các slot còn lại (CEM trên config space).
+    #     Model chưa sẵn sàng → bỏ qua, rơi về round-robin như cũ.
+    model = None
+    if cfg.get("wm_variant_proposal", True) and len(variants) < n:
+        model = _resolve_outcome_model(outcome_model)
+        planner = _campaign_planner(cfg) if model is not None else None
+        if planner is not None:
+            metric = str(base.get("metric") or "").lower()
+            proposals = planner.plan_campaign_configs(
+                base_params=base,
+                outcome_model=model,
+                n_return=n - len(variants),
+                higher_is_better=metric not in _LOWER_IS_BETTER_METRICS,
+            )
+            existing_sigs = {
+                (
+                    v.params.get("search_algorithm"),
+                    tuple(v.params.get("models") or []),
+                    v.params.get("time_limit"),
+                )
+                for v in variants
+            }
+            for prop in proposals:
+                if len(variants) >= n:
+                    break
+                params = dict(base)
+                params.update({k: v for k, v in prop.items() if v is not None})
+                sig = (
+                    params.get("search_algorithm"),
+                    tuple(params.get("models") or []),
+                    params.get("time_limit"),
+                )
+                if sig in existing_sigs:
+                    continue
+                existing_sigs.add(sig)
+                variants.append(
+                    CampaignVariant(
+                        variant_id=str(uuid.uuid4()),
+                        label=f"wm_cem_{len(variants) + 1}",
+                        params=params,
+                        source="wm_planner",
+                    )
+                )
+
+    # 2b) Diversify remaining slots by search algorithm / time budget
     algo_idx = 0
     time_idx = 0
     while len(variants) < n:
@@ -175,6 +250,27 @@ async def build_campaign(
                 source="default",
             )
         )
+
+    # 3) Xếp thứ tự submit theo mean dự đoán — variant hứa hẹn nhất chạy trước
+    #    (quan trọng khi max_concurrent < n). Model chưa sẵn sàng → giữ nguyên.
+    if cfg.get("wm_rank_variants", True):
+        if model is None:
+            model = _resolve_outcome_model(outcome_model)
+        if model is not None:
+            try:
+                from hagent.world.predictor.outcome_head_v1 import (
+                    rank_variants_by_outcome,
+                )
+
+                metric = str(base.get("metric") or "").lower()
+                ranked = rank_variants_by_outcome(
+                    variants[:n],
+                    head=model,
+                    higher_is_better=metric not in _LOWER_IS_BETTER_METRICS,
+                )
+                variants = [v for v, _ in ranked]
+            except Exception:
+                pass
 
     return Campaign(
         campaign_id=str(uuid.uuid4()),

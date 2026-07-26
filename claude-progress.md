@@ -213,6 +213,35 @@
 - Kế tiếp: WM-CEM-001 (CEM thật trên config space + nối outcome ranking vào
   builder).
 
+## 2026-07-26 — WM-CEM-001
+
+### Phạm vi
+
+- `world/planner/cem_config_v1.py`: CEM đúng nghĩa trên
+  {search_algorithm × time_limit} — categorical sampling, elite refit với
+  Laplace smoothing, score μ+βσ, cache, deterministic theo seed; fallback
+  round-robin khi model chưa sẵn sàng.
+- `builder.py`: slot trống được đề xuất bởi planner (source `wm_planner`,
+  gate `campaign.wm_variant_proposal`), toàn bộ variant xếp thứ tự submit
+  theo mean dự đoán (gate `campaign.wm_rank_variants`); hành vi cũ giữ
+  nguyên khi không có checkpoint model.
+- Factory `create_campaign_planner`; config `world_model.campaign_planner`.
+
+### Verification
+
+- `pytest tests/test_cem_config_planner.py` — PASS (14 passed)
+- `pytest tests -m "not ollama"` — PASS (278 passed, 0 failed)
+
+### Rủi ro còn lại
+
+- Lưu ý test: `data/memory/` sót fact warm-start từ lần chạy harness smoke
+  làm builder sinh variant warm_start cho user u1 — hành vi cũ hợp lệ nhưng
+  test mới không nên assert cứng danh sách source.
+
+### Handoff
+
+- Kế tiếp: BENCH-001 (tầng benchmark score-vs-jobs/regret + script + CI).
+
 ## Mẫu ghi cho phiên tiếp theo
 
 ```text

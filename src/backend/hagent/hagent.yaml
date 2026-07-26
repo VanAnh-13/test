@@ -149,6 +149,16 @@ world_model:
     latent_dim: 64
     checkpoint_dir: "./data/world_model/outcome_ensemble"
     time_limit_norm: 600
+  campaign_planner:
+    # CEM thật trên không gian config campaign (score bằng outcome model)
+    enabled: true
+    backend: "cem_config_v1"
+    n_candidates: 32
+    n_iterations: 8
+    elite_fraction: 0.25
+    smoothing: 0.25
+    exploration_weight: 0.1
+    seed: 0
   planner:
     backend: "cem_lite"
     horizon: 4
@@ -295,6 +305,10 @@ agent:
       - "genetic_algorithm"
     time_limit_options: [180, 300, 600]
     max_monitor_ticks: 50
+    # World-model hooks trong builder: đề xuất variant bằng CEM + xếp thứ tự
+    # submit theo outcome dự đoán (chỉ kích hoạt khi model có checkpoint)
+    wm_variant_proposal: true
+    wm_rank_variants: true
 
   # Adaptive hierarchical goals (live controller + smart-skip)
   hierarchy:
