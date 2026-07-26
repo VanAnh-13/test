@@ -1041,6 +1041,37 @@
         "tested_at": "2026-07-27T13:00:00+07:00",
         "notes": "main.tex compile được với article chuẩn, ghi chú swap style ACML khi workshop công bố (~7/8); references.bib 13 entry cần verify trước khi nộp; bảng chỉ sinh tự động, KHÔNG gõ số tay."
       }
+    },
+    {
+      "id": "DEPLOY-001",
+      "title": "Docker deploy: healthcheck toolkit/bridge/mongo/minio, env example đầy đủ knob mới, docs/deploy.md",
+      "status": "done",
+      "acceptance_criteria": [
+        "docker-compose.yaml (PROTECTED — user yêu cầu trực tiếp 'viết cả docker để deploy' = phê duyệt): thêm healthcheck cho toolkit (/home), hagent_bridge (/api/v1/chat/health), mongo (ping), minio (/minio/health/live); depends_on của bridge chuyển sang service_healthy với toolkit.",
+        "deploy.llm.env.example (hiện RỖNG): điền đầy đủ biến LLM mới — LLM_DEFAULT_MODEL các lựa chọn hợp lệ (resolve strict!), OLLAMA_*, API keys, SECRET_KEY, cảnh báo tên model sai giờ NỔ thay vì âm thầm.",
+        "docs/deploy.md: quy trình deploy đầy đủ — .env, train checkpoint outcome model (bắt buộc cho WM), compose up, kiểm tra health, smoke qua harness api --require-live, bật surprise_extension khi cần.",
+        "Verification: docker compose config parse sạch; full suite không hồi quy (không đụng code Python)."
+      ],
+      "allowed_files": [
+        "src/backend/docker-compose.yaml",
+        "src/backend/deploy.llm.env.example",
+        "docs/deploy.md",
+        "feature_list.json",
+        "claude-progress.md"
+      ],
+      "test_commands": [
+        "cd src/backend && docker compose config --quiet",
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=300"
+      ],
+      "verification": {
+        "status": "passed",
+        "commands_run": [
+          "cd src/backend && docker compose config --quiet (COMPOSE-VALID)",
+          "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=300 (510 passed — không đụng code Python)"
+        ],
+        "tested_at": "2026-07-27T13:40:00+07:00",
+        "notes": "docker-compose.yaml protected — sửa theo yêu cầu trực tiếp của user. Healthcheck 4 service; bridge depends_on toolkit service_healthy (proxy chỉ lên khi agent thật sẵn sàng); toolkit chờ mongo healthy. deploy.llm.env.example điền đủ (file trước đó RỖNG); docs/deploy.md quy trình 6 bước gồm train checkpoint + smoke --require-live."
+      }
     }
   ]
 }

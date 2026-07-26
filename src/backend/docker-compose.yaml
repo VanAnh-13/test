@@ -100,13 +100,20 @@ services:
       SKIP_EMAIL_VERIFICATION: ${SKIP_EMAIL_VERIFICATION:-false}
       LANGCHAIN_TRACING_V2: ${LANGCHAIN_TRACING_V2:-false}
       DO_NOT_TRACK: "1"
+    healthcheck:
+      # /home là endpoint không cần auth của FastAPI toolkit
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:${TOOLKIT_PORT:-8585}/home', timeout=3).status==200 else 1)\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     volumes:
       - .:/app
       - hagent_config:/root/.hagent
       - toolkit_openclaw_config:/root/.openclaw
     depends_on:
       mongo:
-        condition: service_started
+        condition: service_healthy
       kafka:
         condition: service_healthy
       minio:
@@ -163,6 +170,12 @@ services:
       - "${MONGO_HOST_PORT:-5380}:27017"
     expose:
       - "27017"
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
     volumes:
       - ${MONGO_DATA_DIR:-/data/mongodb/mongo-automl}:/data/db
     logging:
@@ -188,6 +201,12 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_ACCESS_KEY}
       MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
     command: server /data --console-address ":9001"
     logging:
       driver: "json-file"
@@ -222,9 +241,18 @@ services:
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:14b}
       LLM_DEFAULT_MODEL: ${LLM_DEFAULT_MODEL:-ollama-ci}
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:${HAGENT_BRIDGE_PORT:-9900}/api/v1/chat/health', timeout=3).status==200 else 1)\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     depends_on:
-      - mongo
-      - toolkit
+      mongo:
+        condition: service_healthy
+      toolkit:
+        # Bridge chỉ là proxy sang toolkit — chờ toolkit THẬT SỰ sẵn sàng
+        condition: service_healthy
     logging:
       driver: "json-file"
       options:

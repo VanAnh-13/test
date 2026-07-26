@@ -776,6 +776,37 @@ fit GP không bao giờ khấu hao được.
   DEPLOY-DOCKER (user yêu cầu thêm — docker-compose*.yaml protected, yêu cầu
   trực tiếp của user = phê duyệt).
 
+## 2026-07-27 — T10/T11/DEPLOY-001 (11/12 task + deploy DONE)
+
+### T10 — Runner ma trận thí nghiệm
+
+- `run_experiment_matrix.py`: RealJobEnv chạy sklearn THẬT in-process cho
+  mỗi start_training (LLM thật + job thật, không docker, không mock score);
+  điều kiện A/B/C/C_mpc = yaml overlay tạm (A trỏ checkpoint __disabled__);
+  JSONL resumable (ô lỗi chạy lại), mỗi dòng đủ route/campaign/events/
+  tokens/USD/SHA. Dry-run 54 ô đúng.
+
+### T11 — Khung bài báo
+
+- `paper/main.tex` (article chuẩn, swap style ACML khi công bố ~7/8) +
+  `references.bib` 13 entry + `make_paper_tables.py` (bảng sinh TỰ ĐỘNG từ
+  JSONL/JSON thật — test xác nhận 3.62× covtype vào đúng bảng).
+
+### DEPLOY-001 — Docker deploy (user yêu cầu; compose protected → user
+### approve trực tiếp)
+
+- Healthcheck toolkit(/home)/bridge(chat/health)/mongo(ping)/minio(mc ready);
+  bridge chờ toolkit service_healthy; toolkit chờ mongo healthy.
+- `deploy.llm.env.example` (trước RỖNG) đủ mọi knob + cảnh báo strict
+  resolve; `docs/deploy.md` 6 bước gồm train checkpoint + smoke
+  --require-live. `docker compose config` sạch.
+
+### Verification tổng
+
+- Full suite **510 passed, 0 failed** (baseline nhận repo: 207).
+- Trạng thái 12 task: DONE T1–T8, T10–T12 + DEPLOY. CÒN: T9 Ollama (chờ
+  user cài) → hiệu chuẩn latency → chạy ma trận thật (checkpoint trước).
+
 ## Mẫu ghi cho phiên tiếp theo
 
 ```text
