@@ -818,6 +818,42 @@
         "tested_at": "2026-07-27T07:30:00+07:00",
         "notes": "Phát hiện trong lúc làm: outcome_ensemble THIẾU key search_algorithms → member sẽ dùng vocab default 3 thuật toán, lệch chiều với head v2 — đã thêm và có test khóa đồng bộ head==ensemble. Validator giờ đọc allowed_search từ campaign config (không drift). Sau task này: vocab v2 ĐÓNG BĂNG tới khi nộp bài; checkpoint phải train bằng scripts/train_outcome_model.py (T3) với config v2."
       }
+    },
+    {
+      "id": "AGENT-T5-001",
+      "title": "Outcome surprise: surfacing đúng key + vòng mở rộng campaign (cơ chế surprise-driven replanning trên agent thật)",
+      "status": "done",
+      "acceptance_criteria": [
+        "runner: tại chuyển tiếp all-terminal→comparing, nếu có variant completed với outcome surprise HIGH và còn quota → propose_extension_variants (exploration boost), thêm variant, quay lại submitting, phát event campaign_extended; gate agent.campaign.surprise_extension (mặc định TẮT); outcome_model=None tắt hẳn như semantics hiện hành.",
+        "Campaign.extension_rounds trong schema (to_dict/from_dict) — sống sót qua tick vì campaign round-trip dict qua state.",
+        "builder.propose_extension_variants: planner với exploration_weight boost, dedup với variant sẵn có, fallback thuật toán chưa thử khi model/planner vắng; source='surprise_extension'.",
+        "Vá bug đọc sai key: nodes + hierarchy_node promote cả event outcome (key 'outcome') vào state['surprise'] — helper dùng chung _select_surprise (ưu tiên outcome zscore cao nhất, fallback latent).",
+        "Test: high surprise → mở rộng đúng n_extra rồi hoàn tất, không mở rộng lần 2 (max_rounds=1); gate off/model None → không mở rộng; _select_surprise ưu tiên outcome; full suite không hồi quy."
+      ],
+      "allowed_files": [
+        "src/backend/hagent/agent/campaign/runner.py",
+        "src/backend/hagent/agent/campaign/builder.py",
+        "src/backend/hagent/agent/campaign/nodes.py",
+        "src/backend/hagent/agent/campaign/schema.py",
+        "src/backend/hagent/agent/execution/hierarchy_node.py",
+        "src/backend/hagent/hagent.yaml",
+        "src/backend/tests/test_campaign_surprise_extension.py",
+        "feature_list.json",
+        "claude-progress.md"
+      ],
+      "test_commands": [
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests/test_campaign_surprise_extension.py -q --timeout=180",
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=300"
+      ],
+      "verification": {
+        "status": "passed",
+        "commands_run": [
+          "cd src/backend && .venv/Scripts/python.exe -m pytest tests/test_campaign_surprise_extension.py -q --timeout=180 (11 passed)",
+          "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=300 (455 passed)"
+        ],
+        "tested_at": "2026-07-27T08:40:00+07:00",
+        "notes": "E2E test: model tin 0.85, job trả 0.2 → zscore >3 → campaign +2 variant surprise_extension → hoàn tất done; không mở rộng lần 2 (max_rounds); gate off/model None/no-surprise đều không mở rộng; extension_rounds sống qua dict roundtrip. Surprise tính LẠI tại transition thay vì gom event xuyên tick (event tick trước không còn trong buffer tick này; model đã memoize nên rẻ)."
+      }
     }
   ]
 }

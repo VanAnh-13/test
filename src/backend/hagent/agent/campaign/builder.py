@@ -99,6 +99,90 @@ def _campaign_planner(cfg: dict) -> Any | None:
         return None
 
 
+def _variant_signature(params: Dict[str, Any]) -> tuple:
+    return (
+        params.get("search_algorithm"),
+        tuple(params.get("models") or []),
+        params.get("time_limit"),
+    )
+
+
+def propose_extension_variants(
+    campaign: Any,
+    goal: dict,
+    *,
+    user_id: str | None = None,
+    dataset_meta: dict | None = None,
+    outcome_model: Any = "auto",
+    n_extra: int = 2,
+    exploration_weight: float = 0.5,
+    config: dict | None = None,
+) -> List[CampaignVariant]:
+    """
+    Đề xuất variant MỞ RỘNG sau outcome surprise cao: model vừa bị bất ngờ
+    → dự đoán quanh vùng đó không đáng tin → tăng mạnh exploration_weight
+    (ưu tiên σ cao) thay vì khai thác tiếp μ.
+
+    Fallback khi model/planner vắng: thử các thuật toán CHƯA có trong
+    campaign (khám phá thô nhưng vẫn hợp lý).
+    """
+    cfg = dict(_campaign_config())
+    if config:
+        cfg.update(config)
+    n_extra = max(1, int(n_extra))
+    base = _base_train_params(goal, user_id)
+    metric = str(base.get("metric") or "").lower()
+    higher = metric not in _LOWER_IS_BETTER_METRICS
+
+    existing = {_variant_signature(v.params) for v in campaign.variants}
+    proposals: List[Dict[str, Any]] = []
+
+    model = _resolve_outcome_model(outcome_model)
+    planner = _campaign_planner(cfg) if model is not None else None
+    if planner is not None:
+        # Boost exploration trên planner (và pool bên trong CemMpc nếu có)
+        for target in (planner, getattr(planner, "_pool_planner", None)):
+            if target is not None and hasattr(target, "exploration_weight"):
+                target.exploration_weight = float(exploration_weight)
+        proposals = planner.plan_campaign_configs(
+            base_params=base,
+            dataset_meta=dataset_meta,
+            outcome_model=model,
+            n_return=n_extra * 3,  # dư để sống sót dedup
+            higher_is_better=higher,
+        )
+
+    if not proposals:
+        # Fallback: các thuật toán chưa thử, time budget lớn nhất
+        tried = {v.params.get("search_algorithm") for v in campaign.variants}
+        algorithms = [a for a in (cfg.get("search_algorithms") or []) if a not in tried]
+        time_opts = list(cfg.get("time_limit_options") or [180, 300, 600])
+        proposals = [
+            {"search_algorithm": algo, "time_limit": max(time_opts)}
+            for algo in algorithms
+        ]
+
+    out: List[CampaignVariant] = []
+    for prop in proposals:
+        if len(out) >= n_extra:
+            break
+        params = dict(base)
+        params.update({k: v for k, v in prop.items() if v is not None})
+        sig = _variant_signature(params)
+        if sig in existing:
+            continue
+        existing.add(sig)
+        out.append(
+            CampaignVariant(
+                variant_id=str(uuid.uuid4()),
+                label=f"ext{campaign.extension_rounds + 1}_{len(out) + 1}",
+                params=params,
+                source="surprise_extension",
+            )
+        )
+    return out
+
+
 async def build_campaign(
     goal: dict,
     *,

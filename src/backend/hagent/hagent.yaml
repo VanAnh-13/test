@@ -382,6 +382,13 @@ agent:
     # submit theo outcome dự đoán (chỉ kích hoạt khi model có checkpoint)
     wm_variant_proposal: true
     wm_rank_variants: true
+    # Vòng mở rộng theo outcome surprise (surprise-driven replanning trên
+    # agent thật). Mặc định TẮT — bật cho điều kiện thí nghiệm C.
+    surprise_extension:
+      enabled: false
+      max_rounds: 1
+      n_extra: 2
+      exploration_weight: 0.5
 
   # Adaptive hierarchical goals (live controller + smart-skip)
   hierarchy:

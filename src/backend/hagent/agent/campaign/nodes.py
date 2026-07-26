@@ -34,6 +34,29 @@ def _max_monitor_ticks() -> int:
         return 50
 
 
+def _select_surprise(surprise_buf: list) -> dict | None:
+    """
+    Chọn surprise để promote vào state["surprise"].
+
+    Ưu tiên outcome surprise (payload nằm dưới key "outcome" — bug cũ chỉ đọc
+    key "surprise" nên event outcome bị vứt); lấy zscore cao nhất. Fallback:
+    latent surprise cuối cùng như hành vi cũ.
+    """
+    outcomes = [
+        e.get("outcome")
+        for e in surprise_buf
+        if e.get("type") == "campaign_outcome_surprise" and e.get("outcome")
+    ]
+    if outcomes:
+        picked = max(outcomes, key=lambda o: float(o.get("zscore") or 0.0))
+        return {"kind": "outcome", **picked}
+    for e in reversed(surprise_buf):
+        s = e.get("surprise")
+        if s:
+            return s
+    return None
+
+
 async def campaign_node(state: AutoMLState) -> dict:
     """
     Multi-candidate job campaign tick.
@@ -145,9 +168,9 @@ async def campaign_node(state: AutoMLState) -> dict:
         "current_phase": "train" if campaign.status != "done" else "evaluate",
     }
     if surprise_buf:
-        last_s = surprise_buf[-1].get("surprise")
-        if last_s:
-            update["surprise"] = last_s
+        picked = _select_surprise(surprise_buf)
+        if picked:
+            update["surprise"] = picked
 
     if campaign.status == "done":
         best = next(

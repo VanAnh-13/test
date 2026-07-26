@@ -293,9 +293,11 @@ async def _run_train_leaf(state: AutoMLState, leaf_goal: dict) -> Dict[str, Any]
         "surprise_events": surp_events,
     }
     if surp_events:
-        last = surp_events[-1].get("surprise")
-        if last:
-            update["surprise"] = last
+        from hagent.agent.campaign.nodes import _select_surprise
+
+        picked = _select_surprise(surp_events)
+        if picked:
+            update["surprise"] = picked
 
     if campaign.status == "done":
         from hagent.agent.campaign.compare import compare_campaign

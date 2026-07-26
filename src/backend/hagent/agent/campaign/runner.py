@@ -173,6 +173,106 @@ async def write_warm_start_memory(
         logger.debug("Warm-start memory write failed: %s", exc)
 
 
+def _extension_enabled() -> bool:
+    try:
+        from hagent.bridge.config import get_campaign_config
+
+        return bool(
+            (get_campaign_config().get("surprise_extension") or {}).get("enabled", False)
+        )
+    except Exception:
+        return False
+
+
+def _maybe_extend_on_surprise(
+    campaign: Campaign,
+    *,
+    goal: dict,
+    wm_snap: dict,
+    events: list,
+    outcome_model: Any,
+    user_id: str | None,
+) -> bool:
+    """
+    Nếu có variant completed với outcome surprise HIGH và còn quota vòng mở
+    rộng → thêm variant khám phá, trả True (caller quay lại submitting).
+
+    Tính lại surprise tại đây thay vì gom event qua các tick — event của tick
+    trước không còn trong `events` của tick này, còn model thì đã memoize.
+    """
+    try:
+        from hagent.bridge.config import get_campaign_config, get_world_model_config
+
+        ext_cfg = dict(get_campaign_config().get("surprise_extension") or {})
+        max_rounds = int(ext_cfg.get("max_rounds", 1))
+        if campaign.extension_rounds >= max_rounds:
+            return False
+        n_extra = max(1, int(ext_cfg.get("n_extra", 2)))
+        surprise_cfg = dict((get_world_model_config() or {}).get("surprise") or {})
+        if not surprise_cfg.get("outcome_enabled", True):
+            return False
+
+        from hagent.agent.campaign.wm_hooks import campaign_outcome_surprise
+
+        model_arg = None if isinstance(outcome_model, str) else outcome_model
+
+        trigger = None
+        for variant in campaign.variants:
+            if variant.status != "completed" or variant.best_score is None:
+                continue
+            ds_id = (variant.params or {}).get("dataset_id")
+            meta = (wm_snap.get("datasets") or {}).get(ds_id)
+            outcome = campaign_outcome_surprise(
+                variant=variant,
+                dataset_meta=meta,
+                outcome_model=model_arg,
+                surprise_config=surprise_cfg,
+            )
+            if outcome and outcome.get("level") == "high":
+                trigger = (variant, outcome, meta)
+                break
+        if trigger is None:
+            return False
+
+        variant, outcome, meta = trigger
+        from hagent.agent.campaign.builder import propose_extension_variants
+
+        new_variants = propose_extension_variants(
+            campaign,
+            goal,
+            user_id=user_id,
+            dataset_meta=meta,
+            outcome_model=outcome_model,
+            n_extra=n_extra,
+            exploration_weight=float(ext_cfg.get("exploration_weight", 0.5)),
+        )
+        if not new_variants:
+            return False
+
+        campaign.variants.extend(new_variants)
+        campaign.extension_rounds += 1
+        events.append(
+            {
+                "type": "campaign_extended",
+                "round": campaign.extension_rounds,
+                "trigger_variant_id": variant.variant_id,
+                "trigger_zscore": outcome.get("zscore"),
+                "n_added": len(new_variants),
+            }
+        )
+        logger.info(
+            "Campaign %s mở rộng vòng %d: +%d variant (zscore=%.2f)",
+            campaign.campaign_id,
+            campaign.extension_rounds,
+            len(new_variants),
+            float(outcome.get("zscore") or 0.0),
+        )
+        return True
+    except Exception as exc:
+        logger.debug("surprise extension skipped: %s", exc)
+        return False
+
+
 async def campaign_step(
     campaign: Campaign,
     *,
@@ -336,7 +436,21 @@ async def campaign_step(
         campaign.status = "monitoring"
         return campaign
 
-    # All terminal → compare
+    # All terminal → trước khi so sánh, cân nhắc VÒNG MỞ RỘNG theo outcome
+    # surprise (cơ chế surprise-driven replanning; gate config, mặc định tắt)
+    if outcome_model is not None and _extension_enabled():
+        extended = _maybe_extend_on_surprise(
+            campaign,
+            goal=goal,
+            wm_snap=wm_snap,
+            events=events,
+            outcome_model=outcome_model,
+            user_id=user_id,
+        )
+        if extended:
+            campaign.status = "submitting"
+            return campaign
+
     campaign.status = "comparing"
     best, table = compare_campaign(campaign)
     campaign.comparison = table

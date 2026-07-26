@@ -698,6 +698,30 @@ fit GP không bao giờ khấu hao được.
 
 - Kế tiếp T5: surfacing outcome surprise + vòng mở rộng campaign.
 
+## 2026-07-27 — AGENT-T5-001 (cơ chế chính của bài báo trên agent thật)
+
+### Phạm vi
+
+- Vòng mở rộng campaign theo outcome surprise: tại all-terminal→comparing,
+  variant completed nào có zscore HIGH (tính LẠI tại chỗ — event xuyên tick
+  không tin được, model đã memoize nên rẻ) → `propose_extension_variants`
+  (planner exploration_weight boost 0.5; fallback thuật toán chưa thử) →
+  quay lại submitting, event `campaign_extended`. Gate
+  `agent.campaign.surprise_extension` mặc định TẮT (bật cho điều kiện C).
+- `Campaign.extension_rounds` vào schema (sống qua to_dict/from_dict).
+- Vá bug promote sai key ở nodes + hierarchy_node: event outcome (key
+  "outcome") giờ vào state["surprise"] qua `_select_surprise` (ưu tiên
+  outcome zscore cao nhất, fallback latent như cũ).
+
+### Verification
+
+- 11 passed (E2E mở rộng → hoàn tất, quota, gate, roundtrip); full suite
+  **455 passed, 0 failed**.
+
+### Handoff
+
+- Kế tiếp T6: harness scenario wm_campaign (guard hồi quy chuỗi event).
+
 ## Mẫu ghi cho phiên tiếp theo
 
 ```text

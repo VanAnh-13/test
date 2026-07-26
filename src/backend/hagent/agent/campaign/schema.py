@@ -43,6 +43,9 @@ class Campaign:
     comparison: List[Dict[str, Any]] = field(default_factory=list)
     warm_start_used: List[str] = field(default_factory=list)
     max_concurrent: int = 2
+    # Số vòng mở rộng theo outcome surprise đã dùng — PHẢI là field schema:
+    # campaign round-trip to_dict/from_dict giữa các tick của graph
+    extension_rounds: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -54,6 +57,7 @@ class Campaign:
             "comparison": list(self.comparison),
             "warm_start_used": list(self.warm_start_used),
             "max_concurrent": self.max_concurrent,
+            "extension_rounds": self.extension_rounds,
         }
 
     @classmethod
@@ -71,6 +75,7 @@ class Campaign:
             comparison=list(data.get("comparison") or []),
             warm_start_used=list(data.get("warm_start_used") or []),
             max_concurrent=int(data.get("max_concurrent") or 2),
+            extension_rounds=int(data.get("extension_rounds") or 0),
         )
 
     def pending_submit(self) -> List[CampaignVariant]:
