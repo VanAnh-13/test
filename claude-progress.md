@@ -722,6 +722,29 @@ fit GP không bao giờ khấu hao được.
 
 - Kế tiếp T6: harness scenario wm_campaign (guard hồi quy chuỗi event).
 
+## 2026-07-27 — AGENT-T6-001 (khép cụm "WM vào agent thật": T1–T6 DONE)
+
+### Phạm vi
+
+- Scenario `wm_campaign.yaml` (tag wm_ext): expect chuỗi event
+  campaign_outcome_surprise → campaign_extended, chạy qua run_graph_scenario
+  (hierarchy leaf = đường production). Ghi chú điều kiện live (checkpoint +
+  gate) ngay trong YAML.
+- Test guard 2 chiều: có gate+model → pass; KHÔNG gate → scenario phải FAIL
+  (guard không pass rỗng). Fixture checkpoint không commit nhị phân — head
+  train tại chỗ <1s trong test.
+
+### Verification
+
+- 3 passed; full suite **458 passed**; harness smoke 16/16 OK.
+
+### Trạng thái giai đoạn (kế hoạch 12 task)
+
+- DONE: T1 bugfix prod, T2 usage tracker, T3 checkpoint pipeline, T4 5 thuật
+  toán + vocab v2, T5 vòng mở rộng surprise, T6 harness guard.
+- CÒN LẠI: T7 MPC budget, T8 goal_parser, T9 Ollama (cần user cài),
+  T10 runner ma trận, T11 khung LaTeX, T12 per-request model.
+
 ## Mẫu ghi cho phiên tiếp theo
 
 ```text

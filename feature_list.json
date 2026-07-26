@@ -854,6 +854,36 @@
         "tested_at": "2026-07-27T08:40:00+07:00",
         "notes": "E2E test: model tin 0.85, job trả 0.2 → zscore >3 → campaign +2 variant surprise_extension → hoàn tất done; không mở rộng lần 2 (max_rounds); gate off/model None/no-surprise đều không mở rộng; extension_rounds sống qua dict roundtrip. Surprise tính LẠI tại transition thay vì gom event xuyên tick (event tick trước không còn trong buffer tick này; model đã memoize nên rẻ)."
       }
+    },
+    {
+      "id": "AGENT-T6-001",
+      "title": "Harness scenario WM-on campaign: chuỗi event campaign_outcome_surprise → campaign_extended qua đúng máy móc harness (graph layer = đường production)",
+      "status": "done",
+      "acceptance_criteria": [
+        "Scenario wm_campaign.yaml (tag wm_ext) với expect.event_types_include đủ chuỗi event; ghi chú yêu cầu checkpoint + gate khi chạy live.",
+        "Test pytest chạy scenario qua run_graph_scenario (hierarchy leaf như production) với gate bật + model inject → event_types chứa campaign_outcome_surprise và campaign_extended; assertions harness pass.",
+        "Full suite không hồi quy."
+      ],
+      "allowed_files": [
+        "src/backend/hagent/agent/harness/scenarios/wm_campaign.yaml",
+        "src/backend/tests/test_harness_wm_campaign.py",
+        "feature_list.json",
+        "claude-progress.md"
+      ],
+      "test_commands": [
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests/test_harness_wm_campaign.py -q --timeout=180",
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=300"
+      ],
+      "verification": {
+        "status": "passed",
+        "commands_run": [
+          "cd src/backend && .venv/Scripts/python.exe -m pytest tests/test_harness_wm_campaign.py -q --timeout=180 (3 passed)",
+          "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=300 (458 passed)",
+          "cd src/backend && .venv/Scripts/python.exe scripts/run_agent_harness.py --layer offline,graph --tags smoke (16/16 OK)"
+        ],
+        "tested_at": "2026-07-27T09:20:00+07:00",
+        "notes": "Guard 2 chiều: gate bật + model → event chain đầy đủ, harness assertions pass; gate tắt → scenario PHẢI fail (chứng minh guard không pass rỗng). Scenario chạy qua run_graph_scenario = hierarchy leaf, đúng đường production."
+      }
     }
   ]
 }

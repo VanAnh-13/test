@@ -1,0 +1,33 @@
+# WM-on campaign — guard hồi quy cho chuỗi surprise-driven replanning.
+#
+# Điều kiện chạy LIVE (không qua pytest):
+#   1. Checkpoint outcome model tồn tại (scripts/train_outcome_model.py, T3)
+#      tại path world_model.outcome_head/outcome_ensemble trong hagent.yaml.
+#   2. agent.campaign.surprise_extension.enabled: true (điều kiện thí nghiệm C).
+# Pytest guard (tests/test_harness_wm_campaign.py) tự inject cả hai nên chạy
+# được mọi lúc, deterministic.
+scenarios:
+  - id: wm_campaign_extension
+    name: "WM campaign — outcome surprise mở rộng vòng (graph layer)"
+    tags: [wm_ext, campaign, wm]
+    message: >-
+      Train a model on my glass dataset ds_glass, target Type. Use
+      multi-candidate training and react if results deviate from
+      expectations.
+    user_id: wm_ext_user
+    world_model_fixture: glass_wm
+    goal:
+      goal_type: train
+      dataset_id: ds_glass
+      target_column: Type
+      problem_type: classification
+      metric: f1
+    expect:
+      success: true
+      goal_type: train
+      has_job: true
+      tools_include: [start_training]
+      event_types_include:
+        - campaign_outcome_surprise
+        - campaign_extended
+      max_elapsed_seconds: 90
