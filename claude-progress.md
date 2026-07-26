@@ -604,6 +604,28 @@ fit GP không bao giờ khấu hao được.
 - Artifact: `benchmarks/hpo_real_fair.json`, `hpo_large_clean.json`
   (+ `hpo_large.json` bản nhiễu để đối chiếu).
 
+## 2026-07-27 — AGENT-T1-001 (bắt đầu giai đoạn "WM vào agent thật")
+
+### Phạm vi
+
+- Vá NameError trong `stream_agent` (graph.py: dùng `get_agent_registry`
+  không import — sập ngay lần streaming đầu tiên).
+- `get_default_model_config` giờ RAISE kèm danh sách tên hợp lệ khi
+  `default_model`/`LLM_DEFAULT_MODEL` không khớp — chặn hai thảm họa: hóa
+  đơn API bất ngờ và thí nghiệm chạy nhầm model không ai biết.
+- Strict resolve lộ ra `ci-mock` (conftest + CI dùng làm default) CHƯA TỪNG
+  được đăng ký — sống nhờ chính fallback âm thầm. Đã đăng ký `ci-mock` thành
+  entry `openai_compatible` thật trỏ mock server 11435 trong hagent.yaml.
+
+### Verification
+
+- `pytest tests/test_llm_config_strict.py` — PASS (4); full suite
+  **423 passed, 0 failed**.
+
+### Handoff
+
+- Kế tiếp T2: nối usage tracker vào create_chat_model + cost_metrics.
+
 ## Mẫu ghi cho phiên tiếp theo
 
 ```text

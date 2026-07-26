@@ -691,6 +691,37 @@
         "tested_at": "2026-07-27T03:30:00+07:00",
         "notes": "KẾT QUẢ TRUNG THỰC (thay thế mọi số liệu HPO-BENCH-001/HPO-FIX-002 trước đó — chúng KHÔNG hợp lệ vì BO tìm trên không gian gấp 981 lần). Covertype sạch: SH 3.62x > GA 2.75x > random 1.43x > grid 1.00 > BO 0.79x; test score gần như đồng nhất 0.8413 (GA 0.8418). 6 dataset nhỏ (3 seed): grid tốt nhất về chất lượng (test 0.9315±0.068), chỉ random nhanh hơn (1.64x), BO 0.57x và GA 0.86x CHẬM hơn grid; sai số ±0.07-0.08 lớn hơn mọi khoảng cách giữa thuật toán → khác biệt chất lượng KHÔNG có ý nghĩa thống kê ở quy mô nhỏ. Phát hiện chính: thứ hạng ĐẢO CHIỀU theo quy mô — SH từ 1.05x (vô dụng) thành 3.62x (nhanh nhất) vì ngân sách full-fidelity chỉ 3.0/18. Hạn chế: covtype n=1 seed (±0.0000 nghĩa là KHÔNG có phương sai để báo cáo, không phải phương sai bằng 0)."
       }
+    },
+    {
+      "id": "AGENT-T1-001",
+      "title": "Bugfix production: stream_agent NameError (thiếu import get_agent_registry) + resolve model strict (raise thay vì âm thầm rơi về gpt-4o-mini)",
+      "status": "done",
+      "acceptance_criteria": [
+        "stream_agent không còn NameError khi gọi lần đầu (import cục bộ get_agent_registry như các call site khác trong graph.py).",
+        "get_default_model_config raise ValueError kèm danh sách model hợp lệ khi default_model/LLM_DEFAULT_MODEL không khớp tên nào — không bao giờ âm thầm dùng model tính phí; hành vi cũ (không đặt default_model) giữ nguyên: default:true → phần tử đầu.",
+        "Test mới cover cả hai; full suite không hồi quy."
+      ],
+      "allowed_files": [
+        "src/backend/hagent/agent/graph.py",
+        "src/backend/hagent/agent/llm_config.py",
+        "src/backend/hagent/hagent.yaml",
+        "src/backend/tests/test_llm_config_strict.py",
+        "feature_list.json",
+        "claude-progress.md"
+      ],
+      "test_commands": [
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests/test_llm_config_strict.py -q --timeout=120",
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=300"
+      ],
+      "verification": {
+        "status": "passed",
+        "commands_run": [
+          "cd src/backend && .venv/Scripts/python.exe -m pytest tests/test_llm_config_strict.py -q --timeout=120 (4 passed)",
+          "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=300 (423 passed)"
+        ],
+        "tested_at": "2026-07-27T05:10:00+07:00",
+        "notes": "hagent.yaml thêm vào whitelist TRƯỚC khi sửa: strict resolve lộ ra ci-mock (conftest + CI dùng) chưa từng được đăng ký — bấy lâu sống nhờ chính fallback âm thầm vừa bị chặn; đã đăng ký ci-mock thành entry openai_compatible thật trỏ mock server 11435."
+      }
     }
   ]
 }

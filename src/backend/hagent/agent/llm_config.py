@@ -100,6 +100,13 @@ def get_default_model_config() -> ModelConfig:
         for cfg in configs:
             if cfg.name == default_name:
                 return cfg
+        # Tên sai (typo LLM_DEFAULT_MODEL) mà âm thầm rơi về model khác là
+        # thảm họa hai mặt: hóa đơn API bất ngờ, và thí nghiệm chạy nhầm model
+        # không ai phát hiện. Phải fail to tiếng.
+        raise ValueError(
+            f"default_model={default_name!r} không khớp model nào trong cấu hình. "
+            f"Các tên hợp lệ: {[c.name for c in configs]}"
+        )
 
     for cfg in configs:
         if cfg.is_default:

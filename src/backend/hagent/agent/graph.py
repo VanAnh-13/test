@@ -588,6 +588,8 @@ async def stream_agent(
     """Stream multi-agent graph events qua async generator (Phase 5 enriched)."""
     from langchain_core.messages import HumanMessage
 
+    from hagent.agent.registry import get_agent_registry
+
     graph = get_automl_graph()
     registry = get_agent_registry()
     valid_names = set(registry.agent_names()) | {
