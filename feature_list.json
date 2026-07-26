@@ -785,6 +785,39 @@
         "tested_at": "2026-07-27T06:50:00+07:00",
         "notes": "Test then chốt: checkpoint script sinh ra nạp được qua chính _default_outcome_model (đường auto production); memoize trả cùng object tới khi mtime đổi; thiếu sample fail to tiếng."
       }
+    },
+    {
+      "id": "AGENT-T4-001",
+      "title": "Bật random_search + successive_halving cho campaign; vocab v2 + bump path checkpoint (đổi vocab = đổi chiều feature)",
+      "status": "done",
+      "acceptance_criteria": [
+        "hagent.yaml: agent.campaign.search_algorithms có đủ 5 thuật toán; vocab outcome_head/outcome_ensemble.search_algorithms đồng bộ 5; checkpoint path bump v2 (outcome_head_v2.npz / outcome_ensemble_v2) — checkpoint cũ không bị nạp nhầm với chiều feature mới.",
+        "constraints/validator.py: allowed_search đọc từ campaign config (fallback tĩnh đủ 5) — không drift với yaml.",
+        "skills/hautoml/tools.yaml enum + fallback cứng builder.py cập nhật đủ 5.",
+        "Test: builder round-robin sinh được variant với 2 thuật toán mới; validator chấp nhận successive_halving; CEM space nhận đủ 5 qua campaign cfg; full suite không hồi quy."
+      ],
+      "allowed_files": [
+        "src/backend/hagent/hagent.yaml",
+        "src/backend/hagent/agent/constraints/validator.py",
+        "src/backend/hagent/skills/hautoml/tools.yaml",
+        "src/backend/hagent/agent/campaign/builder.py",
+        "src/backend/tests/test_campaign_algorithms.py",
+        "feature_list.json",
+        "claude-progress.md"
+      ],
+      "test_commands": [
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests/test_campaign_algorithms.py -q --timeout=180",
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=300"
+      ],
+      "verification": {
+        "status": "passed",
+        "commands_run": [
+          "cd src/backend && .venv/Scripts/python.exe -m pytest tests/test_campaign_algorithms.py -q --timeout=180 (7 passed)",
+          "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=300 (444 passed)"
+        ],
+        "tested_at": "2026-07-27T07:30:00+07:00",
+        "notes": "Phát hiện trong lúc làm: outcome_ensemble THIẾU key search_algorithms → member sẽ dùng vocab default 3 thuật toán, lệch chiều với head v2 — đã thêm và có test khóa đồng bộ head==ensemble. Validator giờ đọc allowed_search từ campaign config (không drift). Sau task này: vocab v2 ĐÓNG BĂNG tới khi nộp bài; checkpoint phải train bằng scripts/train_outcome_model.py (T3) với config v2."
+      }
     }
   ]
 }

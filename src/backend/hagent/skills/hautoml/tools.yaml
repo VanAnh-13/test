@@ -102,7 +102,7 @@ tools:
         type: string
         required: false
         default: grid_search
-        enum: ["grid_search", "bayesian_search", "genetic_algorithm"]
+        enum: ["grid_search", "bayesian_search", "genetic_algorithm", "random_search", "successive_halving"]
       max_time: { type: integer, required: false, default: 300 }
 
   - name: hautoml_list_jobs

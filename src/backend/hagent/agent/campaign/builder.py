@@ -29,6 +29,8 @@ def _campaign_config() -> dict:
                 "grid_search",
                 "bayesian_search",
                 "genetic_algorithm",
+                "random_search",
+                "successive_halving",
             ],
             "time_limit_options": [180, 300, 600],
             "poll_only_status": True,
@@ -116,7 +118,13 @@ async def build_campaign(
     top_k = int(cfg.get("warm_start_top_k", 3))
     algorithms: List[str] = list(
         cfg.get("search_algorithms")
-        or ["grid_search", "bayesian_search", "genetic_algorithm"]
+        or [
+            "grid_search",
+            "bayesian_search",
+            "genetic_algorithm",
+            "random_search",
+            "successive_halving",
+        ]
     )
     time_opts: List[int] = list(cfg.get("time_limit_options") or [180, 300, 600])
 

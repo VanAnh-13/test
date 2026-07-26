@@ -672,6 +672,32 @@ fit GP không bao giờ khấu hao được.
 - Kế tiếp T4: bật random_search + successive_halving cho campaign, version
   checkpoint v2 (đổi vocab = đổi chiều feature).
 
+## 2026-07-27 — AGENT-T4-001
+
+### Phạm vi
+
+- Campaign dùng được đủ 5 thuật toán HPO (thêm random_search +
+  successive_halving): pool `agent.campaign.search_algorithms`, vocab
+  outcome_head/ensemble (v2), validator (đọc từ campaign config — không
+  drift), enum skills tools.yaml, fallback cứng builder.
+- Bump checkpoint path v2 (`outcome_head_v2.npz`, `outcome_ensemble_v2/`)
+  vì đổi vocab = đổi chiều feature — checkpoint v1 không bị nạp nhầm.
+- Phát hiện + vá: `outcome_ensemble` THIẾU key search_algorithms → member
+  lệch vocab với head; test khóa head==ensemble.
+
+### Verification
+
+- 7 passed (test mới); full suite **444 passed**.
+
+### Lưu ý vận hành
+
+- Từ giờ vocab v2 ĐÓNG BĂNG tới khi nộp bài. Checkpoint train bằng
+  `scripts/train_outcome_model.py` với config hiện hành.
+
+### Handoff
+
+- Kế tiếp T5: surfacing outcome surprise + vòng mở rộng campaign.
+
 ## Mẫu ghi cho phiên tiếp theo
 
 ```text

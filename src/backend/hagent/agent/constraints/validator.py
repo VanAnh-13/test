@@ -33,11 +33,23 @@ def validate_action(
     """Validate a single action against observation + goal."""
     reasons: List[str] = []
     goal = goal or observation.goal or {}
+    if allowed_search is None:
+        # Đọc từ campaign config để không drift với hagent.yaml; fallback
+        # tĩnh đủ 5 thuật toán mà backend factory đã đăng ký
+        try:
+            from hagent.bridge.config import get_campaign_config
+
+            allowed_search = list(
+                get_campaign_config().get("search_algorithms") or []
+            ) or None
+        except Exception:
+            allowed_search = None
     allowed_search = allowed_search or [
         "grid_search",
         "bayesian_search",
         "genetic_algorithm",
         "random_search",
+        "successive_halving",
     ]
     allowed_problem_types = allowed_problem_types or [
         "classification",

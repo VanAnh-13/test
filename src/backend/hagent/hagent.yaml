@@ -137,12 +137,14 @@ world_model:
     # bật lên sẽ gây lệch phân phối train/serve (train có z, predict z=0)
     use_latent: false
     latent_dim: 64
-    checkpoint_path: "./data/world_model/outcome_head_v1.npz"
+    checkpoint_path: "./data/world_model/outcome_head_v2.npz"
     time_limit_norm: 600
     search_algorithms:
       - "grid_search"
       - "bayesian_search"
       - "genetic_algorithm"
+      - "random_search"
+      - "successive_halving"
     problem_types:
       - "classification"
       - "regression"
@@ -169,8 +171,16 @@ world_model:
       - "SVC"
       - "LogisticRegression"
       - "GaussianNB"
-    checkpoint_dir: "./data/world_model/outcome_ensemble"
+    checkpoint_dir: "./data/world_model/outcome_ensemble_v2"
     time_limit_norm: 600
+    # PHẢI đồng bộ outcome_head.search_algorithms — thiếu key này member
+    # ensemble rơi về default 3 thuật toán, lệch chiều feature với head v2
+    search_algorithms:
+      - "grid_search"
+      - "bayesian_search"
+      - "genetic_algorithm"
+      - "random_search"
+      - "successive_halving"
   campaign_planner:
     # CEM thật trên không gian config campaign (score bằng outcome model)
     enabled: true
@@ -364,6 +374,8 @@ agent:
       - "grid_search"
       - "bayesian_search"
       - "genetic_algorithm"
+      - "random_search"
+      - "successive_halving"
     time_limit_options: [180, 300, 600]
     max_monitor_ticks: 50
     # World-model hooks trong builder: đề xuất variant bằng CEM + xếp thứ tự
