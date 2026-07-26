@@ -587,6 +587,72 @@
         "tested_at": "2026-07-26T23:05:00+07:00",
         "notes": "Nguyên nhân chậm tìm thấy: (1) GA lồng cross_validate n_jobs=-1 TRONG Parallel → oversubscription n²; (2) GA/Grid dùng backend threading cho workload trung bình — sklearn fit bị GIL khóa nên gần như tuần tự; (3) BO gp_minimize tuần tự từng điểm. Fix: inner cv n_jobs=1 trên đường song song, backend loky mặc định, BO batch ask/tell (constant liar) song song theo lô. Lưu ý: workload đồ chơi (<0.2s/fit) overhead dispatch Windows nuốt lợi ích — speedup chỉ hiện rõ trên workload thật."
       }
+    },
+    {
+      "id": "HPO-BENCH-001",
+      "title": "Benchmark 5 thuật toán HPO trên dữ liệu THẬT (sklearn bundled + CSV repo) — chất lượng, thời gian, generalization",
+      "status": "done",
+      "acceptance_criteria": [
+        "load_real_datasets: nạp được dataset thật offline (iris/wine/breast_cancer/digits bundled + glass.csv/online_shoppers CSV trong repo), trả X/y/meta; KHÔNG phụ thuộc OpenML (API đang 504).",
+        "scripts/benchmark_hpo.py: mỗi (dataset × strategy) đo best CV score, wall-clock, số lần đánh giá; grid_search làm mốc exhaustive; các strategy khác cùng budget cố định.",
+        "Có holdout test set để báo cáo generalization (không chỉ CV score).",
+        "Chạy tuần tự độc chiếm CPU (timing hợp lệ), ghi JSON + in bảng tóm tắt.",
+        "Kết quả thật được ghi vào claude-progress.md; full suite không hồi quy."
+      ],
+      "allowed_files": [
+        "src/backend/scripts/benchmark_hpo.py",
+        "src/backend/automl/search/datasets_real.py",
+        "src/backend/tests/test_datasets_real.py",
+        "feature_list.json",
+        "claude-progress.md"
+      ],
+      "test_commands": [
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests/test_datasets_real.py -q --timeout=300",
+        "cd src/backend && .venv/Scripts/python.exe scripts/benchmark_hpo.py --datasets iris,wine --budget 8 --out benchmarks/hpo_smoke.json",
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=300"
+      ],
+      "verification": {
+        "status": "passed",
+        "commands_run": [
+          "cd src/backend && .venv/Scripts/python.exe -m pytest tests/test_datasets_real.py -q --timeout=300 (15 passed)",
+          "cd src/backend && .venv/Scripts/python.exe scripts/benchmark_hpo.py --budget 8 --out benchmarks/hpo_real_before.json (exit 0; 6 dataset × 5 strategy)"
+        ],
+        "tested_at": "2026-07-27T00:30:00+07:00",
+        "notes": "OpenML API 504 (server họ sập sau redirect) → dùng 6 dataset thật offline: iris/wine/breast_cancer/digits (sklearn bundled) + glass/online_shoppers (CSV repo), 150→12330 hàng, 2→10 lớp. Benchmark phát hiện 2 defect: (1) GA phình budget lên 54 evals (3× grid vét cạn) do auto-adjust bỏ qua config người dùng; (2) BO tạo pool joblib kích thước lệch (n_jobs=8 vs 16 của các strategy khác) → 24 tiến trình trên 16 lõi, một lần chạy iris stall 2231s. Cả hai chuyển sang HPO-FIX-002."
+      }
+    },
+    {
+      "id": "HPO-FIX-002",
+      "title": "Vá 2 defect lộ ra từ benchmark thật: GA phình budget, BO pool joblib lệch kích thước",
+      "status": "done",
+      "acceptance_criteria": [
+        "GA: auto-adjust population/generation CHỈ chạy khi người dùng không đặt tường minh population_size/generation; tổng đánh giá không bao giờ vượt tổng số tổ hợp grid (vượt thì grid vét cạn strictly tốt hơn).",
+        "BO: batch parallel dùng đúng n_jobs của config (tái dùng pool loky sẵn có) thay vì tạo pool n_jobs=batch_size → không còn 2 pool chồng nhau.",
+        "Test hồi quy khóa cả hai hành vi (GA tôn trọng budget; BO không tạo pool lệch).",
+        "Chạy lại benchmark thật, so sánh trước/sau; full suite không hồi quy."
+      ],
+      "allowed_files": [
+        "src/backend/automl/search/strategy/genetic_algorithm.py",
+        "src/backend/automl/search/strategy/bayesian_search.py",
+        "src/backend/tests/test_search_strategies.py",
+        "feature_list.json",
+        "claude-progress.md"
+      ],
+      "test_commands": [
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests/test_search_strategies.py -q --timeout=300",
+        "cd src/backend && .venv/Scripts/python.exe scripts/benchmark_hpo.py --budget 8 --out benchmarks/hpo_real_after.json",
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=300"
+      ],
+      "verification": {
+        "status": "passed",
+        "commands_run": [
+          "cd src/backend && .venv/Scripts/python.exe -m pytest tests/test_search_strategies.py -q --timeout=300 (34 passed)",
+          "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=300 (413 passed)",
+          "cd src/backend && .venv/Scripts/python.exe scripts/benchmark_hpo.py --budget 8 --out benchmarks/hpo_real_after.json (exit 0)"
+        ],
+        "tested_at": "2026-07-27T01:10:00+07:00",
+        "notes": "Đo trên 6 dataset thật, trước→sau: BO 2263.3s→12.7s (178.7x; loại outlier iris vẫn 31.7s→11.4s = 2.8x); GA 122.8s→7.1s (17.3x, evals 54→8 đúng budget). Chất lượng sau khi vá: BO tốt nhất (cv 0.9123, test 0.9376 — hơn cả grid vét cạn 0.9366 dù chỉ dùng 8/18 lần đánh giá); GA giảm nhẹ (cv 0.9069) vì giờ mới thật sự chạy đúng budget 8 thay vì 54."
+      }
     }
   ]
 }

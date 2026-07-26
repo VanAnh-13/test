@@ -447,7 +447,12 @@ class BayesianSearchStrategy(SearchStrategy):
                     logger.warning("BO batch bỏ qua điểm %s: %s", pt, exc)
                     return None
 
-            outs = Parallel(n_jobs=b)(delayed(_one)(pt) for pt in points)
+            # Dùng ĐÚNG n_jobs của config để tái dùng pool loky sẵn có.
+            # Truyền n_jobs=b (khác kích thước) khiến loky giữ pool THỨ HAI —
+            # 8+16 tiến trình trên 16 lõi, đã gây stall 2231s trên iris.
+            outs = Parallel(n_jobs=self.config.get('n_jobs') or 1)(
+                delayed(_one)(pt) for pt in points
+            )
             duration = time.time() - t0
 
             tell_ys = []

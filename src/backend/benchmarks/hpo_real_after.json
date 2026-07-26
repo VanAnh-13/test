@@ -1,0 +1,644 @@
+{
+  "budget": 8,
+  "cv": 3,
+  "seed": 42,
+  "n_jobs": -1,
+  "param_grid": {
+    "n_estimators": [
+      50,
+      100,
+      200
+    ],
+    "max_depth": [
+      4,
+      8,
+      16
+    ],
+    "min_samples_split": [
+      2,
+      10
+    ]
+  },
+  "datasets": [
+    {
+      "name": "iris",
+      "meta": {
+        "n_rows": 150.0,
+        "n_cols": 4.0,
+        "n_classes": 3.0,
+        "class_imbalance": 0.3333333333333333,
+        "frac_categorical": 0.0,
+        "missing_frac": 0.0,
+        "mean_abs_skew": 0.2529318871876416
+      },
+      "source": "sklearn.datasets.load_iris",
+      "n_rows": 150,
+      "n_cols": 4,
+      "n_classes": 3
+    },
+    {
+      "name": "wine",
+      "meta": {
+        "n_rows": 178.0,
+        "n_cols": 13.0,
+        "n_classes": 3.0,
+        "class_imbalance": 0.398876404494382,
+        "frac_categorical": 0.0,
+        "missing_frac": 0.0,
+        "mean_abs_skew": 0.4325480594191304
+      },
+      "source": "sklearn.datasets.load_wine",
+      "n_rows": 178,
+      "n_cols": 13,
+      "n_classes": 3
+    },
+    {
+      "name": "breast_cancer",
+      "meta": {
+        "n_rows": 569.0,
+        "n_cols": 30.0,
+        "n_classes": 2.0,
+        "class_imbalance": 0.6274165202108963,
+        "frac_categorical": 0.0,
+        "missing_frac": 0.0,
+        "mean_abs_skew": 1.7404066998407544
+      },
+      "source": "sklearn.datasets.load_breast_cancer",
+      "n_rows": 569,
+      "n_cols": 30,
+      "n_classes": 2
+    },
+    {
+      "name": "digits",
+      "meta": {
+        "n_rows": 1797.0,
+        "n_cols": 64.0,
+        "n_classes": 10.0,
+        "class_imbalance": 0.1018363939899833,
+        "frac_categorical": 0.0,
+        "missing_frac": 0.0,
+        "mean_abs_skew": 4.667465092281429
+      },
+      "source": "sklearn.datasets.load_digits",
+      "n_rows": 1797,
+      "n_cols": 64,
+      "n_classes": 10
+    },
+    {
+      "name": "glass",
+      "meta": {
+        "n_rows": 214.0,
+        "n_cols": 9.0,
+        "n_classes": 6.0,
+        "class_imbalance": 0.35514018691588783,
+        "frac_categorical": 0.0,
+        "missing_frac": 0.0,
+        "mean_abs_skew": 2.071040285984989
+      },
+      "source": "assets/end_users/glass.csv",
+      "n_rows": 214,
+      "n_cols": 9,
+      "n_classes": 6
+    },
+    {
+      "name": "online_shoppers",
+      "meta": {
+        "n_rows": 12330.0,
+        "n_cols": 28.0,
+        "n_classes": 2.0,
+        "class_imbalance": 0.8452554744525548,
+        "frac_categorical": 0.0,
+        "missing_frac": 0.0,
+        "mean_abs_skew": 3.969752066032999
+      },
+      "source": "assets/online_shoppers/online_shoppers_intention.csv",
+      "n_rows": 12330,
+      "n_cols": 28,
+      "n_classes": 2
+    }
+  ],
+  "results": [
+    {
+      "dataset": "iris",
+      "strategy": "grid_search",
+      "best_params": {
+        "n_estimators": 200,
+        "max_depth": 16,
+        "min_samples_split": 10
+      },
+      "cv_score": 0.9583333333333334,
+      "test_score": 0.9666666666666667,
+      "seconds": 5.27561809999861,
+      "n_evaluations": 18,
+      "time_limited": false,
+      "speedup_vs_grid": 1.0,
+      "cv_pct_of_grid": 1.0
+    },
+    {
+      "dataset": "iris",
+      "strategy": "random_search",
+      "best_params": {
+        "n_estimators": 200,
+        "max_depth": 16,
+        "min_samples_split": 10
+      },
+      "cv_score": 0.9583333333333334,
+      "test_score": 0.9666666666666667,
+      "seconds": 0.6337921999984246,
+      "n_evaluations": 8,
+      "time_limited": false,
+      "speedup_vs_grid": 8.323892436687803,
+      "cv_pct_of_grid": 1.0
+    },
+    {
+      "dataset": "iris",
+      "strategy": "bayesian_search",
+      "best_params": {
+        "n_estimators": 97,
+        "max_depth": 12,
+        "min_samples_split": 5
+      },
+      "cv_score": 0.9583333333333334,
+      "test_score": 0.9666666666666667,
+      "seconds": 1.3010477000007086,
+      "n_evaluations": 8,
+      "time_limited": false,
+      "speedup_vs_grid": 4.054899831878368,
+      "cv_pct_of_grid": 1.0
+    },
+    {
+      "dataset": "iris",
+      "strategy": "genetic_algorithm",
+      "best_params": {
+        "n_estimators": 50,
+        "max_depth": 8,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.9499999999999998,
+      "test_score": 0.9,
+      "seconds": 0.47227899999961664,
+      "n_evaluations": 8,
+      "time_limited": false,
+      "speedup_vs_grid": 11.17055405809467,
+      "cv_pct_of_grid": 0.9913043478260868
+    },
+    {
+      "dataset": "iris",
+      "strategy": "successive_halving",
+      "best_params": {
+        "n_estimators": 200,
+        "max_depth": 16,
+        "min_samples_split": 10
+      },
+      "cv_score": 0.9583333333333334,
+      "test_score": 0.9666666666666667,
+      "seconds": 1.3986559999993915,
+      "n_evaluations": 13,
+      "time_limited": false,
+      "speedup_vs_grid": 3.7719196857561155,
+      "cv_pct_of_grid": 1.0
+    },
+    {
+      "dataset": "wine",
+      "strategy": "grid_search",
+      "best_params": {
+        "n_estimators": 200,
+        "max_depth": 16,
+        "min_samples_split": 10
+      },
+      "cv_score": 0.9510933806146573,
+      "test_score": 1.0,
+      "seconds": 1.2246374000005744,
+      "n_evaluations": 18,
+      "time_limited": false,
+      "speedup_vs_grid": 1.0,
+      "cv_pct_of_grid": 1.0
+    },
+    {
+      "dataset": "wine",
+      "strategy": "random_search",
+      "best_params": {
+        "n_estimators": 100,
+        "max_depth": 8,
+        "min_samples_split": 10
+      },
+      "cv_score": 0.9510933806146573,
+      "test_score": 1.0,
+      "seconds": 0.6716746000001876,
+      "n_evaluations": 8,
+      "time_limited": false,
+      "speedup_vs_grid": 1.823259953555237,
+      "cv_pct_of_grid": 1.0
+    },
+    {
+      "dataset": "wine",
+      "strategy": "bayesian_search",
+      "best_params": {
+        "n_estimators": 112,
+        "max_depth": 13,
+        "min_samples_split": 9
+      },
+      "cv_score": 0.9510933806146573,
+      "test_score": 1.0,
+      "seconds": 1.2209535000001779,
+      "n_evaluations": 8,
+      "time_limited": false,
+      "speedup_vs_grid": 1.003017232024312,
+      "cv_pct_of_grid": 1.0
+    },
+    {
+      "dataset": "wine",
+      "strategy": "genetic_algorithm",
+      "best_params": {
+        "n_estimators": 100,
+        "max_depth": 8,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.9510933806146573,
+      "test_score": 1.0,
+      "seconds": 0.5241089999999531,
+      "n_evaluations": 8,
+      "time_limited": false,
+      "speedup_vs_grid": 2.3366082246263353,
+      "cv_pct_of_grid": 1.0
+    },
+    {
+      "dataset": "wine",
+      "strategy": "successive_halving",
+      "best_params": {
+        "n_estimators": 100,
+        "max_depth": 8,
+        "min_samples_split": 10
+      },
+      "cv_score": 0.9510933806146573,
+      "test_score": 1.0,
+      "seconds": 1.3063602000001993,
+      "n_evaluations": 13,
+      "time_limited": false,
+      "speedup_vs_grid": 0.9374423684986634,
+      "cv_pct_of_grid": 1.0
+    },
+    {
+      "dataset": "breast_cancer",
+      "strategy": "grid_search",
+      "best_params": {
+        "n_estimators": 100,
+        "max_depth": 16,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.9604537004763566,
+      "test_score": 0.956140350877193,
+      "seconds": 1.5649816999994073,
+      "n_evaluations": 18,
+      "time_limited": false,
+      "speedup_vs_grid": 1.0,
+      "cv_pct_of_grid": 1.0
+    },
+    {
+      "dataset": "breast_cancer",
+      "strategy": "random_search",
+      "best_params": {
+        "n_estimators": 200,
+        "max_depth": 8,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.9582607180202162,
+      "test_score": 0.956140350877193,
+      "seconds": 0.917504299999564,
+      "n_evaluations": 8,
+      "time_limited": false,
+      "speedup_vs_grid": 1.7056941313519196,
+      "cv_pct_of_grid": 0.9977167223625119
+    },
+    {
+      "dataset": "breast_cancer",
+      "strategy": "bayesian_search",
+      "best_params": {
+        "n_estimators": 112,
+        "max_depth": 13,
+        "min_samples_split": 9
+      },
+      "cv_score": 0.9604537004763566,
+      "test_score": 0.956140350877193,
+      "seconds": 1.432260600000518,
+      "n_evaluations": 8,
+      "time_limited": false,
+      "speedup_vs_grid": 1.0926654688391493,
+      "cv_pct_of_grid": 1.0
+    },
+    {
+      "dataset": "breast_cancer",
+      "strategy": "genetic_algorithm",
+      "best_params": {
+        "n_estimators": 100,
+        "max_depth": 8,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.9604537004763566,
+      "test_score": 0.956140350877193,
+      "seconds": 0.7090614999997342,
+      "n_evaluations": 8,
+      "time_limited": false,
+      "speedup_vs_grid": 2.207117013122266,
+      "cv_pct_of_grid": 1.0
+    },
+    {
+      "dataset": "breast_cancer",
+      "strategy": "successive_halving",
+      "best_params": {
+        "n_estimators": 100,
+        "max_depth": 4,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.9582752410828395,
+      "test_score": 0.956140350877193,
+      "seconds": 1.7741845000000467,
+      "n_evaluations": 13,
+      "time_limited": false,
+      "speedup_vs_grid": 0.8820850931790725,
+      "cv_pct_of_grid": 0.9977318434064686
+    },
+    {
+      "dataset": "digits",
+      "strategy": "grid_search",
+      "best_params": {
+        "n_estimators": 100,
+        "max_depth": 16,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.9742519137091162,
+      "test_score": 0.9611111111111111,
+      "seconds": 2.624057000000903,
+      "n_evaluations": 18,
+      "time_limited": false,
+      "speedup_vs_grid": 1.0,
+      "cv_pct_of_grid": 1.0
+    },
+    {
+      "dataset": "digits",
+      "strategy": "random_search",
+      "best_params": {
+        "n_estimators": 200,
+        "max_depth": 8,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.9728601252609604,
+      "test_score": 0.9611111111111111,
+      "seconds": 1.4710307999994257,
+      "n_evaluations": 8,
+      "time_limited": false,
+      "speedup_vs_grid": 1.7838219294945608,
+      "cv_pct_of_grid": 0.9985714285714287
+    },
+    {
+      "dataset": "digits",
+      "strategy": "bayesian_search",
+      "best_params": {
+        "n_estimators": 97,
+        "max_depth": 12,
+        "min_samples_split": 5
+      },
+      "cv_score": 0.9742519137091162,
+      "test_score": 0.9638888888888889,
+      "seconds": 2.02824210000108,
+      "n_evaluations": 8,
+      "time_limited": false,
+      "speedup_vs_grid": 1.2937592607901718,
+      "cv_pct_of_grid": 1.0
+    },
+    {
+      "dataset": "digits",
+      "strategy": "genetic_algorithm",
+      "best_params": {
+        "n_estimators": 100,
+        "max_depth": 16,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.9742519137091162,
+      "test_score": 0.9611111111111111,
+      "seconds": 1.1016829000000143,
+      "n_evaluations": 8,
+      "time_limited": false,
+      "speedup_vs_grid": 2.3818623308039624,
+      "cv_pct_of_grid": 1.0
+    },
+    {
+      "dataset": "digits",
+      "strategy": "successive_halving",
+      "best_params": {
+        "n_estimators": 200,
+        "max_depth": 8,
+        "min_samples_split": 10
+      },
+      "cv_score": 0.9679888656924147,
+      "test_score": 0.9638888888888889,
+      "seconds": 1.9196754999993573,
+      "n_evaluations": 13,
+      "time_limited": false,
+      "speedup_vs_grid": 1.366927379133495,
+      "cv_pct_of_grid": 0.9935714285714285
+    },
+    {
+      "dataset": "glass",
+      "strategy": "grid_search",
+      "best_params": {
+        "n_estimators": 200,
+        "max_depth": 16,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.7192982456140351,
+      "test_score": 0.8372093023255814,
+      "seconds": 1.2541528000001563,
+      "n_evaluations": 18,
+      "time_limited": false,
+      "speedup_vs_grid": 1.0,
+      "cv_pct_of_grid": 1.0
+    },
+    {
+      "dataset": "glass",
+      "strategy": "random_search",
+      "best_params": {
+        "n_estimators": 100,
+        "max_depth": 4,
+        "min_samples_split": 10
+      },
+      "cv_score": 0.7134502923976608,
+      "test_score": 0.7209302325581395,
+      "seconds": 0.673569900000075,
+      "n_evaluations": 8,
+      "time_limited": false,
+      "speedup_vs_grid": 1.8619489974240486,
+      "cv_pct_of_grid": 0.991869918699187
+    },
+    {
+      "dataset": "glass",
+      "strategy": "bayesian_search",
+      "best_params": {
+        "n_estimators": 192,
+        "max_depth": 16,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.7251461988304094,
+      "test_score": 0.8372093023255814,
+      "seconds": 1.3308971999995265,
+      "n_evaluations": 8,
+      "time_limited": false,
+      "speedup_vs_grid": 0.942336342732258,
+      "cv_pct_of_grid": 1.0081300813008132
+    },
+    {
+      "dataset": "glass",
+      "strategy": "genetic_algorithm",
+      "best_params": {
+        "n_estimators": 100,
+        "max_depth": 16,
+        "min_samples_split": 10
+      },
+      "cv_score": 0.7017543859649122,
+      "test_score": 0.7906976744186046,
+      "seconds": 0.7619080999993457,
+      "n_evaluations": 8,
+      "time_limited": false,
+      "speedup_vs_grid": 1.646068338164712,
+      "cv_pct_of_grid": 0.975609756097561
+    },
+    {
+      "dataset": "glass",
+      "strategy": "successive_halving",
+      "best_params": {
+        "n_estimators": 100,
+        "max_depth": 4,
+        "min_samples_split": 10
+      },
+      "cv_score": 0.7134502923976608,
+      "test_score": 0.7209302325581395,
+      "seconds": 1.4043105999990075,
+      "n_evaluations": 13,
+      "time_limited": false,
+      "speedup_vs_grid": 0.8930736547890777,
+      "cv_pct_of_grid": 0.991869918699187
+    },
+    {
+      "dataset": "online_shoppers",
+      "strategy": "grid_search",
+      "best_params": {
+        "n_estimators": 200,
+        "max_depth": 16,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.9043998377939984,
+      "test_score": 0.8982157339821574,
+      "seconds": 8.109390199999325,
+      "n_evaluations": 18,
+      "time_limited": false,
+      "speedup_vs_grid": 1.0,
+      "cv_pct_of_grid": 1.0
+    },
+    {
+      "dataset": "online_shoppers",
+      "strategy": "random_search",
+      "best_params": {
+        "n_estimators": 50,
+        "max_depth": 16,
+        "min_samples_split": 10
+      },
+      "cv_score": 0.9038929440389295,
+      "test_score": 0.8998377939983779,
+      "seconds": 5.759546999999657,
+      "n_evaluations": 8,
+      "time_limited": false,
+      "speedup_vs_grid": 1.4079909756791305,
+      "cv_pct_of_grid": 0.9994395247169601
+    },
+    {
+      "dataset": "online_shoppers",
+      "strategy": "bayesian_search",
+      "best_params": {
+        "n_estimators": 112,
+        "max_depth": 13,
+        "min_samples_split": 9
+      },
+      "cv_score": 0.9045012165450123,
+      "test_score": 0.9014598540145985,
+      "seconds": 5.351946099999623,
+      "n_evaluations": 8,
+      "time_limited": false,
+      "speedup_vs_grid": 1.5152226962823667,
+      "cv_pct_of_grid": 1.000112095056608
+    },
+    {
+      "dataset": "online_shoppers",
+      "strategy": "genetic_algorithm",
+      "best_params": {
+        "n_estimators": 100,
+        "max_depth": 8,
+        "min_samples_split": 2
+      },
+      "cv_score": 0.9039943227899432,
+      "test_score": 0.9014598540145985,
+      "seconds": 3.54492030000074,
+      "n_evaluations": 8,
+      "time_limited": false,
+      "speedup_vs_grid": 2.287608609986981,
+      "cv_pct_of_grid": 0.999551619773568
+    },
+    {
+      "dataset": "online_shoppers",
+      "strategy": "successive_halving",
+      "best_params": {
+        "n_estimators": 200,
+        "max_depth": 16,
+        "min_samples_split": 10
+      },
+      "cv_score": 0.9030819140308192,
+      "test_score": 0.8990267639902676,
+      "seconds": 4.193776100000832,
+      "n_evaluations": 13,
+      "time_limited": false,
+      "speedup_vs_grid": 1.933672663163328,
+      "cv_pct_of_grid": 0.998542764264096
+    }
+  ],
+  "summary": {
+    "grid_search": {
+      "mean_cv": 0.9113050685902495,
+      "mean_test": 0.9365571941604517,
+      "total_seconds": 20.052837199998976,
+      "mean_evals": 18.0,
+      "mean_speedup_vs_grid": 1.0,
+      "mean_cv_pct_of_grid": 1.0
+    },
+    "random_search": {
+      "mean_cv": 0.9096484656109597,
+      "mean_test": 0.917447692535248,
+      "total_seconds": 10.127118799997334,
+      "mean_evals": 8.0,
+      "mean_speedup_vs_grid": 2.8177680706987833,
+      "mean_cv_pct_of_grid": 0.9979329323916812
+    },
+    "bayesian_search": {
+      "mean_cv": 0.9122966239181475,
+      "mean_test": 0.9375608437954881,
+      "total_seconds": 12.665347200001634,
+      "mean_evals": 8.0,
+      "mean_speedup_vs_grid": 1.6503168054244375,
+      "mean_cv_pct_of_grid": 1.00137369605957
+    },
+    "genetic_algorithm": {
+      "mean_cv": 0.9069246172591642,
+      "mean_test": 0.9182348317369179,
+      "total_seconds": 7.113960799999404,
+      "mean_evals": 8.0,
+      "mean_speedup_vs_grid": 3.671636429133155,
+      "mean_cv_pct_of_grid": 0.9944109539495359
+    },
+    "successive_halving": {
+      "mean_cv": 0.9087038378586209,
+      "mean_test": 0.9177754838301926,
+      "total_seconds": 11.996962899998834,
+      "mean_evals": 13.0,
+      "mean_speedup_vs_grid": 1.6308534740866252,
+      "mean_cv_pct_of_grid": 0.9969526591568635
+    }
+  }
+}

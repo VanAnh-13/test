@@ -195,6 +195,44 @@ class TestParallelCandidates:
         assert 0.5 < bs <= 1.0
         assert set(bp) <= {"max_depth", "min_samples_split"}
 
+    def test_ga_respects_explicit_budget(self):
+        """Regression: GA từng phình 4×2=8 thành 18×3=54 evals (3× grid vét cạn)
+        trên không gian categorical nhỏ, bỏ qua budget người dùng."""
+        from automl.search.strategy.genetic_algorithm import GeneticAlgorithm
+
+        s = GeneticAlgorithm(
+            **FAST_CFG, population_size=4, generation=2, elite_size=1,
+        )
+        _, _, _, cv, _ = _unpack(
+            s.search(DecisionTreeClassifier(random_state=0), GRID, X, y)
+        )
+        # GRID = 3×3 = 9 tổ hợp; budget người dùng 4×2 = 8 đánh giá
+        assert s.config["generation"] == 2, "generation bị auto-adjust ghi đè"
+        assert len(cv["params"]) <= 9, (
+            f"GA chạy {len(cv['params'])} đánh giá — vượt cả grid vét cạn (9)"
+        )
+
+    def test_ga_auto_adjust_never_exceeds_grid(self):
+        """Không đặt budget → auto-adjust được phép, nhưng không quá số tổ hợp."""
+        from automl.search.strategy.genetic_algorithm import GeneticAlgorithm
+
+        s = GeneticAlgorithm(**FAST_CFG, elite_size=1)
+        _, _, _, cv, _ = _unpack(
+            s.search(DecisionTreeClassifier(random_state=0), GRID, X, y)
+        )
+        assert len(cv["params"]) <= 9
+
+    def test_bo_batch_reuses_configured_pool(self):
+        """Regression: BO từng tạo Parallel(n_jobs=batch_size) khác n_jobs của
+        config → 2 pool loky chồng nhau (24 tiến trình/16 lõi), stall 2231s."""
+        import inspect
+
+        src = inspect.getsource(
+            BayesianSearchStrategy._search_single_grid_batch
+        )
+        assert "Parallel(n_jobs=b)" not in src
+        assert "self.config.get('n_jobs')" in src
+
     def test_grid_backend_prefers_loky(self):
         from automl.search.strategy.grid_search import GridSearchStrategy
 

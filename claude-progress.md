@@ -473,6 +473,57 @@
   range) — đúng mong muốn nhưng khác semantics grid; tắt bằng
   infer_dimensions=false nếu cần đúng list.
 
+## 2026-07-27 — HPO-BENCH-001 + HPO-FIX-002 (benchmark dữ liệu thật)
+
+### Nguồn dữ liệu
+
+- OpenML API **504 sau redirect** (server họ sập, không phải mạng mình) →
+  `automl/search/datasets_real.py` dùng 6 dataset thật OFFLINE: iris, wine,
+  breast_cancer, digits (sklearn bundled) + glass, online_shoppers (CSV có
+  sẵn trong repo). 150→12.330 hàng, 4→64 feature, 2→10 lớp.
+- `scripts/benchmark_hpo.py`: grid vét cạn 18 tổ hợp làm mốc; 4 strategy còn
+  lại cùng budget 8; đo cv score, wall-clock, số đánh giá, và **holdout test**.
+  Chạy tuần tự độc chiếm CPU (timing mới hợp lệ).
+
+### 2 defect benchmark lộ ra — đã vá
+
+1. **GA phình budget**: không gian categorical ≤100 tổ hợp thì GA tự ép
+   coverage 2× toàn grid, **bỏ qua budget người dùng** (đặt 4×2=8 → chạy
+   18×3=**54** đánh giá, gấp 3 lần grid vét cạn). Vá: budget đặt tường minh
+   là bất khả xâm phạm; auto-adjust có **trần = đúng số tổ hợp** cả hai chiều
+   (mặc định 10×5=50 cho không gian 9 tổ hợp cũng bị cắt).
+2. **BO tạo pool joblib lệch kích thước**: `Parallel(n_jobs=batch_size=8)`
+   khác `n_jobs=-1` (16) của các strategy khác → loky giữ **2 pool = 24 tiến
+   trình trên 16 lõi**; một lần chạy iris **stall 2231s**. Vá: dùng đúng
+   `n_jobs` của config để tái dùng pool sẵn có.
+
+### Kết quả đo (6 dataset, budget 8, cv=3, n_jobs=-1)
+
+| strategy | trước | sau | nhanh hơn | evals | cv | test |
+|---|---|---|---|---|---|---|
+| grid_search | 22.7s | 20.1s | — (mốc) | 18 | 0.9113 | 0.9366 |
+| bayesian_search | 2263.3s | **12.7s** | **178.7×** | 8 | **0.9123** | **0.9376** |
+| genetic_algorithm | 122.8s | **7.1s** | **17.3×** | 54→**8** | 0.9069 | 0.9182 |
+| random_search | 11.0s | 10.1s | 1.1× | 8 | 0.9096 | 0.9174 |
+| successive_halving | 15.1s | 12.0s | 1.3× | 13 | 0.9087 | 0.9178 |
+
+- BO loại bỏ outlier iris vẫn nhanh **2.8×** (31.7s→11.4s) — bản vá pool có
+  tác dụng rộng, không chỉ ca bệnh lý.
+- **BO giờ vừa nhanh hơn grid 1.7× vừa cho test score CAO NHẤT (0.9376 >
+  0.9366 của grid vét cạn) dù chỉ dùng 8/18 lần đánh giá.**
+- GA chất lượng giảm nhẹ vì lần đầu tiên nó thật sự chạy đúng budget 8 (trước
+  đây "thắng" nhờ lén dùng 54 đánh giá — so sánh cũ không công bằng).
+- Cảnh báo cho bài báo: RF khá trơ với lưới siêu tham số này nên chênh lệch
+  chất lượng nhỏ; riêng `glass` (214 hàng, 6 lớp) tách biệt rõ:
+  grid/BO test 0.8372 vs random/SH 0.7209.
+
+### Verification
+
+- `pytest tests/test_datasets_real.py` — PASS (15);
+  `tests/test_search_strategies.py` — PASS (34, gồm 3 guard hồi quy cho 2 bug
+  trên); full suite **413 passed, 0 failed**.
+- Artifact: `benchmarks/hpo_real_before.json`, `hpo_real_after.json` + log.
+
 ## Mẫu ghi cho phiên tiếp theo
 
 ```text

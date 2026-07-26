@@ -34,6 +34,8 @@ class GeneticAlgorithm(SearchStrategy):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        # Khóa nào do caller đặt tường minh — auto-adjust không được ghi đè
+        self._explicit_config_keys = set(kwargs)
         self.param_bounds = {}
         self.param_types = {}
         self._decode_cache = {}  # Bộ nhớ đệm cho các tham số đã giải mã
@@ -722,7 +724,11 @@ class GeneticAlgorithm(SearchStrategy):
                        - cv_results: Từ điển với kết quả cross-validation chi tiết
         """
         # Cập nhật cấu hình của thuật toán với bất kỳ đối số keyword nào được cung cấp
-        self.set_config(**{k: v for k, v in kwargs.items() if k in self.config})
+        explicit = {k: v for k, v in kwargs.items() if k in self.config}
+        self.set_config(**explicit)
+        if not hasattr(self, '_explicit_config_keys'):
+            self._explicit_config_keys = set()
+        self._explicit_config_keys |= set(explicit)
         self._start_timer()  # Bắt đầu đếm thời gian
 
         # Đặt seed ngẫu nhiên để tái tạo được kết quả
@@ -779,23 +785,36 @@ class GeneticAlgorithm(SearchStrategy):
         else:
             actual_population_size = self.config['population_size']
 
-        # Tự động điều chỉnh cho không gian categorical nhỏ
-        # Đảm bảo tổng evaluations (population * generations) >= total_combinations
-        # để GA có thể duyệt đủ không gian và tìm kết quả tối ưu giống Grid Search
-        if is_all_categorical and total_grid_combinations <= 100:
-            min_total_evaluations = total_grid_combinations * 2  # Ít nhất 2x coverage
-            current_total = actual_population_size * self.config['generation']
-            if current_total < min_total_evaluations:
-                # Tăng population hoặc generation để đủ coverage
-                new_pop = max(actual_population_size, min(total_grid_combinations, 30))
-                new_gen = max(self.config['generation'], (min_total_evaluations // new_pop) + 1)
+        # Tự động điều chỉnh cho không gian categorical nhỏ.
+        #
+        # HAI RÀNG BUỘC (bug cũ vi phạm cả hai):
+        # 1. Budget do người dùng đặt tường minh là BẤT KHẢ XÂM PHẠM — trước đây
+        #    population_size=4/generation=2 vẫn bị phình thành 18×3=54.
+        # 2. Tổng đánh giá không được vượt tổng số tổ hợp: vượt nghĩa là GA tốn
+        #    hơn grid vét cạn mà vẫn chỉ xấp xỉ — đo thực tế: 54 evals vs 18,
+        #    chậm gấp 5 lần grid trên cùng dataset.
+        user_set_budget = bool(
+            {'population_size', 'generation'} & getattr(self, '_explicit_config_keys', set())
+        )
+        if is_all_categorical and total_grid_combinations <= 100 and not user_set_budget:
+            # Trần = đúng số tổ hợp, áp dụng CẢ HAI CHIỀU. Mặc định 10×5=50
+            # đánh giá cho không gian 9 tổ hợp cũng lãng phí y như phình lên 54.
+            budget = total_grid_combinations
+            # Giữ ít nhất 2 thế hệ để GA còn là GA (có tiến hóa), trừ khi
+            # không gian quá nhỏ
+            new_pop = max(2, min(actual_population_size, max(2, budget // 2)))
+            new_gen = max(1, budget // new_pop)
+            while new_pop * (new_gen + 1) <= budget:
+                new_gen += 1
+            if (new_pop, new_gen) != (actual_population_size, self.config['generation']):
                 logger.info(
-                    f"GA: Không gian categorical nhỏ ({total_grid_combinations} tổ hợp). "
+                    f"GA: Không gian categorical nhỏ ({budget} tổ hợp). "
                     f"Điều chỉnh population {actual_population_size}→{new_pop}, "
-                    f"generation {self.config['generation']}→{new_gen}"
+                    f"generation {self.config['generation']}→{new_gen} "
+                    f"(trần {budget} đánh giá — hơn nữa thì grid vét cạn rẻ hơn)"
                 )
-                actual_population_size = new_pop
-                self.config['generation'] = new_gen
+            actual_population_size = new_pop
+            self.config['generation'] = new_gen
 
         # Tạo quần thể ban đầu sử dụng khởi tạo thông minh hoặc ngẫu nhiên
         if self.config.get('ultra_fast_mode', False):
