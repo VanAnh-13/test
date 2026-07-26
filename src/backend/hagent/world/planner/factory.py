@@ -27,7 +27,11 @@ def create_campaign_planner(config: dict | None = None) -> Any:
         from hagent.world.planner.cem_config_v1 import CemConfigV1Planner
 
         return CemConfigV1Planner(cfg)
+    if backend in ("cem_mpc_v1", "cem_mpc"):
+        from hagent.world.planner.cem_mpc_v1 import CemMpcV1Planner
+
+        return CemMpcV1Planner(cfg)
     raise ValueError(
         f"Unsupported world_model.campaign_planner.backend={backend!r}. "
-        f"Supported: cem_config_v1"
+        f"Supported: cem_config_v1, cem_mpc_v1"
     )

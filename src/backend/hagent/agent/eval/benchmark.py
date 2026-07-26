@@ -326,13 +326,13 @@ def run_transfer_loo(
 
 def validate_condition(condition: str) -> None:
     """Raise ValueError nếu condition không hợp lệ — gọi TRƯỚC khi chạy ma trận."""
-    if condition in ("wm", "no_wm", "random"):
+    if condition in ("wm", "wm_mpc", "no_wm", "random"):
         return
     if condition.startswith("fixed_") and condition.removeprefix("fixed_") in _ALGOS:
         return
     raise ValueError(
         f"Unknown benchmark condition: {condition!r}. "
-        f"Valid: wm, no_wm, random, fixed_<algo> with algo in {_ALGOS}"
+        f"Valid: wm, wm_mpc, no_wm, random, fixed_<algo> with algo in {_ALGOS}"
     )
 
 
@@ -377,11 +377,24 @@ async def _run_condition_async(
     outcome_surprise_events: List[dict] = []
 
     # Pretrained transfer: đủ sample từ dataset khác → có model từ job 0
-    if condition == "wm" and len(samples) >= min_train_samples:
+    if condition in ("wm", "wm_mpc") and len(samples) >= min_train_samples:
         outcome_model = train_outcome_head(
             samples, config=dict(head_cfg), epochs=train_epochs, seed=seed
         )
         wm_trained_after = 0
+
+    mpc_planner = None
+    if condition == "wm_mpc":
+        from hagent.world.planner.cem_mpc_v1 import CemMpcV1Planner
+
+        mpc_planner = CemMpcV1Planner(
+            {
+                "seed": seed,
+                "search_algorithms": _ALGOS,
+                "time_limit_options": _TIME_OPTIONS,
+                "model_options": model_opts,
+            }
+        )
 
     try:
         while env.jobs_used < budget_jobs:
@@ -416,6 +429,17 @@ async def _run_condition_async(
                     },
                     outcome_model=None,
                 )
+            elif condition == "wm_mpc":
+                props = mpc_planner.plan_batch(
+                    base_params=_base_params(goal),
+                    dataset_meta=dict(profile.meta),
+                    outcome_model=outcome_model,
+                    n=n,
+                    remaining_budget=budget_jobs - env.jobs_used,
+                    total_budget=budget_jobs,
+                )
+                params_list = [dict(_base_params(goal), **p) for p in props]
+                camp = _campaign_from_params(goal, params_list, source="wm_mpc")
             elif condition == "random":
                 params_list = []
                 for _ in range(n):
@@ -455,9 +479,11 @@ async def _run_condition_async(
                     user_token=None,
                     world_model=wm_snapshot,
                     surprise_events=events,
-                    # Model train online đo surprise cho wm; các condition khác
-                    # tắt hẳn (None) để không đụng checkpoint đĩa
-                    outcome_model=outcome_model if condition == "wm" else None,
+                    # Model train online đo surprise cho wm/wm_mpc; condition
+                    # khác tắt hẳn (None) để không đụng checkpoint đĩa
+                    outcome_model=(
+                        outcome_model if condition in ("wm", "wm_mpc") else None
+                    ),
                 )
                 ticks += 1
             outcome_surprise_events.extend(
@@ -474,7 +500,7 @@ async def _run_condition_async(
                         }
                     )
 
-            if condition == "wm" and len(samples) >= min_train_samples:
+            if condition in ("wm", "wm_mpc") and len(samples) >= min_train_samples:
                 outcome_model = train_outcome_head(
                     samples, config=dict(head_cfg), epochs=train_epochs, seed=seed
                 )

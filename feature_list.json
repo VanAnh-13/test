@@ -478,6 +478,42 @@
         "tested_at": "2026-07-26T20:45:00+07:00",
         "notes": "Hai fix học máy quan trọng phát hiện trong quá trình làm: (1) NLL cần warmup MSE (σ phình sớm làm μ sập về mean); (2) MLP nhỏ + SGD thuần KHÔNG tự học interaction algo×meta — phải thêm feature giao chéo tường minh algo_onehot × [log_rows, frac_categorical]. Test transfer: head học 5 profile đoán đúng thuật toán tốt nhất trên profile chưa thấy; LOO pretrained (model từ job 0) ≥ scratch."
       }
+    },
+    {
+      "id": "WM-MPC-001",
+      "title": "CEM-MPC v1: batch planner budget-aware (Thompson sampling anneal theo budget còn lại, receding horizon)",
+      "status": "done",
+      "acceptance_criteria": [
+        "CemMpcV1Planner.plan_batch: pool ứng viên từ CEM, chọn batch bằng Thompson sampling với σ_eff = σ·sqrt(remaining_after/total) — batch cuối exploit thuần (argmax μ); deterministic theo seed; fallback khi model chưa sẵn sàng.",
+        "Đăng ký factory backend cem_mpc_v1 (vẫn tương thích interface plan_campaign_configs cho builder).",
+        "Benchmark: condition wm_mpc dùng plan_batch với remaining/total budget; validate_condition chấp nhận wm_mpc.",
+        "Test: batch cuối exploit thuần; batch sớm ưu tiên σ cao hơn batch cuối; distinct configs; wm_mpc chạy đủ budget và > no_wm trên synth_models seed cố định.",
+        "Full suite không hồi quy."
+      ],
+      "allowed_files": [
+        "src/backend/hagent/world/planner/cem_mpc_v1.py",
+        "src/backend/hagent/world/planner/factory.py",
+        "src/backend/hagent/world/planner/__init__.py",
+        "src/backend/hagent/agent/eval/benchmark.py",
+        "src/backend/tests/test_cem_mpc.py",
+        "src/backend/tests/test_benchmark.py",
+        "feature_list.json",
+        "claude-progress.md"
+      ],
+      "test_commands": [
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests/test_cem_mpc.py tests/test_benchmark.py -q --timeout=180",
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=180"
+      ],
+      "verification": {
+        "status": "passed",
+        "commands_run": [
+          "cd src/backend && .venv/Scripts/python.exe -m pytest tests/test_cem_mpc.py tests/test_benchmark.py -q --timeout=180 (34 passed)",
+          "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=180 (352 passed)",
+          "CLI synth_models budget 18 × 3 seeds: wm_mpc 0.7900 (regret 0.0 — ĐẠT OPTIMUM, jobs95=10.3) > random 0.7727 > wm 0.7552 > no_wm 0.7257"
+        ],
+        "tested_at": "2026-07-26T21:20:00+07:00",
+        "notes": "Budget-annealed Thompson (σ_eff=σ·√(remaining_after/total), batch cuối exploit thuần) giải đúng vấn đề random>wm ở budget nhỏ. Đây là kết quả mạnh nhất cho bài báo tới giờ."
+      }
     }
   ]
 }

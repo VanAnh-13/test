@@ -385,6 +385,29 @@
 - Kế tiếp: WM-MPC-001 (hướng C — budget-aware batch planning, receding
   horizon; giải quyết random > wm ở budget nhỏ quan sát tại WM-SPACE-001).
 
+## 2026-07-26 — WM-MPC-001 (hướng C mở rộng world model)
+
+### Phạm vi
+
+- `world/planner/cem_mpc_v1.py`: CemMpcV1Planner — pool ứng viên từ CEM,
+  chọn batch bằng Thompson sampling với σ_eff = σ·√(remaining_after/total);
+  batch cuối exploit thuần; tương thích interface builder; factory backend
+  `cem_mpc_v1`.
+- Benchmark: condition `wm_mpc` (re-plan mỗi campaign với model mới nhất =
+  receding horizon), train online như wm.
+
+### Verification
+
+- 34 passed (2 file), full suite **352 passed**.
+- CLI synth_models (budget 18 × 3 seeds): **wm_mpc 0.7900, regret 0.0 —
+  đạt optimum, jobs95=10.3** > random 0.7727 > wm 0.7552 > no_wm 0.7257.
+  Budget-annealed exploration giải đúng vấn đề "random > wm ở budget nhỏ".
+
+### Handoff
+
+- Kế tiếp: WM-DYN-001 (hướng D — ensemble transition model + latent surprise
+  chuẩn hóa theo σ).
+
 ## Mẫu ghi cho phiên tiếp theo
 
 ```text

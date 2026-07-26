@@ -276,6 +276,15 @@ class TestReviewFixes:
         # nhưng ít nhất curve phải hợp lệ và final <= optimum)
         assert res["final_best"] <= PROFILES["synth_models"].optimum + 1e-9
 
+    def test_wm_mpc_runs_and_beats_no_wm(self):
+        """Condition wm_mpc (budget-annealed Thompson) chạy đủ budget và
+        thắng no_wm trên không gian lớn."""
+        mpc = run_condition("wm_mpc", "synth_models", budget_jobs=18, seed=0)
+        no_wm = run_condition("no_wm", "synth_models", budget_jobs=18, seed=0)
+        assert mpc["jobs_used"] == 18
+        assert mpc["wm_trained_after_jobs"] is not None
+        assert mpc["final_best"] > no_wm["final_best"]
+
     def test_wm_surprise_events_counted_no_wm_zero(self):
         """Model online phải được runner nhìn thấy: wm có event, no_wm = 0."""
         wm = run_condition("wm", "synth_strong", budget_jobs=12, seed=0)
