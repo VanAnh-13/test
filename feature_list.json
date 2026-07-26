@@ -94,6 +94,34 @@
         "tested_at": "2026-07-26T15:00:00+07:00",
         "notes": "Setup hạ tầng: checkout từ remote không phải edit; không sửa file nào trong protected_paths. Nested .git rỗng (0 commit) của src/backend đi theo cây quarantine."
       }
+    },
+    {
+      "id": "TESTFIX-001",
+      "title": "Vá fixture mock_llm_server: bắt đủ TransportError + chống leak process",
+      "status": "done",
+      "acceptance_criteria": [
+        "Vòng poll health trong tests/conftest.py không để lọt httpx.ConnectTimeout (dùng httpx.TransportError bao trùm ConnectError và TimeoutException).",
+        "Process mock server được kill trên mọi đường lỗi của fixture (try/finally), không còn leak chiếm port 11435.",
+        "tests/test_deerflow_automl.py pass toàn bộ và full suite không hồi quy."
+      ],
+      "allowed_files": [
+        "src/backend/tests/conftest.py",
+        "feature_list.json",
+        "claude-progress.md"
+      ],
+      "test_commands": [
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests/test_deerflow_automl.py -m \"not ollama\" -q --timeout=120",
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=120"
+      ],
+      "verification": {
+        "status": "passed",
+        "commands_run": [
+          "cd src/backend && .venv/Scripts/python.exe -m pytest tests/test_deerflow_automl.py -m \"not ollama\" -q --timeout=120 (43 passed)",
+          "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=120 (207 passed)"
+        ],
+        "tested_at": "2026-07-26T15:20:00+07:00",
+        "notes": "Xác nhận port 11435 không còn listener sau khi suite kết thúc (không leak). Lỗi gốc quan sát trên Windows: ConnectTimeout lọt except → 5 test error + leak process gây bind 10048 ở lần chạy sau."
+      }
     }
   ]
 }

@@ -108,6 +108,42 @@
   leak process chiếm port 11435 (đã kill PID sót). Chạy lại sạch. Cần task
   riêng để vá except-tuple này.
 
+## 2026-07-26 — TESTFIX-001
+
+### Phạm vi
+
+- Vá fixture `mock_llm_server` trong `src/backend/tests/conftest.py`.
+
+### Quyết định
+
+- Thay `except (httpx.ConnectError, httpx.ReadTimeout)` bằng
+  `except httpx.TransportError` — trong httpx, `TimeoutException`
+  (gồm `ConnectTimeout`, `ReadTimeout`) là subclass của `TransportError`,
+  nên một except bao trùm mọi lỗi kết nối/timeout khi poll health.
+- Bọc vòng poll bằng `try/finally` với cờ `ready`: fixture fail ở bất kỳ
+  đường nào cũng `proc.kill()`, hết leak process chiếm port 11435.
+
+### File thay đổi
+
+- `src/backend/tests/conftest.py`, `feature_list.json`,
+  `claude-progress.md`.
+
+### Verification
+
+- `pytest tests/test_deerflow_automl.py -m "not ollama"` — PASS (43 passed)
+- `pytest tests -m "not ollama"` — PASS (207 passed, 0 failed)
+- Port 11435 không còn listener sau suite — không leak.
+
+### Rủi ro còn lại
+
+- Không. Lỗi gốc chỉ tái hiện khi server khởi động chậm/timeout ở lần
+  poll đầu (đã quan sát trên Windows lần chạy đầu tiên sau cài venv).
+
+### Handoff
+
+- HARNESS-001 vẫn `in_progress` (WIP 1/1). Tiếp theo theo kế hoạch:
+  Giai đoạn 3 — outcome head, ensemble + calibration, benchmark layer.
+
 ## Mẫu ghi cho phiên tiếp theo
 
 ```text

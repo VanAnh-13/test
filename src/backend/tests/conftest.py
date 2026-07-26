@@ -74,16 +74,25 @@ def mock_llm_server(setup_test_env):
 
     # Chờ server sẵn sàng
     max_wait = 15
-    for i in range(max_wait * 2):
-        try:
-            resp = httpx.get(f"http://127.0.0.1:{MOCK_LLM_PORT}/health", timeout=2)
-            if resp.status_code == 200:
-                break
-        except (httpx.ConnectError, httpx.ReadTimeout):
-            pass
-        time.sleep(0.5)
-    else:
-        proc.kill()
+    ready = False
+    try:
+        for _ in range(max_wait * 2):
+            try:
+                resp = httpx.get(f"http://127.0.0.1:{MOCK_LLM_PORT}/health", timeout=2)
+                if resp.status_code == 200:
+                    ready = True
+                    break
+            except httpx.TransportError:
+                # TransportError bao gồm ConnectError và TimeoutException
+                # (ConnectTimeout, ReadTimeout, ...) — không được để lọt
+                # exception nào trong lúc poll, nếu không proc sẽ leak.
+                pass
+            time.sleep(0.5)
+    finally:
+        if not ready:
+            proc.kill()
+
+    if not ready:
         stdout, stderr = proc.communicate()
         pytest.fail(
             f"Mock LLM server không khởi động được sau {max_wait}s.\n"
