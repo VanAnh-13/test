@@ -195,6 +195,39 @@
         "tested_at": "2026-07-26T16:10:00+07:00",
         "notes": "Mixture moments σ*² = E[σᵢ²+μᵢ²]−μ*²; calibration dùng statistics.NormalDist (PIT-based ECE); test kiểm chứng coverage đúng 0.9±0.03 với dự đoán calibrated tổng hợp."
       }
+    },
+    {
+      "id": "WM-SURPRISE-001",
+      "title": "Outcome-space surprise (z-score theo σ ensemble) + sự kiện campaign khi job hoàn thành",
+      "status": "done",
+      "acceptance_criteria": [
+        "compute_outcome_surprise trong world/surprise.py: value = |y − μ|/σ, level theo world_model.surprise.outcome_thresholds (medium 1.5, high 3.0 đơn vị z-score).",
+        "wm_hooks.campaign_outcome_surprise: variant completed + best_score → surprise dict (kèm predicted mean/std); model chưa sẵn sàng hoặc variant chưa xong → None.",
+        "runner.campaign_step phát event campaign_outcome_surprise đúng lúc variant chuyển sang completed, gate bằng world_model.surprise.outcome_enabled.",
+        "tests/test_outcome_surprise.py pass và full suite không hồi quy."
+      ],
+      "allowed_files": [
+        "src/backend/hagent/world/surprise.py",
+        "src/backend/hagent/agent/campaign/wm_hooks.py",
+        "src/backend/hagent/agent/campaign/runner.py",
+        "src/backend/hagent/hagent.yaml",
+        "src/backend/tests/test_outcome_surprise.py",
+        "feature_list.json",
+        "claude-progress.md"
+      ],
+      "test_commands": [
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests/test_outcome_surprise.py -q --timeout=120",
+        "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=120"
+      ],
+      "verification": {
+        "status": "passed",
+        "commands_run": [
+          "cd src/backend && .venv/Scripts/python.exe -m pytest tests/test_outcome_surprise.py -q --timeout=120 (13 passed)",
+          "cd src/backend && .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=120 (264 passed)"
+        ],
+        "tested_at": "2026-07-26T16:35:00+07:00",
+        "notes": "Event chỉ phát đúng lúc chuyển trạng thái sang completed (test tick thứ hai không phát lại); σ floor 1e-6 chống chia 0."
+      }
     }
   ]
 }

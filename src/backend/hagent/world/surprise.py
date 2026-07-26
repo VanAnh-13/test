@@ -63,3 +63,43 @@ def compute_surprise(
         predicted_dim=predicted.dim,
         actual_dim=actual.dim,
     )
+
+
+# ── Outcome-space surprise ───────────────────────────────
+
+_OUTCOME_SIGMA_FLOOR = 1e-6
+
+
+def _pred_mean_std(predicted: Any) -> Tuple[float, float]:
+    """Chấp nhận OutcomePrediction, dict {mean,std} hoặc tuple (mean, std)."""
+    if hasattr(predicted, "mean") and hasattr(predicted, "std"):
+        return float(predicted.mean), float(predicted.std)
+    if isinstance(predicted, dict):
+        return float(predicted["mean"]), float(predicted["std"])
+    mean, std = predicted
+    return float(mean), float(std)
+
+
+def compute_outcome_surprise(
+    predicted: Any,
+    actual_score: float,
+    config: dict | None = None,
+) -> SurpriseResult:
+    """
+    Surprise trong không gian outcome: value = |y − μ| / σ (z-score).
+
+    Ngưỡng lấy từ world_model.surprise.outcome_thresholds (đơn vị z-score,
+    khác thang latent thresholds) — mặc định medium 1.5, high 3.0.
+    """
+    cfg = dict(config or {})
+    thresholds = dict(cfg.get("outcome_thresholds") or {"medium": 1.5, "high": 3.0})
+    mu, sigma = _pred_mean_std(predicted)
+    sigma = max(sigma, _OUTCOME_SIGMA_FLOOR)
+    value = abs(float(actual_score) - mu) / sigma
+    level = classify_surprise(value, thresholds)
+    return SurpriseResult(
+        value=value,
+        level=level,
+        predicted_dim=1,
+        actual_dim=1,
+    )

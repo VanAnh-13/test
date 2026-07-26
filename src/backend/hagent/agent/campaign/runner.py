@@ -245,6 +245,7 @@ async def campaign_step(
     # Poll phase
     for variant in list(campaign.in_flight()):
         before = dict(wm_snap)
+        prev_status = variant.status
         await _poll_variant(variant, user_token=user_token)
         if variant.job_id:
             jobs = dict(wm_snap.get("jobs") or {})
@@ -283,6 +284,35 @@ async def campaign_step(
                 )
         except Exception as exc:
             logger.debug("campaign poll WM step: %s", exc)
+
+        # Outcome-space surprise — chỉ đúng lúc variant chuyển sang completed
+        if prev_status != "completed" and variant.status == "completed":
+            try:
+                from hagent.agent.campaign.wm_hooks import campaign_outcome_surprise
+                from hagent.bridge.config import get_world_model_config
+
+                surprise_cfg = dict(
+                    (get_world_model_config() or {}).get("surprise") or {}
+                )
+                if surprise_cfg.get("outcome_enabled", True):
+                    ds_id = (variant.params or {}).get("dataset_id")
+                    meta = (wm_snap.get("datasets") or {}).get(ds_id)
+                    outcome = campaign_outcome_surprise(
+                        variant=variant,
+                        dataset_meta=meta,
+                        surprise_config=surprise_cfg,
+                    )
+                    if outcome:
+                        events.append(
+                            {
+                                "type": "campaign_outcome_surprise",
+                                "variant_id": variant.variant_id,
+                                "job_id": variant.job_id,
+                                "outcome": outcome,
+                            }
+                        )
+            except Exception as exc:
+                logger.debug("campaign outcome surprise: %s", exc)
 
     # Attach latest WM for callers
     campaign._world_model_snapshot = wm_snap  # type: ignore[attr-defined]

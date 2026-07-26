@@ -165,6 +165,11 @@ world_model:
     thresholds:
       medium: 0.15
       high: 0.40
+    # Outcome-space surprise (z-score theo σ của outcome model)
+    outcome_enabled: true
+    outcome_thresholds:
+      medium: 1.5
+      high: 3.0
   trajectory:
     enabled: true
     collection: "world_trajectories"

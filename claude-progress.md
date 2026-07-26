@@ -192,6 +192,27 @@
 
 - Kế tiếp: WM-SURPRISE-001 (outcome-space surprise + nối wm_hooks).
 
+## 2026-07-26 — WM-SURPRISE-001
+
+### Phạm vi
+
+- `world/surprise.py`: compute_outcome_surprise (z-score |y−μ|/σ, ngưỡng
+  outcome_thresholds riêng, σ floor 1e-6).
+- `wm_hooks.py`: campaign_outcome_surprise (+_default_outcome_model: ensemble
+  → head fallback từ config).
+- `runner.py`: phát event `campaign_outcome_surprise` đúng lúc variant chuyển
+  completed, gate `world_model.surprise.outcome_enabled`.
+
+### Verification
+
+- `pytest tests/test_outcome_surprise.py` — PASS (13 passed)
+- `pytest tests -m "not ollama"` — PASS (264 passed, 0 failed)
+
+### Handoff
+
+- Kế tiếp: WM-CEM-001 (CEM thật trên config space + nối outcome ranking vào
+  builder).
+
 ## Mẫu ghi cho phiên tiếp theo
 
 ```text
