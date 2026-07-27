@@ -6,6 +6,7 @@ enumeration/resume. Không cần LLM.
 from __future__ import annotations
 
 import asyncio
+import copy
 import importlib.util
 import json
 import sys
@@ -19,6 +20,11 @@ _spec = importlib.util.spec_from_file_location("run_experiment_matrix", _SCRIPT)
 mx = importlib.util.module_from_spec(_spec)
 sys.modules["run_experiment_matrix"] = mx
 _spec.loader.exec_module(mx)
+
+
+def matrix_config():
+    path = mx.BACKEND / "benchmarks" / "agent_matrix_config.yaml"
+    return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
 def run(coro):
@@ -66,6 +72,73 @@ class TestConditionYaml:
         # các phần không patch vẫn nguyên (llm models, encoder...)
         assert cfg["llm"]["models"]
         assert cfg["world_model"]["encoder"]["dim"] == 64
+
+
+class TestProtocolDesign:
+    def test_frozen_design_is_the_main_54_cell_matrix(self):
+        design = mx.build_experiment_design(matrix_config())
+
+        assert design["protocol_version"] == "paired-meta-advice-v1"
+        assert design["conditions"] == ["A", "B", "C"]
+        assert design["seeds"] == [0, 1, 2]
+        assert design["metric"] == "accuracy"
+        assert design["search_algorithms"] == [
+            "grid_search",
+            "bayesian_search",
+            "genetic_algorithm",
+            "random_search",
+            "successive_halving",
+        ]
+        assert (
+            len(design["conditions"])
+            * len(design["datasets"])
+            * len(design["models"])
+            * len(design["seeds"])
+        ) == 54
+        assert len(mx.design_sha256(matrix_config())) == 64
+
+    def test_design_sha_changes_when_protocol_input_changes(self):
+        cfg = matrix_config()
+        changed = copy.deepcopy(cfg)
+        changed["prompt"] += " changed"
+
+        assert mx.design_sha256(cfg) != mx.design_sha256(changed)
+
+    def test_non_main_condition_is_rejected(self):
+        cfg = matrix_config()
+        cfg["conditions"] = ["A", "B", "C_mpc"]
+
+        with pytest.raises(mx.ProtocolError, match="conditions"):
+            mx.build_experiment_design(cfg)
+
+    def test_advice_payload_is_anonymous_and_dataset_hash_is_content_bound(self):
+        from automl.search.datasets_real import load_dataset
+
+        dataset = load_dataset("iris")
+        payload = mx.anonymized_advice_payload(dataset)
+        encoded = json.dumps(payload, sort_keys=True)
+
+        assert set(payload) == {"meta_features", "metric", "search_algorithms"}
+        assert set(payload["meta_features"]) == {
+            "n_rows",
+            "n_cols",
+            "n_classes",
+            "class_imbalance",
+            "frac_categorical",
+            "missing_frac",
+            "mean_abs_skew",
+        }
+        assert dataset["name"] not in encoded
+        assert dataset["source"] not in encoded
+        assert all(
+            isinstance(value, (int, float)) and not isinstance(value, bool)
+            for value in payload["meta_features"].values()
+        )
+
+        changed = dict(dataset)
+        changed["X"] = dataset["X"].copy()
+        changed["X"][0, 0] += 1
+        assert mx.dataset_sha256(dataset) != mx.dataset_sha256(changed)
 
 
 class TestRealJobEnv:

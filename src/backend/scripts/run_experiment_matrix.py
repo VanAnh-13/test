@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import hashlib
+import math
 import json
 import os
 import subprocess
@@ -43,6 +44,124 @@ import yaml  # noqa: E402
 # ── Điều kiện → patch yaml ───────────────────────────────
 
 _MISSING = "./data/world_model/__disabled__"
+PROTOCOL_VERSION = "paired-meta-advice-v1"
+PROTOCOL_METRIC = "accuracy"
+PROTOCOL_CONDITIONS = ("A", "B", "C")
+PROTOCOL_SEEDS = (0, 1, 2)
+ADVICE_ALGORITHMS = (
+    "grid_search",
+    "bayesian_search",
+    "genetic_algorithm",
+    "random_search",
+    "successive_halving",
+)
+META_FEATURE_KEYS = (
+    "n_rows",
+    "n_cols",
+    "n_classes",
+    "class_imbalance",
+    "frac_categorical",
+    "missing_frac",
+    "mean_abs_skew",
+)
+
+
+class ProtocolError(RuntimeError):
+    """Fail-closed protocol violation."""
+
+
+def _canonical_json(value: Any) -> str:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def build_experiment_design(cfg: dict) -> Dict[str, Any]:
+    dimensions: Dict[str, list] = {}
+    for name in ("conditions", "datasets", "models", "seeds"):
+        values = cfg.get(name)
+        if not isinstance(values, list) or not values or len(values) != len(set(values)):
+            raise ProtocolError(f"{name} must be a non-empty unique list")
+        dimensions[name] = list(values)
+    if tuple(dimensions["conditions"]) != PROTOCOL_CONDITIONS:
+        raise ProtocolError("conditions must be exactly A, B, C")
+    if tuple(dimensions["seeds"]) != PROTOCOL_SEEDS:
+        raise ProtocolError("seeds must be exactly 0, 1, 2")
+    cell_count = (
+        len(dimensions["conditions"])
+        * len(dimensions["datasets"])
+        * len(dimensions["models"])
+        * len(dimensions["seeds"])
+    )
+    if cell_count != 54:
+        raise ProtocolError(f"main matrix must contain 54 cells, got {cell_count}")
+    prompt = cfg.get("prompt")
+    job = cfg.get("job")
+    if not isinstance(prompt, str) or not prompt.strip():
+        raise ProtocolError("prompt must be a non-empty string")
+    if not isinstance(job, dict):
+        raise ProtocolError("job must be an object")
+    return {
+        "protocol_version": PROTOCOL_VERSION,
+        **dimensions,
+        "metric": PROTOCOL_METRIC,
+        "search_algorithms": list(ADVICE_ALGORITHMS),
+        "job": job,
+        "prompt": prompt,
+    }
+
+
+def design_sha256(cfg: dict) -> str:
+    return hashlib.sha256(
+        _canonical_json(build_experiment_design(cfg)).encode("utf-8")
+    ).hexdigest()
+
+
+def dataset_sha256(dataset: Dict[str, Any]) -> str:
+    digest = hashlib.sha256()
+    for name in ("X", "y"):
+        if name not in dataset:
+            raise ProtocolError(f"dataset missing {name}")
+        array = np.ascontiguousarray(np.asarray(dataset[name], dtype="<f8"))
+        digest.update(name.encode("ascii"))
+        digest.update(_canonical_json(list(array.shape)).encode("ascii"))
+        digest.update(array.tobytes(order="C"))
+    return digest.hexdigest()
+
+
+def anonymized_advice_payload(
+    dataset: Dict[str, Any],
+    *,
+    metric: str = PROTOCOL_METRIC,
+    algorithms: tuple[str, ...] = ADVICE_ALGORITHMS,
+) -> Dict[str, Any]:
+    if metric != PROTOCOL_METRIC:
+        raise ProtocolError(f"metric must be {PROTOCOL_METRIC}")
+    if tuple(algorithms) != ADVICE_ALGORITHMS:
+        raise ProtocolError("search algorithm pool differs from frozen protocol")
+    meta = dataset.get("meta")
+    if not isinstance(meta, dict):
+        raise ProtocolError("dataset meta-features are missing")
+    safe_meta: Dict[str, float] = {}
+    for key in META_FEATURE_KEYS:
+        value = meta.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float, np.number)):
+            raise ProtocolError(f"meta-feature {key} is not numeric")
+        number = float(value)
+        if not math.isfinite(number):
+            raise ProtocolError(f"meta-feature {key} is not finite")
+        safe_meta[key] = number
+    return {
+        "meta_features": safe_meta,
+        "metric": metric,
+        "search_algorithms": list(algorithms),
+    }
+
+
 
 CONDITION_PATCHES: Dict[str, Dict[str, Any]] = {
     "A": {

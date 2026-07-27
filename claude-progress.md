@@ -982,3 +982,22 @@ openclaw"; 3. "Không nói là DeerFlow, mà chỉ dựa trên công nghệ củ
 - GREEN evidence: isolated test 1 passed; complete planner test file 22 passed; full non-Ollama suite 534 passed and 7 deselected.
 - Final Standards and Spec Checkers found no blocker, scope creep, or file outside the approved whitelist.
 - WM-ARTIFACT-002 meets Definition of Done; WIP released.
+
+## 2026-07-27 - MATRIX-PROTOCOL-001 START
+
+- Orchestrator advanced to prerequisite task two after WM-ARTIFACT-002 passed.
+- Scope is limited to the matrix runner, its public tests, two protocol sidecars, the existing result JSONL, and control files.
+- No live Meta call or paid experiment is authorized in this task; tests must use a boundary fake and dry-run must remain call-free.
+- Scout performs read-only dependency and adversarial protocol review before the sole Maker edits production code.
+
+## 2026-07-27 - MATRIX-PROTOCOL-001 BLOCKED
+
+- Both read-only Scouts confirmed the existing zero-call row must be rejected and removed before rerun.
+- Crash-safe migration needs the exact sibling temporary path `src/backend/benchmarks/agent_matrix_results.jsonl.tmp`, which is not yet in the approved whitelist.
+- No production or test file was edited and no Meta/network call was made.
+
+## 2026-07-27 - MATRIX-PROTOCOL-001 RESUMED
+
+- User approved the exact additional whitelist path `src/backend/benchmarks/agent_matrix_results.jsonl.tmp` and requested implementation to continue.
+- WIP returned to MATRIX-PROTOCOL-001; root remains the sole Maker.
+- Public seams are design/payload, injected advice boundary, strict sidecar/resume migration, evidence-bound cell execution, and call-free dry-run CLI.
