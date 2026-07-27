@@ -31,6 +31,7 @@ import sys
 import tempfile
 import time
 import uuid
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -110,6 +111,14 @@ def build_experiment_design(cfg: dict) -> Dict[str, Any]:
         **dimensions,
         "metric": PROTOCOL_METRIC,
         "search_algorithms": list(ADVICE_ALGORITHMS),
+        "meta_feature_schema": {
+            key: "finite_number" for key in META_FEATURE_KEYS
+        },
+        "condition_patches": {
+            condition: CONDITION_PATCHES[condition]
+            for condition in dimensions["conditions"]
+        },
+        "advice_call_policy": {"max_provider_retries": 0},
         "job": job,
         "prompt": prompt,
     }
@@ -172,18 +181,27 @@ def _advice_prompt(payload: Dict[str, Any]) -> str:
 
 
 def _invoke_advice_model(model: str, prompt: str) -> tuple[str, dict]:
-    from hagent.agent.llm_config import create_chat_model, require_model_config
+    from hagent.agent.llm_config import _build_model, require_model_config
     from hagent.agent.middlewares.usage_tracker import (
         UsageTracker,
         UsageTrackingCallback,
     )
 
-    require_model_config(model)
+    config = require_model_config(model)
+    provider = config.provider.lower()
+    if provider not in {"openai", "openai_compatible"}:
+        raise ProtocolError("Meta advice requires an OpenAI-compatible provider")
+    config = replace(
+        config,
+        extra={**(config.extra or {}), "max_retries": 0},
+    )
     tracker = UsageTracker()
-    chat_model = create_chat_model(
-        model,
-        temperature=0,
-        max_tokens=64,
+    chat_model = _build_model(
+        provider,
+        config,
+        config.resolve_api_key(),
+        0,
+        64,
         callbacks=[UsageTrackingCallback(tracker)],
     )
     message = chat_model.invoke(prompt)
@@ -251,11 +269,17 @@ def _strict_usage(usage: dict) -> Dict[str, int]:
     }
 
 
-def _advice_key(design_sha: str, data_sha: str, model: str) -> str:
+def _advice_key(
+    design_sha: str,
+    data_sha: str,
+    model: str,
+    prompt_sha: str,
+) -> str:
     material = {
         "design_sha256": design_sha,
         "dataset_sha256": data_sha,
         "model": model,
+        "prompt_sha256": prompt_sha,
         "metric": PROTOCOL_METRIC,
         "search_algorithms": list(ADVICE_ALGORITHMS),
     }
@@ -291,19 +315,20 @@ def request_paired_advice(
     algorithm = _strict_advice_algorithm(response)
     usage = _strict_usage(raw_usage)
     data_sha = dataset_sha256(dataset)
+    prompt_sha = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
     return {
         "record_type": "paired_meta_advice",
         "status": "accepted",
         "protocol_version": PROTOCOL_VERSION,
         "experiment_id": experiment_id,
         "design_sha256": design_sha,
-        "advice_key": _advice_key(design_sha, data_sha, model),
+        "advice_key": _advice_key(design_sha, data_sha, model, prompt_sha),
         "dataset_sha256": data_sha,
         "model": model,
         "metric": PROTOCOL_METRIC,
         "search_algorithms": list(ADVICE_ALGORITHMS),
         "algorithm": algorithm,
-        "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+        "prompt_sha256": prompt_sha,
         "response_sha256": hashlib.sha256(response.encode("utf-8")).hexdigest(),
         "token_usage": usage,
         "cost_usd": None,
@@ -325,6 +350,7 @@ _ADVICE_COMMON_FIELDS = {
     "prompt_sha256",
 }
 _PENDING_FIELDS = _ADVICE_COMMON_FIELDS | {"created_at"}
+_DISPATCHED_FIELDS = _ADVICE_COMMON_FIELDS | {"dispatched_at"}
 _ACCEPTED_FIELDS = _ADVICE_COMMON_FIELDS | {
     "algorithm",
     "response_sha256",
@@ -346,8 +372,13 @@ def _validate_advice_record(record: dict, *, line_number: int) -> None:
     if not isinstance(record, dict):
         raise ProtocolError(f"advice line {line_number} is not an object")
     status = record.get("status")
-    fields = _PENDING_FIELDS if status == "pending" else _ACCEPTED_FIELDS
-    if status not in ("pending", "accepted") or set(record) != fields:
+    fields_by_status = {
+        "pending": _PENDING_FIELDS,
+        "dispatched": _DISPATCHED_FIELDS,
+        "accepted": _ACCEPTED_FIELDS,
+    }
+    fields = fields_by_status.get(status)
+    if fields is None or set(record) != fields:
         raise ProtocolError(f"advice line {line_number} has an invalid schema")
     if (
         record["record_type"] != "paired_meta_advice"
@@ -369,7 +400,10 @@ def _validate_advice_record(record: dict, *, line_number: int) -> None:
     if not isinstance(record.get("experiment_id"), str) or not record["experiment_id"]:
         raise ProtocolError(f"advice line {line_number} has invalid experiment_id")
     expected_key = _advice_key(
-        record["design_sha256"], record["dataset_sha256"], record["model"]
+        record["design_sha256"],
+        record["dataset_sha256"],
+        record["model"],
+        record["prompt_sha256"],
     )
     if record["advice_key"] != expected_key:
         raise ProtocolError(f"advice line {line_number} has invalid advice_key")
@@ -409,7 +443,11 @@ def _append_jsonl(path: Path, record: dict) -> None:
 
 
 def load_advice_index(path: Path) -> Dict[str, Dict[str, dict]]:
-    state: Dict[str, Dict[str, dict]] = {"pending": {}, "accepted": {}}
+    state: Dict[str, Dict[str, dict]] = {
+        "pending": {},
+        "dispatched": {},
+        "accepted": {},
+    }
     if not path.is_file():
         return state
     for line_number, line in enumerate(
@@ -417,28 +455,59 @@ def load_advice_index(path: Path) -> Dict[str, Dict[str, dict]]:
     ):
         if not line.strip():
             continue
-        try:
-            record = json.loads(line)
-        except json.JSONDecodeError as exc:
-            raise ProtocolError(f"advice line {line_number} is malformed") from exc
+        record = _strict_json_line(line, "advice", line_number)
         _validate_advice_record(record, line_number=line_number)
         key = record["advice_key"]
         status = record["status"]
         if status == "pending":
-            if key in state["pending"] or key in state["accepted"]:
+            if any(key in state[name] for name in state):
                 raise ProtocolError(f"duplicate pending advice key {key}")
             state["pending"][key] = record
             continue
-        if key in state["accepted"]:
-            raise ProtocolError(f"duplicate accepted advice key {key}")
         pending = state["pending"].get(key)
         if pending is None:
-            raise ProtocolError(f"accepted advice key {key} has no pending claim")
+            raise ProtocolError(f"{status} advice key {key} has no pending claim")
+        if status == "dispatched":
+            if key in state["dispatched"] or key in state["accepted"]:
+                raise ProtocolError(f"duplicate dispatched advice key {key}")
+            for field in _ADVICE_COMMON_FIELDS - {"status"}:
+                if record[field] != pending[field]:
+                    raise ProtocolError(
+                        f"dispatched advice key {key} conflicts with pending"
+                    )
+            state["dispatched"][key] = record
+            continue
+        if key in state["accepted"]:
+            raise ProtocolError(f"duplicate accepted advice key {key}")
+        dispatched = state["dispatched"].get(key)
+        if dispatched is None:
+            raise ProtocolError(f"accepted advice key {key} has no dispatch claim")
         for field in _ADVICE_COMMON_FIELDS - {"status"}:
-            if record[field] != pending[field]:
+            if record[field] != pending[field] or record[field] != dispatched[field]:
                 raise ProtocolError(f"accepted advice key {key} conflicts with pending")
         state["accepted"][key] = record
     return state
+
+
+def reconcile_dispatched_advice(sidecar_path: Path, receipt: dict) -> dict:
+    _validate_advice_record(receipt, line_number=0)
+    if receipt.get("status") != "accepted":
+        raise ProtocolError("reconciliation receipt is not accepted advice")
+    state = load_advice_index(sidecar_path)
+    key = receipt["advice_key"]
+    existing = state["accepted"].get(key)
+    if existing is not None:
+        if existing != receipt:
+            raise ProtocolError("reconciliation receipt conflicts with accepted advice")
+        return existing
+    dispatched = state["dispatched"].get(key)
+    if dispatched is None:
+        raise ProtocolError("reconciliation requires a dispatched advice claim")
+    for field in _ADVICE_COMMON_FIELDS - {"status"}:
+        if receipt[field] != dispatched[field]:
+            raise ProtocolError("reconciliation receipt conflicts with dispatch")
+    _append_jsonl(sidecar_path, receipt)
+    return receipt
 
 
 def ensure_paired_advices(
@@ -464,19 +533,20 @@ def ensure_paired_advices(
         if dataset is None:
             raise ProtocolError(f"dataset {dataset_name} is not loaded")
         data_sha = dataset_sha256(dataset)
-        key = _advice_key(design_sha, data_sha, model)
+        prompt_sha = hashlib.sha256(
+            _advice_prompt(anonymized_advice_payload(dataset)).encode("utf-8")
+        ).hexdigest()
+        key = _advice_key(design_sha, data_sha, model, prompt_sha)
         accepted = state["accepted"].get(key)
         if accepted is not None:
             result[(dataset_name, model)] = accepted
             continue
-        if key in state["pending"]:
-            raise ProtocolError(f"advice key {key} is pending; refusing duplicate call")
-        prompt_sha = hashlib.sha256(
-            _advice_prompt(anonymized_advice_payload(dataset)).encode("utf-8")
-        ).hexdigest()
-        pending = {
+        if key in state["dispatched"]:
+            raise ProtocolError(
+                f"advice key {key} is dispatched; reconciliation required"
+            )
+        expected_common = {
             "record_type": "paired_meta_advice",
-            "status": "pending",
             "protocol_version": PROTOCOL_VERSION,
             "experiment_id": experiment_id,
             "design_sha256": design_sha,
@@ -486,10 +556,27 @@ def ensure_paired_advices(
             "metric": PROTOCOL_METRIC,
             "search_algorithms": list(ADVICE_ALGORITHMS),
             "prompt_sha256": prompt_sha,
-            "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
-        _append_jsonl(sidecar_path, pending)
-        state["pending"][key] = pending
+        pending = state["pending"].get(key)
+        if pending is None:
+            pending = {
+                **expected_common,
+                "status": "pending",
+                "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            }
+            _append_jsonl(sidecar_path, pending)
+            state["pending"][key] = pending
+        elif any(
+            pending[field] != value for field, value in expected_common.items()
+        ):
+            raise ProtocolError(f"advice key {key} conflicts with pending claim")
+        dispatched = {
+            **expected_common,
+            "status": "dispatched",
+            "dispatched_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        }
+        _append_jsonl(sidecar_path, dispatched)
+        state["dispatched"][key] = dispatched
         accepted = request_paired_advice(
             dataset,
             model=model,
@@ -498,7 +585,7 @@ def ensure_paired_advices(
             invoke=invoke,
         )
         for field in _ADVICE_COMMON_FIELDS - {"status"}:
-            if accepted[field] != pending[field]:
+            if accepted[field] != dispatched[field]:
                 raise ProtocolError(f"accepted advice key {key} conflicts with claim")
         _append_jsonl(sidecar_path, accepted)
         state["accepted"][key] = accepted
@@ -511,6 +598,7 @@ def validate_result_evidence(
     row: dict,
     design_sha: str,
     accepted_advices: Dict[str, dict],
+    current_dataset_hashes: Optional[Dict[str, str]] = None,
 ) -> List[str]:
     reasons: List[str] = []
 
@@ -539,6 +627,17 @@ def validate_result_evidence(
         reject("cell_dimension_invalid")
     if not _is_sha256(row.get("dataset_sha256")):
         reject("dataset_sha_invalid")
+    if current_dataset_hashes is not None:
+        dataset_name = row.get("dataset")
+        current_hash = (
+            current_dataset_hashes.get(dataset_name)
+            if isinstance(dataset_name, str)
+            else None
+        )
+        if not _is_sha256(current_hash):
+            reject("current_dataset_hash_missing")
+        elif row.get("dataset_sha256") != current_hash:
+            reject("dataset_content_mismatch")
 
     provenance = row.get("advice_provenance")
     provenance_fields = {
@@ -668,6 +767,7 @@ def partition_resume_rows(
     rows: List[dict],
     design_sha: str,
     accepted_advices: Dict[str, dict],
+    current_dataset_hashes: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     seen: set[str] = set()
     done: set[str] = set()
@@ -679,13 +779,41 @@ def partition_resume_rows(
             if key in seen:
                 raise ProtocolError(f"duplicate result key {key}")
             seen.add(key)
-        reasons = validate_result_evidence(row, design_sha, accepted_advices)
+        reasons = validate_result_evidence(
+            row,
+            design_sha,
+            accepted_advices,
+            current_dataset_hashes,
+        )
         if not reasons:
             done.add(key)
             kept.append(row)
         else:
             rejected.append({"row": row, "reason_codes": reasons})
     return {"done": done, "kept": kept, "rejected": rejected}
+
+
+def _strict_json_line(line: str, artifact: str, line_number: int) -> Any:
+    def no_duplicates(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"duplicate field {key}")
+            result[key] = value
+        return result
+
+    try:
+        return json.loads(
+            line,
+            object_pairs_hook=no_duplicates,
+            parse_constant=lambda value: (_ for _ in ()).throw(
+                ValueError(value)
+            ),
+        )
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise ProtocolError(
+            f"{artifact} line {line_number} is malformed"
+        ) from exc
 
 
 def _read_result_rows(path: Path) -> List[dict]:
@@ -697,72 +825,173 @@ def _read_result_rows(path: Path) -> List[dict]:
     ):
         if not line.strip():
             continue
-        try:
-            row = json.loads(
-                line,
-                parse_constant=lambda value: (_ for _ in ()).throw(
-                    ValueError(value)
-                ),
-            )
-        except (json.JSONDecodeError, ValueError) as exc:
-            raise ProtocolError(f"result line {line_number} is malformed") from exc
+        row = _strict_json_line(line, "result", line_number)
         if not isinstance(row, dict):
             raise ProtocolError(f"result line {line_number} is not an object")
         rows.append(row)
     return rows
 
 
-_SAFE_REJECTED_ROW_FIELDS = {
+_REJECTED_STRING_FIELDS = {
     "key",
     "condition",
     "dataset",
     "model",
-    "seed",
-    "route",
     "campaign_status",
-    "n_variants",
-    "variant_sources",
-    "extension_rounds",
-    "best_real_score",
-    "n_real_jobs",
-    "job_seconds_total",
-    "n_outcome_surprise",
-    "n_extended",
-    "cost_metrics",
     "checkpoint_sha",
     "git_sha",
-    "wall_seconds",
-    "ts",
     "design_sha256",
     "experiment_id",
     "dataset_sha256",
-    "advice_provenance",
-    "requested_variant",
-    "budget_score_trace",
-    "executed_algorithms",
-    "event_types",
+}
+_REJECTED_INTEGER_FIELDS = {"seed", "n_real_jobs"}
+_REJECTED_USAGE_FIELDS = {
+    "total_input_tokens",
+    "total_output_tokens",
+    "total_calls",
+}
+_REJECTED_ADVICE_USAGE_FIELDS = {
+    "input_tokens",
+    "output_tokens",
+    "total_tokens",
+    "total_calls",
+}
+_REJECTED_PROVENANCE_FIELDS = {
+    "experiment_id",
+    "design_sha256",
+    "advice_key",
+    "algorithm",
+    "prompt_sha256",
+    "response_sha256",
+}
+_REJECTION_FIELDS = {
+    "record_type",
+    "rejection_id",
+    "row_sha256",
+    "key",
+    "reason_codes",
+    "row",
+    "had_error",
+    "rejected_at",
 }
 
 
-def _rejection_record(row: dict, reason_codes: List[str]) -> dict:
-    row_sha = hashlib.sha256(_canonical_json(row).encode("utf-8")).hexdigest()
-    rejection_id = hashlib.sha256(
-        (row_sha + ":" + _canonical_json(reason_codes)).encode("utf-8")
-    ).hexdigest()
+def _safe_integer_fields(value: Any, fields: set[str]) -> dict:
+    if not isinstance(value, dict):
+        return {}
     return {
-        "record_type": "matrix_preflight_rejection",
-        "rejection_id": rejection_id,
-        "row_sha256": row_sha,
-        "key": row.get("key") if isinstance(row.get("key"), str) else None,
-        "reason_codes": list(reason_codes),
-        "row": {
+        key: value[key]
+        for key in fields
+        if key in value and type(value[key]) is int
+    }
+
+
+def _safe_rejected_row(row: Any) -> dict:
+    if not isinstance(row, dict):
+        return {}
+    safe = {
+        key: row[key]
+        for key in _REJECTED_STRING_FIELDS
+        if isinstance(row.get(key), str)
+    }
+    safe.update(
+        {
             key: row[key]
-            for key in _SAFE_REJECTED_ROW_FIELDS
-            if key in row
-        },
+            for key in _REJECTED_INTEGER_FIELDS
+            if type(row.get(key)) is int
+        }
+    )
+    usage = _safe_integer_fields(row.get("cost_metrics"), _REJECTED_USAGE_FIELDS)
+    if usage:
+        safe["cost_metrics"] = usage
+    provenance = row.get("advice_provenance")
+    if isinstance(provenance, dict):
+        safe_provenance = {
+            key: provenance[key]
+            for key in _REJECTED_PROVENANCE_FIELDS
+            if isinstance(provenance.get(key), str)
+        }
+        token_usage = _safe_integer_fields(
+            provenance.get("token_usage"),
+            _REJECTED_ADVICE_USAGE_FIELDS,
+        )
+        if token_usage:
+            safe_provenance["token_usage"] = token_usage
+        if safe_provenance:
+            safe["advice_provenance"] = safe_provenance
+    return safe
+
+
+def _rejection_core(record: dict) -> dict:
+    return {
+        "record_type": record["record_type"],
+        "row_sha256": record["row_sha256"],
+        "key": record["key"],
+        "reason_codes": record["reason_codes"],
+        "row": record["row"],
+        "had_error": record["had_error"],
+    }
+
+
+def _rejection_record(row: dict, reason_codes: List[str]) -> dict:
+    safe_row = _safe_rejected_row(row)
+    row_sha = hashlib.sha256(_canonical_json(safe_row).encode("utf-8")).hexdigest()
+    record = {
+        "record_type": "matrix_preflight_rejection",
+        "row_sha256": row_sha,
+        "key": safe_row.get("key"),
+        "reason_codes": list(reason_codes),
+        "row": safe_row,
         "had_error": row.get("error") is not None,
         "rejected_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
+    record["rejection_id"] = hashlib.sha256(
+        _canonical_json(_rejection_core(record)).encode("utf-8")
+    ).hexdigest()
+    _validate_rejection_record(record, line_number=0)
+    return record
+
+
+def _validate_rejection_record(record: Any, *, line_number: int) -> None:
+    if not isinstance(record, dict) or set(record) != _REJECTION_FIELDS:
+        raise ProtocolError(f"rejection line {line_number} has an invalid schema")
+    reasons = record.get("reason_codes")
+    if (
+        record.get("record_type") != "matrix_preflight_rejection"
+        or not isinstance(reasons, list)
+        or not reasons
+        or len(reasons) != len(set(reasons))
+        or any(
+            not isinstance(reason, str)
+            or not reason.isascii()
+            or not reason.replace("_", "").isalnum()
+            for reason in reasons
+        )
+        or type(record.get("had_error")) is not bool
+    ):
+        raise ProtocolError(f"rejection line {line_number} is invalid")
+    safe_row = _safe_rejected_row(record.get("row"))
+    if safe_row != record["row"] or record.get("key") != safe_row.get("key"):
+        raise ProtocolError(f"rejection line {line_number} has invalid row evidence")
+    expected_row_sha = hashlib.sha256(
+        _canonical_json(safe_row).encode("utf-8")
+    ).hexdigest()
+    if record.get("row_sha256") != expected_row_sha:
+        raise ProtocolError(f"rejection line {line_number} has invalid row_sha256")
+    expected_id = hashlib.sha256(
+        _canonical_json(_rejection_core(record)).encode("utf-8")
+    ).hexdigest()
+    if record.get("rejection_id") != expected_id:
+        raise ProtocolError(f"rejection line {line_number} has invalid rejection_id")
+    rejected_at = record.get("rejected_at")
+    try:
+        parsed = time.strptime(rejected_at, "%Y-%m-%dT%H:%M:%SZ")
+    except (TypeError, ValueError) as exc:
+        raise ProtocolError(
+            f"rejection line {line_number} has invalid rejected_at"
+        ) from exc
+    if time.strftime("%Y-%m-%dT%H:%M:%SZ", parsed) != rejected_at:
+        raise ProtocolError(f"rejection line {line_number} has invalid rejected_at")
 
 
 def _load_rejection_ids(path: Path) -> set[str]:
@@ -774,20 +1003,20 @@ def _load_rejection_ids(path: Path) -> set[str]:
     ):
         if not line.strip():
             continue
-        try:
-            record = json.loads(line)
-        except json.JSONDecodeError as exc:
-            raise ProtocolError(f"rejection line {line_number} is malformed") from exc
-        rejection_id = record.get("rejection_id") if isinstance(record, dict) else None
-        if (
-            not isinstance(record, dict)
-            or record.get("record_type") != "matrix_preflight_rejection"
-            or not _is_sha256(rejection_id)
-            or rejection_id in ids
-        ):
+        record = _strict_json_line(line, "rejection", line_number)
+        _validate_rejection_record(record, line_number=line_number)
+        rejection_id = record["rejection_id"]
+        if rejection_id in ids:
             raise ProtocolError(f"rejection line {line_number} is invalid")
         ids.add(rejection_id)
     return ids
+
+
+def _write_migration_temp(path: Path, content: str, mode: str) -> None:
+    with path.open(mode, encoding="utf-8", newline="\n") as handle:
+        handle.write(content)
+        handle.flush()
+        os.fsync(handle.fileno())
 
 
 def migrate_rejected_rows(
@@ -796,15 +1025,33 @@ def migrate_rejected_rows(
     *,
     design_sha: str,
     accepted_advices: Dict[str, dict],
+    current_dataset_hashes: Optional[Dict[str, str]] = None,
 ) -> set[str]:
     temp_path = results_path.with_name(results_path.name + ".tmp")
-    if temp_path.exists():
-        raise ProtocolError(f"stale migration temp exists: {temp_path.name}")
     rows = _read_result_rows(results_path)
-    partition = partition_resume_rows(rows, design_sha, accepted_advices)
-    if not partition["rejected"]:
-        return partition["done"]
+    partition = partition_resume_rows(
+        rows,
+        design_sha,
+        accepted_advices,
+        current_dataset_hashes,
+    )
     rejection_ids = _load_rejection_ids(rejected_path)
+    if not partition["rejected"]:
+        if temp_path.exists():
+            raise ProtocolError(f"stale migration temp exists: {temp_path.name}")
+        return partition["done"]
+    expected_temp = "".join(
+        _canonical_json(row) + "\n" for row in partition["kept"]
+    )
+    if temp_path.exists():
+        existing_temp = temp_path.read_text(encoding="utf-8")
+        if existing_temp != expected_temp:
+            if existing_temp and expected_temp.startswith(existing_temp):
+                _write_migration_temp(temp_path, expected_temp, "w")
+            else:
+                raise ProtocolError(
+                    f"stale migration temp conflicts: {temp_path.name}"
+                )
     for rejected in partition["rejected"]:
         record = _rejection_record(rejected["row"], rejected["reason_codes"])
         if record["rejection_id"] not in rejection_ids:
@@ -812,11 +1059,8 @@ def migrate_rejected_rows(
             rejection_ids.add(record["rejection_id"])
 
     results_path.parent.mkdir(parents=True, exist_ok=True)
-    with temp_path.open("x", encoding="utf-8", newline="\n") as handle:
-        for row in partition["kept"]:
-            handle.write(_canonical_json(row) + "\n")
-        handle.flush()
-        os.fsync(handle.fileno())
+    if not temp_path.exists():
+        _write_migration_temp(temp_path, expected_temp, "x")
     os.replace(temp_path, results_path)
     if not partition["kept"]:
         results_path.unlink()
@@ -1041,7 +1285,7 @@ class RealJobEnv:
 def _git_sha() -> str:
     try:
         return subprocess.check_output(
-            ["git", "rev-parse", "--short", "HEAD"], cwd=str(BACKEND), text=True
+            ["git", "rev-parse", "HEAD"], cwd=str(BACKEND), text=True
         ).strip()
     except Exception:
         return "unknown"
@@ -1056,7 +1300,7 @@ def _checkpoint_sha() -> Optional[str]:
         if p and not p.is_absolute():
             p = BACKEND / p
         if p and p.is_file():
-            return hashlib.sha256(p.read_bytes()).hexdigest()[:16]
+            return hashlib.sha256(p.read_bytes()).hexdigest()
     except Exception:
         pass
     return None
@@ -1170,23 +1414,20 @@ def run_cell(
     apply_condition(condition, scratch_dir)
     dataset = load_dataset(dataset_name)
     env = RealJobEnv(dataset, job_cfg=cfg.get("job") or {}, seed=seed)
-    set_tool_invoker(env.invoke)
     if (
         advice.get("design_sha256") != design_sha
         or advice.get("experiment_id") != experiment_id
         or advice.get("dataset_sha256") != dataset_sha256(dataset)
         or advice.get("model") != model
     ):
-        set_tool_invoker(None)
         raise ProtocolError("cell advice provenance does not match cell")
     runner = agent_runner or run_agent
-
-
     message = build_cell_message(cfg, dataset_name, advice)
 
     t0 = time.perf_counter()
     error = None
     result: Dict[str, Any] = {}
+    set_tool_invoker(env.invoke)
     try:
         result = asyncio.run(
             runner(
@@ -1374,26 +1615,30 @@ def main(
         return 0
 
     try:
+        from automl.search.datasets_real import load_dataset
+        from hagent.agent.llm_config import require_model_config
+
+        for model_name in design["models"]:
+            require_model_config(model_name)
+        loaded_datasets = {
+            dataset_name: load_dataset(dataset_name)
+            for dataset_name in design["datasets"]
+        }
+        current_dataset_hashes = {
+            dataset_name: dataset_sha256(dataset)
+            for dataset_name, dataset in loaded_datasets.items()
+        }
         done = migrate_rejected_rows(
             out_path,
             rejected_path,
             design_sha=design_sha,
             accepted_advices=advice_state["accepted"],
+            current_dataset_hashes=current_dataset_hashes,
         )
         todo = [cell for cell in cells if cell_key(*cell) not in done]
         if not todo:
             print(f"Saved: {out_path}")
             return 0
-
-        from automl.search.datasets_real import load_dataset
-        from hagent.agent.llm_config import require_model_config
-
-        for model_name in dict.fromkeys(cell[2] for cell in todo):
-            require_model_config(model_name)
-        loaded_datasets = {
-            dataset_name: load_dataset(dataset_name)
-            for dataset_name in dict.fromkeys(cell[1] for cell in todo)
-        }
         advices = ensure_paired_advices(
             cells=todo,
             datasets=loaded_datasets,

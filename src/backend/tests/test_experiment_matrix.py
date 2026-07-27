@@ -104,6 +104,26 @@ class TestProtocolDesign:
 
         assert mx.design_sha256(cfg) != mx.design_sha256(changed)
 
+    def test_design_sha_locks_condition_patches(self, monkeypatch):
+        cfg = matrix_config()
+        baseline = mx.design_sha256(cfg)
+        patches = copy.deepcopy(mx.CONDITION_PATCHES)
+        patches["A"]["campaign"]["wm_variant_proposal"] = True
+
+        monkeypatch.setattr(mx, "CONDITION_PATCHES", patches)
+
+        assert mx.design_sha256(cfg) != baseline
+
+    def test_design_sha_locks_meta_feature_schema(self, monkeypatch):
+        cfg = matrix_config()
+        baseline = mx.design_sha256(cfg)
+
+        monkeypatch.setattr(
+            mx, "META_FEATURE_KEYS", mx.META_FEATURE_KEYS + ("new_feature",)
+        )
+
+        assert mx.design_sha256(cfg) != baseline
+
     def test_non_main_condition_is_rejected(self):
         cfg = matrix_config()
         cfg["conditions"] = ["A", "B", "C_mpc"]
@@ -142,6 +162,43 @@ class TestProtocolDesign:
 
 
 class TestPairedAdvice:
+    def test_advice_key_binds_exact_anonymous_prompt(self):
+        from automl.search.datasets_real import load_dataset
+
+        dataset = load_dataset("iris")
+        changed = dict(dataset)
+        changed["meta"] = dict(dataset["meta"])
+        changed["meta"]["mean_abs_skew"] += 0.25
+
+        def invoke(_model, _prompt):
+            return (
+                '{"search_algorithm":"grid_search"}',
+                {
+                    "total_input_tokens": 2,
+                    "total_output_tokens": 1,
+                    "total_calls": 1,
+                },
+            )
+
+        first = mx.request_paired_advice(
+            dataset,
+            model="meta-ai",
+            design_sha="a" * 64,
+            experiment_id="matrix-aaaaaaaaaaaaaaaa",
+            invoke=invoke,
+        )
+        second = mx.request_paired_advice(
+            changed,
+            model="meta-ai",
+            design_sha="a" * 64,
+            experiment_id="matrix-aaaaaaaaaaaaaaaa",
+            invoke=invoke,
+        )
+
+        assert first["dataset_sha256"] == second["dataset_sha256"]
+        assert first["prompt_sha256"] != second["prompt_sha256"]
+        assert first["advice_key"] != second["advice_key"]
+
     def test_one_anonymous_invoke_returns_secret_free_provenance(self):
         from automl.search.datasets_real import load_dataset
 
@@ -258,6 +315,42 @@ class TestPairedAdvice:
             )
         assert calls == 1
 
+    def test_provider_transport_disables_internal_retries(self, monkeypatch):
+        from types import SimpleNamespace
+
+        import hagent.agent.llm_config as llm_config
+
+        seen = {}
+        config = llm_config.ModelConfig(
+            name="meta-ai",
+            provider="openai_compatible",
+            model="meta-model",
+            api_key="test-key",
+            base_url="http://provider.invalid/v1",
+            extra={"max_retries": 9},
+        )
+
+        class FakeModel:
+            def invoke(self, _prompt):
+                return SimpleNamespace(
+                    content='{"search_algorithm":"grid_search"}',
+                    usage_metadata={"input_tokens": 2, "output_tokens": 1},
+                    response_metadata={},
+                )
+
+        def build_model(provider, built_config, *_args, **_kwargs):
+            seen["provider"] = provider
+            seen["config"] = built_config
+            return FakeModel()
+
+        monkeypatch.setattr(llm_config, "require_model_config", lambda _name: config)
+        monkeypatch.setattr(llm_config, "_build_model", build_model)
+
+        mx._invoke_advice_model("meta-ai", "prompt")
+
+        assert seen["provider"] == "openai_compatible"
+        assert seen["config"].extra["max_retries"] == 0
+
 
 class TestAdviceJournal:
     def test_one_advice_is_reused_across_conditions_and_seeds(self, tmp_path):
@@ -300,7 +393,11 @@ class TestAdviceJournal:
             json.loads(line)
             for line in sidecar.read_text(encoding="utf-8").splitlines()
         ]
-        assert [record["status"] for record in records] == ["pending", "accepted"]
+        assert [record["status"] for record in records] == [
+            "pending",
+            "dispatched",
+            "accepted",
+        ]
         assert all("prompt" not in record and "response" not in record for record in records)
 
     def test_pending_call_is_not_retried(self, tmp_path):
@@ -337,9 +434,103 @@ class TestAdviceJournal:
                 },
             )
 
-        with pytest.raises(mx.ProtocolError, match="pending"):
+        with pytest.raises(mx.ProtocolError, match="dispatched"):
             mx.ensure_paired_advices(**kwargs, invoke=retry)
         assert retry_calls == 0
+
+    def test_pending_claim_recovers_before_dispatch_without_duplicate(
+        self, tmp_path, monkeypatch
+    ):
+        from automl.search.datasets_real import load_dataset
+
+        sidecar = tmp_path / "advice.jsonl"
+        real_append = mx._append_jsonl
+
+        def crash_before_dispatch(path, record):
+            if record["status"] == "dispatched":
+                raise OSError("crash before dispatch")
+            real_append(path, record)
+
+        monkeypatch.setattr(mx, "_append_jsonl", crash_before_dispatch)
+        kwargs = {
+            "cells": [("A", "iris", "meta-ai", 0)],
+            "datasets": {"iris": load_dataset("iris")},
+            "sidecar_path": sidecar,
+            "design_sha": "c" * 64,
+            "experiment_id": "matrix-cccccccccccccccc",
+        }
+
+        with pytest.raises(OSError, match="before dispatch"):
+            mx.ensure_paired_advices(
+                **kwargs,
+                invoke=lambda _model, _prompt: pytest.fail("must not invoke"),
+            )
+
+        assert [
+            json.loads(line)["status"]
+            for line in sidecar.read_text(encoding="utf-8").splitlines()
+        ] == ["pending"]
+
+        monkeypatch.setattr(mx, "_append_jsonl", real_append)
+        calls = 0
+
+        def invoke(_model, _prompt):
+            nonlocal calls
+            calls += 1
+            return (
+                '{"search_algorithm":"grid_search"}',
+                {
+                    "total_input_tokens": 1,
+                    "total_output_tokens": 1,
+                    "total_calls": 1,
+                },
+            )
+
+        mx.ensure_paired_advices(**kwargs, invoke=invoke)
+
+        assert calls == 1
+
+    def test_dispatched_claim_reconciles_receipt_without_new_call(self, tmp_path):
+        from automl.search.datasets_real import load_dataset
+
+        dataset = load_dataset("iris")
+        sidecar = tmp_path / "advice.jsonl"
+        kwargs = {
+            "cells": [("A", "iris", "meta-ai", 0)],
+            "datasets": {"iris": dataset},
+            "sidecar_path": sidecar,
+            "design_sha": "c" * 64,
+            "experiment_id": "matrix-cccccccccccccccc",
+        }
+        with pytest.raises(mx.ProtocolError, match="invocation failed"):
+            mx.ensure_paired_advices(
+                **kwargs,
+                invoke=lambda _model, _prompt: (_ for _ in ()).throw(
+                    OSError("network")
+                ),
+            )
+        receipt = mx.request_paired_advice(
+            dataset,
+            model="meta-ai",
+            design_sha="c" * 64,
+            experiment_id="matrix-cccccccccccccccc",
+            invoke=lambda _model, _prompt: (
+                '{"search_algorithm":"grid_search"}',
+                {
+                    "total_input_tokens": 1,
+                    "total_output_tokens": 1,
+                    "total_calls": 1,
+                },
+            ),
+        )
+
+        mx.reconcile_dispatched_advice(sidecar, receipt)
+        result = mx.ensure_paired_advices(
+            **kwargs,
+            invoke=lambda _model, _prompt: pytest.fail("must not invoke again"),
+        )
+
+        assert result[("iris", "meta-ai")] == receipt
 
     def test_duplicate_accepted_record_is_corruption(self, tmp_path):
         from automl.search.datasets_real import load_dataset
@@ -365,6 +556,15 @@ class TestAdviceJournal:
             handle.write(accepted + "\n")
 
         with pytest.raises(mx.ProtocolError, match="duplicate accepted"):
+            mx.load_advice_index(sidecar)
+
+    def test_advice_sidecar_rejects_duplicate_json_fields(self, tmp_path):
+        sidecar = tmp_path / "advice.jsonl"
+        sidecar.write_text(
+            '{"status":"pending","status":"accepted"}\n', encoding="utf-8"
+        )
+
+        with pytest.raises(mx.ProtocolError, match="malformed"):
             mx.load_advice_index(sidecar)
 
 
@@ -420,6 +620,37 @@ class TestRealJobEnv:
         env = mx.RealJobEnv(load_dataset("iris"), job_cfg={}, seed=0)
         info = run(env.invoke("get_job_info", {"job_id": "nope"}))
         assert info.get("error")
+
+
+class TestArtifactProvenance:
+    def test_checkpoint_sha_is_full_sha256(self, tmp_path, monkeypatch):
+        import hashlib
+
+        import hagent.bridge.config as bridge_config
+
+        checkpoint = tmp_path / "head.npz"
+        checkpoint.write_bytes(b"checkpoint-evidence")
+        monkeypatch.setattr(
+            bridge_config,
+            "get_world_model_config",
+            lambda: {"outcome_head": {"checkpoint_path": str(checkpoint)}},
+        )
+
+        assert mx._checkpoint_sha() == hashlib.sha256(
+            checkpoint.read_bytes()
+        ).hexdigest()
+
+    def test_git_sha_uses_full_head(self, monkeypatch):
+        seen = {}
+
+        def check_output(args, **_kwargs):
+            seen["args"] = args
+            return "a" * 40 + "\n"
+
+        monkeypatch.setattr(mx.subprocess, "check_output", check_output)
+
+        assert mx._git_sha() == "a" * 40
+        assert seen["args"] == ["git", "rev-parse", "HEAD"]
 
 
 class TestCellAdviceEvidence:
@@ -507,6 +738,34 @@ class TestCellAdviceEvidence:
         with pytest.raises(mx.ProtocolError, match="executed"):
             mx.build_cell_evidence(result, env, advice)
 
+    def test_run_cell_clears_invoker_when_message_rendering_fails(self, tmp_path):
+        import hagent.agent.execution.tool_runner as tool_runner
+
+        design_sha = "e" * 64
+        advice = TestEnumerationAndResume.accepted_advice(design_sha)
+        cfg = matrix_config()
+        cfg["prompt"] = "Train {dataset} target {target} with {missing}"
+
+        try:
+            with pytest.raises(KeyError, match="missing"):
+                mx.run_cell(
+                    "A",
+                    "iris",
+                    "meta-ai",
+                    0,
+                    cfg=cfg,
+                    scratch_dir=tmp_path,
+                    advice=advice,
+                    design_sha=design_sha,
+                    experiment_id=advice["experiment_id"],
+                    agent_runner=lambda *_args, **_kwargs: pytest.fail(
+                        "agent must not run"
+                    ),
+                )
+
+            assert tool_runner._tool_invoker is None
+        finally:
+            tool_runner.set_tool_invoker(None)
 
     def test_run_cell_emits_complete_protocol_evidence(self, tmp_path):
         from hagent.agent.execution.tool_runner import invoke_tool
@@ -678,6 +937,29 @@ class TestEnumerationAndResume:
         assert partition["done"] == {"A:iris:meta-ai:0"}
         assert partition["rejected"] == []
 
+    def test_changed_current_dataset_hash_is_rejected(self, tmp_path):
+        design_sha = "e" * 64
+        advice = self.accepted_advice(design_sha)
+        row = self.complete_row(advice)
+        results = tmp_path / "results.jsonl"
+        rejected = tmp_path / "rejected.jsonl"
+        results.write_text(json.dumps(row) + "\n", encoding="utf-8")
+        changed_hash = "f" * 64
+        assert changed_hash != row["dataset_sha256"]
+
+        done = mx.migrate_rejected_rows(
+            results,
+            rejected,
+            design_sha=design_sha,
+            accepted_advices={advice["advice_key"]: advice},
+            current_dataset_hashes={"iris": changed_hash},
+        )
+
+        assert done == set()
+        assert not results.exists()
+        record = json.loads(rejected.read_text(encoding="utf-8"))
+        assert "dataset_content_mismatch" in record["reason_codes"]
+
     @pytest.mark.parametrize(
         ("case", "reason"),
         [
@@ -746,6 +1028,135 @@ class TestEnumerationAndResume:
         assert rejection["key"] == legacy["key"]
         assert "cell_usage_invalid" in rejection["reason_codes"]
 
+    def test_forged_rejection_record_aborts_without_deleting_source(self, tmp_path):
+        results = tmp_path / "results.jsonl"
+        rejected = tmp_path / "rejected.jsonl"
+        legacy = {
+            "key": "A:iris:meta-ai:0",
+            "condition": "A",
+            "dataset": "iris",
+            "model": "meta-ai",
+            "seed": 0,
+            "error": None,
+            "cost_metrics": {
+                "total_input_tokens": 0,
+                "total_output_tokens": 0,
+                "total_calls": 0,
+            },
+        }
+        results.write_text(json.dumps(legacy) + "\n", encoding="utf-8")
+        reasons = mx.validate_result_evidence(legacy, "e" * 64, {})
+        forged = mx._rejection_record(legacy, reasons)
+        forged["row_sha256"] = "0" * 64
+        rejected.write_text(json.dumps(forged) + "\n", encoding="utf-8")
+        before = results.read_bytes()
+
+        with pytest.raises(mx.ProtocolError, match="rejection line"):
+            mx.migrate_rejected_rows(
+                results,
+                rejected,
+                design_sha="e" * 64,
+                accepted_advices={},
+                current_dataset_hashes={"iris": "f" * 64},
+            )
+
+        assert results.read_bytes() == before
+        assert not results.with_name("results.jsonl.tmp").exists()
+
+    def test_rejection_projection_drops_unapproved_nested_text(self):
+        marker = "do-not-persist-secret"
+        row = {
+            "key": "A:iris:meta-ai:0",
+            "condition": "A",
+            "dataset": "iris",
+            "model": "meta-ai",
+            "seed": 0,
+            "error": marker,
+            "prompt": marker,
+            "advice_provenance": {
+                "advice_key": "a" * 64,
+                "algorithm": "grid_search",
+                "prompt": marker,
+                "response": marker,
+            },
+        }
+
+        record = mx._rejection_record(row, ["cell_error"])
+
+        assert marker not in json.dumps(record, sort_keys=True)
+        mx._validate_rejection_record(record, line_number=1)
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            '{"rejection_id":"a","rejection_id":"b"}',
+            '{"value":NaN}',
+        ],
+    )
+    def test_rejection_sidecar_rejects_non_strict_json_without_new_rows(
+        self, tmp_path, line
+    ):
+        rejected = tmp_path / "rejected.jsonl"
+        rejected.write_text(line + "\n", encoding="utf-8")
+
+        with pytest.raises(mx.ProtocolError, match="malformed"):
+            mx.migrate_rejected_rows(
+                tmp_path / "results.jsonl",
+                rejected,
+                design_sha="e" * 64,
+                accepted_advices={},
+            )
+
+    def test_migration_recovers_complete_temp_after_replace_failure(
+        self, tmp_path, monkeypatch
+    ):
+        results = tmp_path / "results.jsonl"
+        rejected = tmp_path / "rejected.jsonl"
+        legacy = {
+            "key": "A:iris:meta-ai:0",
+            "condition": "A",
+            "dataset": "iris",
+            "model": "meta-ai",
+            "seed": 0,
+            "error": None,
+            "cost_metrics": {
+                "total_input_tokens": 0,
+                "total_output_tokens": 0,
+                "total_calls": 0,
+            },
+        }
+        results.write_text(json.dumps(legacy) + "\n", encoding="utf-8")
+        real_replace = mx.os.replace
+
+        def fail_replace(_source, _target):
+            raise OSError("replace interrupted")
+
+        monkeypatch.setattr(mx.os, "replace", fail_replace)
+        with pytest.raises(OSError, match="interrupted"):
+            mx.migrate_rejected_rows(
+                results,
+                rejected,
+                design_sha="e" * 64,
+                accepted_advices={},
+                current_dataset_hashes={"iris": "f" * 64},
+            )
+
+        assert results.exists()
+        assert results.with_name("results.jsonl.tmp").exists()
+        monkeypatch.setattr(mx.os, "replace", real_replace)
+
+        done = mx.migrate_rejected_rows(
+            results,
+            rejected,
+            design_sha="e" * 64,
+            accepted_advices={},
+            current_dataset_hashes={"iris": "f" * 64},
+        )
+
+        assert done == set()
+        assert not results.exists()
+        assert not results.with_name("results.jsonl.tmp").exists()
+
     def test_duplicate_result_key_aborts_before_writes(self, tmp_path):
         design_sha = "e" * 64
         advice = self.accepted_advice(design_sha)
@@ -803,6 +1214,49 @@ class TestMatrixCli:
         assert results.read_bytes() == before
         assert not Path(cfg["advice_output"]).exists()
         assert not Path(cfg["rejected_output"]).exists()
+
+    def test_live_preflight_hashes_all_datasets_before_resume(
+        self, tmp_path, monkeypatch
+    ):
+        import numpy as np
+
+        import automl.search.datasets_real as datasets_real
+        import hagent.agent.llm_config as llm_config
+
+        config_path, cfg = self.write_config(tmp_path)
+        loaded = []
+        captured = {}
+
+        def load_dataset(name):
+            loaded.append(name)
+            return {
+                "X": np.asarray([[1.0], [2.0]], dtype=float),
+                "y": np.asarray([0.0, 1.0], dtype=float),
+            }
+
+        def migrate(*_args, current_dataset_hashes=None, **_kwargs):
+            captured.update(current_dataset_hashes or {})
+            return {"A:iris:meta-ai:0"}
+
+        monkeypatch.setattr(datasets_real, "load_dataset", load_dataset)
+        monkeypatch.setattr(llm_config, "require_model_config", lambda _name: object())
+        monkeypatch.setattr(mx, "migrate_rejected_rows", migrate)
+
+        exit_code = mx.main(
+            [
+                "--config",
+                str(config_path),
+                "--only",
+                "A:iris:meta-ai:0",
+            ],
+            advice_invoke=lambda *_args: pytest.fail("advice must not run"),
+            agent_runner=lambda *_args, **_kwargs: pytest.fail("agent must not run"),
+        )
+
+        assert exit_code == 0
+        assert set(loaded) == set(cfg["datasets"])
+        assert set(captured) == set(cfg["datasets"])
+        assert all(len(value) == 64 for value in captured.values())
 
     @pytest.mark.parametrize(
         "only",
