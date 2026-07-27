@@ -495,19 +495,15 @@ def reconcile_dispatched_advice(sidecar_path: Path, receipt: dict) -> dict:
         raise ProtocolError("reconciliation receipt is not accepted advice")
     state = load_advice_index(sidecar_path)
     key = receipt["advice_key"]
-    existing = state["accepted"].get(key)
-    if existing is not None:
-        if existing != receipt:
-            raise ProtocolError("reconciliation receipt conflicts with accepted advice")
-        return existing
     dispatched = state["dispatched"].get(key)
     if dispatched is None:
         raise ProtocolError("reconciliation requires a dispatched advice claim")
     for field in _ADVICE_COMMON_FIELDS - {"status"}:
         if receipt[field] != dispatched[field]:
             raise ProtocolError("reconciliation receipt conflicts with dispatch")
-    _append_jsonl(sidecar_path, receipt)
-    return receipt
+    raise ProtocolError(
+        "provider-authenticated reconciliation is unavailable; claim remains dispatched"
+    )
 
 
 def ensure_paired_advices(
@@ -599,6 +595,7 @@ def validate_result_evidence(
     design_sha: str,
     accepted_advices: Dict[str, dict],
     current_dataset_hashes: Optional[Dict[str, str]] = None,
+    current_advice_keys: Optional[Dict[tuple[str, str], str]] = None,
 ) -> List[str]:
     reasons: List[str] = []
 
@@ -669,6 +666,23 @@ def validate_result_evidence(
                 reject("advice_provenance_mismatch")
             if row.get("experiment_id") != advice["experiment_id"]:
                 reject("advice_provenance_mismatch")
+
+    if current_advice_keys is not None:
+        dataset_name = row.get("dataset")
+        model_name = row.get("model")
+        pair = (
+            (dataset_name, model_name)
+            if isinstance(dataset_name, str) and isinstance(model_name, str)
+            else None
+        )
+        current_key = current_advice_keys.get(pair) if pair is not None else None
+        if not _is_sha256(current_key):
+            reject("current_advice_key_missing")
+        elif (
+            not isinstance(provenance, dict)
+            or provenance.get("advice_key") != current_key
+        ):
+            reject("advice_prompt_mismatch")
 
     cost = row.get("cost_metrics")
     if not isinstance(cost, dict):
@@ -768,6 +782,7 @@ def partition_resume_rows(
     design_sha: str,
     accepted_advices: Dict[str, dict],
     current_dataset_hashes: Optional[Dict[str, str]] = None,
+    current_advice_keys: Optional[Dict[tuple[str, str], str]] = None,
 ) -> Dict[str, Any]:
     seen: set[str] = set()
     done: set[str] = set()
@@ -784,6 +799,7 @@ def partition_resume_rows(
             design_sha,
             accepted_advices,
             current_dataset_hashes,
+            current_advice_keys,
         )
         if not reasons:
             done.add(key)
@@ -868,6 +884,7 @@ _REJECTION_FIELDS = {
     "record_type",
     "rejection_id",
     "row_sha256",
+    "safe_row_sha256",
     "key",
     "reason_codes",
     "row",
@@ -926,6 +943,7 @@ def _rejection_core(record: dict) -> dict:
     return {
         "record_type": record["record_type"],
         "row_sha256": record["row_sha256"],
+        "safe_row_sha256": record["safe_row_sha256"],
         "key": record["key"],
         "reason_codes": record["reason_codes"],
         "row": record["row"],
@@ -935,10 +953,14 @@ def _rejection_core(record: dict) -> dict:
 
 def _rejection_record(row: dict, reason_codes: List[str]) -> dict:
     safe_row = _safe_rejected_row(row)
-    row_sha = hashlib.sha256(_canonical_json(safe_row).encode("utf-8")).hexdigest()
+    row_sha = hashlib.sha256(_canonical_json(row).encode("utf-8")).hexdigest()
+    safe_row_sha = hashlib.sha256(
+        _canonical_json(safe_row).encode("utf-8")
+    ).hexdigest()
     record = {
         "record_type": "matrix_preflight_rejection",
         "row_sha256": row_sha,
+        "safe_row_sha256": safe_row_sha,
         "key": safe_row.get("key"),
         "reason_codes": list(reason_codes),
         "row": safe_row,
@@ -973,11 +995,13 @@ def _validate_rejection_record(record: Any, *, line_number: int) -> None:
     safe_row = _safe_rejected_row(record.get("row"))
     if safe_row != record["row"] or record.get("key") != safe_row.get("key"):
         raise ProtocolError(f"rejection line {line_number} has invalid row evidence")
-    expected_row_sha = hashlib.sha256(
+    expected_safe_row_sha = hashlib.sha256(
         _canonical_json(safe_row).encode("utf-8")
     ).hexdigest()
-    if record.get("row_sha256") != expected_row_sha:
+    if not _is_sha256(record.get("row_sha256")):
         raise ProtocolError(f"rejection line {line_number} has invalid row_sha256")
+    if record.get("safe_row_sha256") != expected_safe_row_sha:
+        raise ProtocolError(f"rejection line {line_number} has invalid safe row hash")
     expected_id = hashlib.sha256(
         _canonical_json(_rejection_core(record)).encode("utf-8")
     ).hexdigest()
@@ -1026,6 +1050,7 @@ def migrate_rejected_rows(
     design_sha: str,
     accepted_advices: Dict[str, dict],
     current_dataset_hashes: Optional[Dict[str, str]] = None,
+    current_advice_keys: Optional[Dict[tuple[str, str], str]] = None,
 ) -> set[str]:
     temp_path = results_path.with_name(results_path.name + ".tmp")
     rows = _read_result_rows(results_path)
@@ -1034,6 +1059,7 @@ def migrate_rejected_rows(
         design_sha,
         accepted_advices,
         current_dataset_hashes,
+        current_advice_keys,
     )
     rejection_ids = _load_rejection_ids(rejected_path)
     if not partition["rejected"]:
@@ -1046,7 +1072,7 @@ def migrate_rejected_rows(
     if temp_path.exists():
         existing_temp = temp_path.read_text(encoding="utf-8")
         if existing_temp != expected_temp:
-            if existing_temp and expected_temp.startswith(existing_temp):
+            if expected_temp.startswith(existing_temp):
                 _write_migration_temp(temp_path, expected_temp, "w")
             else:
                 raise ProtocolError(
@@ -1628,12 +1654,31 @@ def main(
             dataset_name: dataset_sha256(dataset)
             for dataset_name, dataset in loaded_datasets.items()
         }
+        current_prompt_hashes = {
+            dataset_name: hashlib.sha256(
+                _advice_prompt(
+                    anonymized_advice_payload(dataset)
+                ).encode("utf-8")
+            ).hexdigest()
+            for dataset_name, dataset in loaded_datasets.items()
+        }
+        current_advice_keys = {
+            (dataset_name, model_name): _advice_key(
+                design_sha,
+                current_dataset_hashes[dataset_name],
+                model_name,
+                current_prompt_hashes[dataset_name],
+            )
+            for dataset_name in design["datasets"]
+            for model_name in design["models"]
+        }
         done = migrate_rejected_rows(
             out_path,
             rejected_path,
             design_sha=design_sha,
             accepted_advices=advice_state["accepted"],
             current_dataset_hashes=current_dataset_hashes,
+            current_advice_keys=current_advice_keys,
         )
         todo = [cell for cell in cells if cell_key(*cell) not in done]
         if not todo:
