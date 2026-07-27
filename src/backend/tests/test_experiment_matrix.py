@@ -767,3 +767,140 @@ class TestEnumerationAndResume:
 
         assert not rejected.exists()
         assert not results.with_name("results.jsonl.tmp").exists()
+
+
+class TestMatrixCli:
+    @staticmethod
+    def write_config(tmp_path, *, unknown_dataset=False):
+        cfg = matrix_config()
+        if unknown_dataset:
+            cfg["datasets"][0] = "not_loaded_in_dry_run"
+        cfg["output"] = str(tmp_path / "results.jsonl")
+        cfg["advice_output"] = str(tmp_path / "advice.jsonl")
+        cfg["rejected_output"] = str(tmp_path / "rejected.jsonl")
+        path = tmp_path / "matrix.yaml"
+        path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+        return path, cfg
+
+    def test_dry_run_is_call_free_and_does_not_migrate(self, tmp_path):
+        config_path, cfg = self.write_config(tmp_path, unknown_dataset=True)
+        results = Path(cfg["output"])
+        legacy = {
+            "key": "A:iris:meta-ai:0",
+            "error": None,
+            "cost_metrics": {
+                "total_input_tokens": 0,
+                "total_output_tokens": 0,
+                "total_calls": 0,
+            },
+        }
+        results.write_text(json.dumps(legacy) + "\n", encoding="utf-8")
+        before = results.read_bytes()
+
+        exit_code = mx.main(["--config", str(config_path), "--dry-run"])
+
+        assert exit_code == 0
+        assert results.read_bytes() == before
+        assert not Path(cfg["advice_output"]).exists()
+        assert not Path(cfg["rejected_output"]).exists()
+
+    @pytest.mark.parametrize(
+        "only",
+        [
+            "C_mpc:iris:meta-ai:0",
+            "A:iris:meta-ai:99",
+            "A:iris:typo-model:0",
+        ],
+    )
+    def test_only_must_be_a_member_of_frozen_design(self, tmp_path, only):
+        config_path, cfg = self.write_config(tmp_path)
+
+        exit_code = mx.main(
+            ["--config", str(config_path), "--dry-run", "--only", only]
+        )
+
+        assert exit_code == 2
+        assert not Path(cfg["output"]).exists()
+        assert not Path(cfg["advice_output"]).exists()
+        assert not Path(cfg["rejected_output"]).exists()
+
+    def test_live_only_uses_one_advice_and_resumes_without_new_calls(self, tmp_path):
+        from hagent.agent.execution.tool_runner import invoke_tool
+
+        config_path, cfg = self.write_config(tmp_path)
+        cfg["job"] = {
+            "cv": 2,
+            "time_limit": 30,
+            "param_grid": {"max_depth": [3], "n_estimators": [10]},
+        }
+        config_path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+        advice_calls = 0
+        agent_calls = 0
+
+        def advice_invoke(_model, _prompt):
+            nonlocal advice_calls
+            advice_calls += 1
+            return (
+                '{"search_algorithm":"grid_search"}',
+                {
+                    "total_input_tokens": 4,
+                    "total_output_tokens": 1,
+                    "total_calls": 1,
+                },
+            )
+
+        async def agent_runner(_message, **_kwargs):
+            nonlocal agent_calls
+            agent_calls += 1
+            started = await invoke_tool(
+                "start_training",
+                {
+                    "search_algorithm": "grid_search",
+                    "dataset_id": "iris",
+                    "time_limit": 30,
+                },
+            )
+            return {
+                "response": "done",
+                "campaign_status": "done",
+                "campaign": {
+                    "status": "done",
+                    "variants": [
+                        {
+                            "source": "requested",
+                            "params": {"search_algorithm": "grid_search"},
+                            "job_id": started["job_id"],
+                            "status": "completed",
+                        }
+                    ],
+                    "extension_rounds": 0,
+                },
+                "execution_events": [{"type": "campaign_done"}],
+                "cost_metrics": {
+                    "total_input_tokens": 6,
+                    "total_output_tokens": 2,
+                    "total_calls": 1,
+                },
+            }
+
+        argv = [
+            "--config",
+            str(config_path),
+            "--only",
+            "A:iris:meta-ai:0",
+        ]
+        first = mx.main(
+            argv, advice_invoke=advice_invoke, agent_runner=agent_runner
+        )
+        second = mx.main(
+            argv, advice_invoke=advice_invoke, agent_runner=agent_runner
+        )
+
+        assert first == second == 0
+        assert advice_calls == agent_calls == 1
+        row = json.loads(Path(cfg["output"]).read_text(encoding="utf-8"))
+        advice_state = mx.load_advice_index(Path(cfg["advice_output"]))
+        assert mx.validate_result_evidence(
+            row, mx.design_sha256(cfg), advice_state["accepted"]
+        ) == []
+        assert not Path(cfg["rejected_output"]).exists()

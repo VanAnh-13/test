@@ -1296,7 +1296,12 @@ def run_cell(
     return row
 
 
-def main() -> int:
+def main(
+    argv: Optional[List[str]] = None,
+    *,
+    advice_invoke: Optional[Callable[[str, str], tuple[str, dict]]] = None,
+    agent_runner: Optional[Callable[..., Any]] = None,
+) -> int:
     parser = argparse.ArgumentParser(description="Ma trận thí nghiệm agent")
     parser.add_argument(
         "--config", default="benchmarks/agent_matrix_config.yaml"
@@ -1305,34 +1310,61 @@ def main() -> int:
     parser.add_argument(
         "--only", help="Chạy đúng một ô: COND:DATASET:MODEL:SEED"
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
-    cfg_path = BACKEND / args.config
+    cfg_path = Path(args.config)
+    if not cfg_path.is_absolute():
+        cfg_path = BACKEND / cfg_path
     cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
 
-    cells = [
-        (c, d, m, s)
-        for c in cfg["conditions"]
-        for d in cfg["datasets"]
-        for m in cfg["models"]
-        for s in cfg["seeds"]
-    ]
-    if args.only:
-        c, d, m, s = args.only.split(":")
-        cells = [(c, d, m, int(s))]
+    try:
+        design = build_experiment_design(cfg)
+        design_sha = design_sha256(cfg)
+        experiment_id = f"matrix-{design_sha[:16]}"
+        full_cells = [
+            (condition, dataset, model, seed)
+            for condition in design["conditions"]
+            for dataset in design["datasets"]
+            for model in design["models"]
+            for seed in design["seeds"]
+        ]
+        cells = full_cells
+        if args.only:
+            parts = args.only.split(":")
+            if len(parts) != 4:
+                raise ProtocolError("--only must have four colon-separated fields")
+            condition, dataset, model, seed_text = parts
+            selected = (condition, dataset, model, int(seed_text))
+            if selected not in full_cells:
+                raise ProtocolError("--only cell is outside the frozen design")
+            cells = [selected]
+    except (ProtocolError, TypeError, ValueError):
+        print("Protocol configuration rejected.", file=sys.stderr)
+        return 2
 
-    out_path = BACKEND / str(cfg.get("output") or "benchmarks/agent_matrix_results.jsonl")
-    done: set = set()
-    if out_path.is_file():
-        for line in out_path.read_text(encoding="utf-8").splitlines():
-            try:
-                row = json.loads(line)
-                if not row.get("error"):
-                    done.add(row["key"])
-            except Exception:
-                continue
+    def resolve_output(config_key: str, default: str) -> Path:
+        path = Path(str(cfg.get(config_key) or default))
+        return path if path.is_absolute() else BACKEND / path
 
-    todo = [c for c in cells if cell_key(*c) not in done]
+    out_path = resolve_output("output", "benchmarks/agent_matrix_results.jsonl")
+    advice_path = resolve_output(
+        "advice_output", "benchmarks/agent_matrix_advice.jsonl"
+    )
+    rejected_path = resolve_output(
+        "rejected_output", "benchmarks/agent_matrix_preflight_rejected.jsonl"
+    )
+    try:
+        advice_state = load_advice_index(advice_path)
+        partition = partition_resume_rows(
+            _read_result_rows(out_path),
+            design_sha,
+            advice_state["accepted"],
+        )
+    except (OSError, ProtocolError):
+        print("Protocol evidence rejected.", file=sys.stderr)
+        return 2
+    done = partition["done"]
+    todo = [cell for cell in cells if cell_key(*cell) not in done]
     print(
         f"Ma trận: {len(cells)} ô | đã xong {len(cells) - len(todo)} | còn {len(todo)}"
     )
@@ -1340,6 +1372,39 @@ def main() -> int:
         for c in todo:
             print("  ", cell_key(*c))
         return 0
+
+    try:
+        done = migrate_rejected_rows(
+            out_path,
+            rejected_path,
+            design_sha=design_sha,
+            accepted_advices=advice_state["accepted"],
+        )
+        todo = [cell for cell in cells if cell_key(*cell) not in done]
+        if not todo:
+            print(f"Saved: {out_path}")
+            return 0
+
+        from automl.search.datasets_real import load_dataset
+        from hagent.agent.llm_config import require_model_config
+
+        for model_name in dict.fromkeys(cell[2] for cell in todo):
+            require_model_config(model_name)
+        loaded_datasets = {
+            dataset_name: load_dataset(dataset_name)
+            for dataset_name in dict.fromkeys(cell[1] for cell in todo)
+        }
+        advices = ensure_paired_advices(
+            cells=todo,
+            datasets=loaded_datasets,
+            sidecar_path=advice_path,
+            design_sha=design_sha,
+            experiment_id=experiment_id,
+            invoke=advice_invoke,
+        )
+    except (KeyError, OSError, ProtocolError, ValueError):
+        print("Protocol preflight failed.", file=sys.stderr)
+        return 2
 
     # Cảnh báo checkpoint cho điều kiện B/C
     needs_ckpt = [c for c in todo if c[0] != "A"]
@@ -1351,20 +1416,45 @@ def main() -> int:
                 f"scripts/train_outcome_model.py trước, nếu không WM sẽ bất hoạt."
             )
 
-    scratch = Path(tempfile.mkdtemp(prefix="hagent_matrix_"))
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(out_path, "a", encoding="utf-8") as fh:
-        for i, (c, d, m, s) in enumerate(todo, 1):
-            print(f"[{i}/{len(todo)}] {cell_key(c, d, m, s)} ...", flush=True)
-            row = run_cell(c, d, m, s, cfg=cfg, scratch_dir=scratch)
-            fh.write(json.dumps(row, ensure_ascii=False, default=str) + "\n")
-            fh.flush()
-            status = row["error"] or (
-                f"route={row['route']} jobs={row['n_real_jobs']} "
-                f"best={row['best_real_score']} ext={row['n_extended']} "
-                f"{row['wall_seconds']}s"
-            )
-            print(f"    -> {status}", flush=True)
+    with tempfile.TemporaryDirectory(prefix="hagent_matrix_") as scratch_name:
+        scratch = Path(scratch_name)
+        with out_path.open("a", encoding="utf-8", newline="\n") as handle:
+            for index, (condition, dataset_name, model_name, seed) in enumerate(
+                todo, 1
+            ):
+                print(
+                    f"[{index}/{len(todo)}] "
+                    f"{cell_key(condition, dataset_name, model_name, seed)} ...",
+                    flush=True,
+                )
+                try:
+                    row = run_cell(
+                        condition,
+                        dataset_name,
+                        model_name,
+                        seed,
+                        cfg=cfg,
+                        scratch_dir=scratch,
+                        advice=advices[(dataset_name, model_name)],
+                        design_sha=design_sha,
+                        experiment_id=experiment_id,
+                        agent_runner=agent_runner,
+                    )
+                except (OSError, ProtocolError, ValueError):
+                    print("Cell protocol failed.", file=sys.stderr)
+                    return 2
+                handle.write(_canonical_json(row) + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+                status = row["error"] or (
+                    f"route={row['route']} jobs={row['n_real_jobs']} "
+                    f"best={row['best_real_score']} ext={row['n_extended']} "
+                    f"{row['wall_seconds']}s"
+                )
+                print(f"    -> {status}", flush=True)
+                if row["error"]:
+                    return 2
 
     print(f"\nSaved: {out_path}")
     return 0
