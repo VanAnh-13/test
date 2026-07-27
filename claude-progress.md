@@ -1053,3 +1053,33 @@ openclaw"; 3. "Không nói là DeerFlow, mà chỉ dựa trên công nghệ củ
 - The gate must reject missing, malformed, duplicate, errored, wrong-design, incomplete-seed, and non-54-cell evidence before touching either output.
 - Current matrix execution remains 0/54; no production table or paper claim may be generated from the rejected legacy row.
 - Scout begins read-only dependency and failure-mode review before the sole Maker edits generator code.
+
+## 2026-07-27 - PAPER-TABLE-GATE-001 DONE
+
+### Scope and decisions
+
+- `make_paper_tables.py` is now fail-closed: it loads matrix rows, paired-advice sidecar, frozen matrix config, WM manifest, and both HPO JSON artifacts before touching either TeX output.
+- Matrix publication requires exactly 54 successful cells for A/B/C x six datasets x `meta-ai` x seeds 0/1/2, the frozen design SHA, accepted paired advice, current dataset/advice bindings, no row errors, complete traces, and stable git provenance.
+- Condition A is explicitly required to have no checkpoint and no `wm_planner`; B/C must carry `wm_planner` evidence and a checkpoint SHA equal to the WM manifest head SHA.
+- HPO table generation now validates raw Cartesian grids, summaries recomputed from raw rows, and the frozen budget/cv/param_grid before rendering.
+- Both LaTeX outputs are rendered in memory first and written through rollback logic, so validation failure or a later write failure leaves existing table bytes unchanged.
+
+### Files changed
+
+- `src/backend/scripts/make_paper_tables.py`
+- `src/backend/tests/test_make_paper_tables.py`
+- `feature_list.json`
+- `claude-progress.md`
+
+### Verification
+
+- `py_compile scripts/make_paper_tables.py` passed.
+- `ruff format` reformatted the two task files; `ruff check` passed.
+- Targeted table suite: `31 passed` with the exact task timeout command.
+- Default production invocation returned exit `2` and created no `paper/tables/agent_matrix.tex` or `paper/tables/hpo_two_scales.tex` because the real matrix evidence is still absent.
+- Full backend suite: `616 passed, 7 deselected`.
+- Independent legacy Checker agents could not complete because old agent model configuration was unsupported or timed out; root performed a final acceptance/security/whitelist review after tests and found no blocker.
+
+### Residual risk and handoff
+
+- Matrix execution is still 0/54, so no production paper table exists yet. Reopen `MATRIX-META-001` only after regenerating checkpoint/manifest, running the live A+B go/no-go, freezing design/config/code, and executing the 54-cell operator run.

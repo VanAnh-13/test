@@ -34,7 +34,7 @@
       "**/docker-compose*.yaml"
     ]
   },
-  "current_task_id": "PAPER-TABLE-GATE-001",
+  "current_task_id": null,
   "features": [
     {
       "id": "HARNESS-001",
@@ -1228,7 +1228,7 @@
     {
       "id": "PAPER-TABLE-GATE-001",
       "title": "Fail-closed paper table generation from complete frozen matrix evidence",
-      "status": "in_progress",
+      "status": "done",
       "acceptance_criteria": [
         "Reject a missing or malformed matrix artifact, duplicate JSON keys, non-object rows, duplicate cell keys, any row with an error, a mismatched or missing design SHA, and incomplete protocol evidence.",
         "Require exactly 54 unique successful A/B/C cells with all six datasets, the frozen model, and exactly seeds 0, 1, and 2; one of 54 cells must never be accepted.",
@@ -1248,10 +1248,17 @@
         "cd src/backend && PYTHONUTF8=1 .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=300"
       ],
       "verification": {
-        "status": "pending",
-        "commands_run": [],
-        "tested_at": null,
-        "notes": "Started after MATRIX-PROTOCOL-001 passed. No live Meta call or manuscript claim is authorized; generated tables must remain evidence-gated."
+        "status": "passed",
+        "commands_run": [
+          "cd src/backend && PYTHONUTF8=1 .venv/Scripts/python.exe -m py_compile scripts/make_paper_tables.py (exit 0)",
+          "cd src/backend && PYTHONUTF8=1 .venv/Scripts/python.exe -m ruff format scripts/make_paper_tables.py tests/test_make_paper_tables.py (exit 0, 2 files reformatted)",
+          "cd src/backend && PYTHONUTF8=1 .venv/Scripts/python.exe -m ruff check scripts/make_paper_tables.py tests/test_make_paper_tables.py (exit 0, All checks passed)",
+          "cd src/backend && PYTHONUTF8=1 .venv/Scripts/python.exe -m pytest tests/test_make_paper_tables.py -q --timeout=180 (31 passed)",
+          "cd src/backend && PYTHONUTF8=1 .venv/Scripts/python.exe scripts/make_paper_tables.py (exit 2 fail-closed; no paper/tables/*.tex created)",
+          "cd src/backend && PYTHONUTF8=1 .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=300 (616 passed, 7 deselected)"
+        ],
+        "tested_at": "2026-07-27T17:12:00+07:00",
+        "notes": "Gate validates matrix/advice/config/WM manifest/HPO inputs before writing, rejects incomplete or stale evidence, requires A without checkpoint/wm_planner and B/C bound to the manifest head SHA, and rolls back both TeX outputs on write failure. Default production invocation remains fail-closed because matrix execution is still 0/54; no live Meta call and no paper table was generated. Independent Checker agents were attempted but unavailable due unsupported legacy model or timeout; self-review found no blocker after full suite passed."
       }
     },
     {
