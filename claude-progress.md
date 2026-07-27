@@ -1045,3 +1045,11 @@ openclaw"; 3. "Không nói là DeerFlow, mà chỉ dựa trên công nghệ củ
 - The code cannot guarantee distributed exactly-once recovery after a provider accepted a request but the process crashed before journaling the response. It deliberately fails closed at `dispatched`; human/provider-authenticated reconciliation is required.
 - Matrix execution is still 0/54 and requires the planned live A+B go/no-go before any paid full run.
 - Next prerequisite: create and execute `PAPER-TABLE-GATE-001` with an exact whitelist before reopening `MATRIX-META-001`.
+
+## 2026-07-27 - PAPER-TABLE-GATE-001 START
+
+- Orchestrator advanced to the third prerequisite after MATRIX-PROTOCOL-001 passed and released WIP.
+- Exact write scope is limited to the table generator, its tests, two generated TeX tables, and control files.
+- The gate must reject missing, malformed, duplicate, errored, wrong-design, incomplete-seed, and non-54-cell evidence before touching either output.
+- Current matrix execution remains 0/54; no production table or paper claim may be generated from the rejected legacy row.
+- Scout begins read-only dependency and failure-mode review before the sole Maker edits generator code.

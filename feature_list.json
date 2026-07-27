@@ -34,7 +34,7 @@
       "**/docker-compose*.yaml"
     ]
   },
-  "current_task_id": null,
+  "current_task_id": "PAPER-TABLE-GATE-001",
   "features": [
     {
       "id": "HARNESS-001",
@@ -1223,6 +1223,35 @@
         ],
         "tested_at": "2026-07-27T16:22:00+07:00",
         "notes": "All acceptance criteria pass with an injected no-network Meta boundary. Two independent protocol reviews and the final regression Checker report no blockers. Legacy A:iris:meta-ai:0 zero-call evidence was migrated idempotently to the strict rejected sidecar; no results temp or advice artifact remains. Design SHA is 0860d3662ed8a2420aa46887cce84fdb70787c34f5b2271690976905bb4893bb. No live or paid Meta call was made."
+      }
+    },
+    {
+      "id": "PAPER-TABLE-GATE-001",
+      "title": "Fail-closed paper table generation from complete frozen matrix evidence",
+      "status": "in_progress",
+      "acceptance_criteria": [
+        "Reject a missing or malformed matrix artifact, duplicate JSON keys, non-object rows, duplicate cell keys, any row with an error, a mismatched or missing design SHA, and incomplete protocol evidence.",
+        "Require exactly 54 unique successful A/B/C cells with all six datasets, the frozen model, and exactly seeds 0, 1, and 2; one of 54 cells must never be accepted.",
+        "Validate the complete input before creating or replacing either TeX output, so failed generation leaves existing tables byte-identical and creates no partial table.",
+        "Generate deterministic agent_matrix.tex and hpo_two_scales.tex only from validated frozen evidence, with tests covering missing, malformed, duplicate, wrong-design, errored, incomplete-seed, and complete-matrix cases."
+      ],
+      "allowed_files": [
+        "src/backend/scripts/make_paper_tables.py",
+        "src/backend/tests/test_make_paper_tables.py",
+        "paper/tables/agent_matrix.tex",
+        "paper/tables/hpo_two_scales.tex",
+        "feature_list.json",
+        "claude-progress.md"
+      ],
+      "test_commands": [
+        "cd src/backend && PYTHONUTF8=1 .venv/Scripts/python.exe -m pytest tests/test_make_paper_tables.py -q --timeout=180",
+        "cd src/backend && PYTHONUTF8=1 .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=300"
+      ],
+      "verification": {
+        "status": "pending",
+        "commands_run": [],
+        "tested_at": null,
+        "notes": "Started after MATRIX-PROTOCOL-001 passed. No live Meta call or manuscript claim is authorized; generated tables must remain evidence-gated."
       }
     },
     {
