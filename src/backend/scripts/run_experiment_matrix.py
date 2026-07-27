@@ -507,6 +507,322 @@ def ensure_paired_advices(
 
 
 
+def validate_result_evidence(
+    row: dict,
+    design_sha: str,
+    accepted_advices: Dict[str, dict],
+) -> List[str]:
+    reasons: List[str] = []
+
+    def reject(reason: str) -> None:
+        if reason not in reasons:
+            reasons.append(reason)
+
+    if not isinstance(row, dict):
+        return ["result_not_object"]
+    if "error" not in row or row["error"] is not None:
+        reject("cell_error")
+    if row.get("design_sha256") != design_sha:
+        reject("design_sha_mismatch")
+    try:
+        expected_key = cell_key(
+            row["condition"], row["dataset"], row["model"], row["seed"]
+        )
+    except (KeyError, TypeError):
+        expected_key = None
+    if expected_key is None or row.get("key") != expected_key:
+        reject("cell_key_invalid")
+    if (
+        row.get("condition") not in PROTOCOL_CONDITIONS
+        or row.get("seed") not in PROTOCOL_SEEDS
+    ):
+        reject("cell_dimension_invalid")
+    if not _is_sha256(row.get("dataset_sha256")):
+        reject("dataset_sha_invalid")
+
+    provenance = row.get("advice_provenance")
+    provenance_fields = {
+        "experiment_id",
+        "design_sha256",
+        "advice_key",
+        "algorithm",
+        "prompt_sha256",
+        "response_sha256",
+        "token_usage",
+    }
+    advice = None
+    if not isinstance(provenance, dict) or set(provenance) != provenance_fields:
+        reject("advice_provenance_invalid")
+    else:
+        advice = accepted_advices.get(provenance.get("advice_key"))
+        if advice is None:
+            reject("advice_not_accepted")
+        else:
+            for field in provenance_fields:
+                if provenance[field] != advice[field]:
+                    reject("advice_provenance_mismatch")
+                    break
+            if row.get("design_sha256") != advice["design_sha256"]:
+                reject("advice_provenance_mismatch")
+            if row.get("dataset_sha256") != advice["dataset_sha256"]:
+                reject("advice_provenance_mismatch")
+            if row.get("model") != advice["model"]:
+                reject("advice_provenance_mismatch")
+            if row.get("experiment_id") != advice["experiment_id"]:
+                reject("advice_provenance_mismatch")
+
+    cost = row.get("cost_metrics")
+    if not isinstance(cost, dict):
+        reject("cell_usage_invalid")
+    else:
+        usage_values = [
+            cost.get("total_input_tokens"),
+            cost.get("total_output_tokens"),
+            cost.get("total_calls"),
+        ]
+        if (
+            any(type(value) is not int or value < 0 for value in usage_values)
+            or usage_values[2] <= 0
+            or usage_values[0] + usage_values[1] <= 0
+        ):
+            reject("cell_usage_invalid")
+
+    trace = row.get("budget_score_trace")
+    trace_valid = isinstance(trace, list) and bool(trace)
+    trace_algorithms: List[str] = []
+    trace_jobs: Dict[str, str] = {}
+    if trace_valid:
+        for item in trace:
+            required = {
+                "sequence",
+                "job_id",
+                "search_algorithm",
+                "budget_seconds",
+                "score",
+                "elapsed_seconds",
+                "time_limited",
+            }
+            if not isinstance(item, dict) or not required.issubset(item):
+                trace_valid = False
+                break
+            numeric_values = (
+                item["budget_seconds"],
+                item["score"],
+                item["elapsed_seconds"],
+            )
+            if (
+                type(item["sequence"]) is not int
+                or item["sequence"] <= 0
+                or not isinstance(item["job_id"], str)
+                or not item["job_id"]
+                or item["search_algorithm"] not in ADVICE_ALGORITHMS
+                or any(
+                    isinstance(value, bool)
+                    or not isinstance(value, (int, float))
+                    or not math.isfinite(float(value))
+                    for value in numeric_values
+                )
+                or float(item["budget_seconds"]) <= 0
+                or float(item["elapsed_seconds"]) < 0
+                or type(item["time_limited"]) is not bool
+            ):
+                trace_valid = False
+                break
+            trace_algorithms.append(item["search_algorithm"])
+            trace_jobs[item["job_id"]] = item["search_algorithm"]
+    if not trace_valid or row.get("n_real_jobs") != len(trace or []):
+        reject("budget_score_trace_invalid")
+
+    executed = row.get("executed_algorithms")
+    expected_executed = list(dict.fromkeys(trace_algorithms))
+    if not isinstance(executed, list) or not executed or executed != expected_executed:
+        reject("executed_algorithms_invalid")
+    if not isinstance(row.get("event_types"), list) or any(
+        not isinstance(value, str) for value in row.get("event_types") or []
+    ):
+        reject("event_types_invalid")
+    if row.get("campaign_status") != "done":
+        reject("campaign_not_done")
+    if "requested" not in (row.get("variant_sources") or []):
+        reject("requested_variant_missing")
+
+    requested = row.get("requested_variant")
+    if (
+        not isinstance(requested, dict)
+        or requested.get("source") != "requested"
+        or requested.get("status") != "completed"
+        or requested.get("job_id") not in trace_jobs
+    ):
+        reject("requested_variant_invalid")
+    elif advice is not None and (
+        requested.get("algorithm") != advice["algorithm"]
+        or trace_jobs[requested["job_id"]] != advice["algorithm"]
+    ):
+        reject("requested_variant_invalid")
+    if advice is not None and advice["algorithm"] not in (executed or []):
+        reject("advised_algorithm_not_executed")
+    return reasons
+
+
+def partition_resume_rows(
+    rows: List[dict],
+    design_sha: str,
+    accepted_advices: Dict[str, dict],
+) -> Dict[str, Any]:
+    seen: set[str] = set()
+    done: set[str] = set()
+    kept: List[dict] = []
+    rejected: List[dict] = []
+    for row in rows:
+        key = row.get("key") if isinstance(row, dict) else None
+        if isinstance(key, str):
+            if key in seen:
+                raise ProtocolError(f"duplicate result key {key}")
+            seen.add(key)
+        reasons = validate_result_evidence(row, design_sha, accepted_advices)
+        if not reasons:
+            done.add(key)
+            kept.append(row)
+        else:
+            rejected.append({"row": row, "reason_codes": reasons})
+    return {"done": done, "kept": kept, "rejected": rejected}
+
+
+def _read_result_rows(path: Path) -> List[dict]:
+    if not path.is_file():
+        return []
+    rows: List[dict] = []
+    for line_number, line in enumerate(
+        path.read_text(encoding="utf-8").splitlines(), 1
+    ):
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(
+                line,
+                parse_constant=lambda value: (_ for _ in ()).throw(
+                    ValueError(value)
+                ),
+            )
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise ProtocolError(f"result line {line_number} is malformed") from exc
+        if not isinstance(row, dict):
+            raise ProtocolError(f"result line {line_number} is not an object")
+        rows.append(row)
+    return rows
+
+
+_SAFE_REJECTED_ROW_FIELDS = {
+    "key",
+    "condition",
+    "dataset",
+    "model",
+    "seed",
+    "route",
+    "campaign_status",
+    "n_variants",
+    "variant_sources",
+    "extension_rounds",
+    "best_real_score",
+    "n_real_jobs",
+    "job_seconds_total",
+    "n_outcome_surprise",
+    "n_extended",
+    "cost_metrics",
+    "checkpoint_sha",
+    "git_sha",
+    "wall_seconds",
+    "ts",
+    "design_sha256",
+    "experiment_id",
+    "dataset_sha256",
+    "advice_provenance",
+    "requested_variant",
+    "budget_score_trace",
+    "executed_algorithms",
+    "event_types",
+}
+
+
+def _rejection_record(row: dict, reason_codes: List[str]) -> dict:
+    row_sha = hashlib.sha256(_canonical_json(row).encode("utf-8")).hexdigest()
+    rejection_id = hashlib.sha256(
+        (row_sha + ":" + _canonical_json(reason_codes)).encode("utf-8")
+    ).hexdigest()
+    return {
+        "record_type": "matrix_preflight_rejection",
+        "rejection_id": rejection_id,
+        "row_sha256": row_sha,
+        "key": row.get("key") if isinstance(row.get("key"), str) else None,
+        "reason_codes": list(reason_codes),
+        "row": {
+            key: row[key]
+            for key in _SAFE_REJECTED_ROW_FIELDS
+            if key in row
+        },
+        "had_error": row.get("error") is not None,
+        "rejected_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+
+
+def _load_rejection_ids(path: Path) -> set[str]:
+    if not path.is_file():
+        return set()
+    ids: set[str] = set()
+    for line_number, line in enumerate(
+        path.read_text(encoding="utf-8").splitlines(), 1
+    ):
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ProtocolError(f"rejection line {line_number} is malformed") from exc
+        rejection_id = record.get("rejection_id") if isinstance(record, dict) else None
+        if (
+            not isinstance(record, dict)
+            or record.get("record_type") != "matrix_preflight_rejection"
+            or not _is_sha256(rejection_id)
+            or rejection_id in ids
+        ):
+            raise ProtocolError(f"rejection line {line_number} is invalid")
+        ids.add(rejection_id)
+    return ids
+
+
+def migrate_rejected_rows(
+    results_path: Path,
+    rejected_path: Path,
+    *,
+    design_sha: str,
+    accepted_advices: Dict[str, dict],
+) -> set[str]:
+    temp_path = results_path.with_name(results_path.name + ".tmp")
+    if temp_path.exists():
+        raise ProtocolError(f"stale migration temp exists: {temp_path.name}")
+    rows = _read_result_rows(results_path)
+    partition = partition_resume_rows(rows, design_sha, accepted_advices)
+    if not partition["rejected"]:
+        return partition["done"]
+    rejection_ids = _load_rejection_ids(rejected_path)
+    for rejected in partition["rejected"]:
+        record = _rejection_record(rejected["row"], rejected["reason_codes"])
+        if record["rejection_id"] not in rejection_ids:
+            _append_jsonl(rejected_path, record)
+            rejection_ids.add(record["rejection_id"])
+
+    results_path.parent.mkdir(parents=True, exist_ok=True)
+    with temp_path.open("x", encoding="utf-8", newline="\n") as handle:
+        for row in partition["kept"]:
+            handle.write(_canonical_json(row) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temp_path, results_path)
+    if not partition["kept"]:
+        results_path.unlink()
+    return partition["done"]
+
+
 CONDITION_PATCHES: Dict[str, Dict[str, Any]] = {
     "A": {
         "campaign": {

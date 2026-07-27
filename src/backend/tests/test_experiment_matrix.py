@@ -414,7 +414,7 @@ class TestEnumerationAndResume:
     def test_cell_key_format(self):
         assert mx.cell_key("A", "iris", "m", 0) == "A:iris:m:0"
 
-    def test_resume_skips_only_successful_rows(self, tmp_path):
+    def test_legacy_rows_are_not_resumed(self, tmp_path):
         out = tmp_path / "results.jsonl"
         rows = [
             {"key": "A:iris:m:0", "error": None},
@@ -423,9 +423,184 @@ class TestEnumerationAndResume:
         out.write_text(
             "\n".join(json.dumps(r) for r in rows), encoding="utf-8"
         )
-        done = set()
-        for line in out.read_text(encoding="utf-8").splitlines():
-            row = json.loads(line)
-            if not row.get("error"):
-                done.add(row["key"])
-        assert done == {"A:iris:m:0"}
+        done = mx.migrate_rejected_rows(
+            out, tmp_path / "rejected.jsonl",
+            design_sha="e" * 64, accepted_advices={}
+        )
+        assert done == set()
+        assert not out.exists()
+        assert len((tmp_path / "rejected.jsonl").read_text().splitlines()) == 2
+
+    @staticmethod
+    def accepted_advice(design_sha):
+        from automl.search.datasets_real import load_dataset
+
+        return mx.request_paired_advice(
+            load_dataset("iris"),
+            model="meta-ai",
+            design_sha=design_sha,
+            experiment_id=f"matrix-{design_sha[:16]}",
+            invoke=lambda _model, _prompt: (
+                '{"search_algorithm":"grid_search"}',
+                {
+                    "total_input_tokens": 5,
+                    "total_output_tokens": 2,
+                    "total_calls": 1,
+                },
+            ),
+        )
+
+    @staticmethod
+    def complete_row(advice):
+        provenance_keys = {
+            "experiment_id",
+            "design_sha256",
+            "advice_key",
+            "algorithm",
+            "prompt_sha256",
+            "response_sha256",
+            "token_usage",
+        }
+        return {
+            "key": "A:iris:meta-ai:0",
+            "condition": "A",
+            "dataset": "iris",
+            "model": "meta-ai",
+            "seed": 0,
+            "error": None,
+            "design_sha256": advice["design_sha256"],
+            "experiment_id": advice["experiment_id"],
+            "dataset_sha256": advice["dataset_sha256"],
+            "advice_provenance": {
+                key: advice[key] for key in provenance_keys
+            },
+            "campaign_status": "done",
+            "variant_sources": ["requested"],
+            "requested_variant": {
+                "source": "requested",
+                "algorithm": advice["algorithm"],
+                "job_id": "real_1",
+                "status": "completed",
+            },
+            "cost_metrics": {
+                "total_input_tokens": 11,
+                "total_output_tokens": 3,
+                "total_calls": 1,
+            },
+            "n_real_jobs": 1,
+            "budget_score_trace": [
+                {
+                    "sequence": 1,
+                    "job_id": "real_1",
+                    "search_algorithm": advice["algorithm"],
+                    "budget_seconds": 60.0,
+                    "score": 0.95,
+                    "elapsed_seconds": 1.5,
+                    "time_limited": False,
+                }
+            ],
+            "executed_algorithms": [advice["algorithm"]],
+            "event_types": [],
+        }
+
+    def test_resume_accepts_only_complete_matching_evidence(self):
+        design_sha = "e" * 64
+        advice = self.accepted_advice(design_sha)
+        row = self.complete_row(advice)
+
+        partition = mx.partition_resume_rows(
+            [row], design_sha, {advice["advice_key"]: advice}
+        )
+
+        assert partition["done"] == {"A:iris:meta-ai:0"}
+        assert partition["rejected"] == []
+
+    @pytest.mark.parametrize(
+        ("case", "reason"),
+        [
+            ("wrong_design", "design_sha_mismatch"),
+            ("error", "cell_error"),
+            ("zero_usage", "cell_usage_invalid"),
+            ("missing_trace", "budget_score_trace_invalid"),
+            ("algorithm_conflict", "advised_algorithm_not_executed"),
+        ],
+    )
+    def test_incomplete_or_conflicting_evidence_is_not_resumed(self, case, reason):
+        design_sha = "e" * 64
+        advice = self.accepted_advice(design_sha)
+        row = self.complete_row(advice)
+        if case == "wrong_design":
+            row["design_sha256"] = "f" * 64
+        elif case == "error":
+            row["error"] = "failed"
+        elif case == "zero_usage":
+            row["cost_metrics"]["total_input_tokens"] = 0
+            row["cost_metrics"]["total_output_tokens"] = 0
+            row["cost_metrics"]["total_calls"] = 0
+        elif case == "missing_trace":
+            row.pop("budget_score_trace")
+        else:
+            row["executed_algorithms"] = ["random_search"]
+
+        partition = mx.partition_resume_rows(
+            [row], design_sha, {advice["advice_key"]: advice}
+        )
+
+        assert partition["done"] == set()
+        assert reason in partition["rejected"][0]["reason_codes"]
+
+    def test_legacy_zero_call_row_is_migrated_idempotently(self, tmp_path):
+        results = tmp_path / "results.jsonl"
+        rejected = tmp_path / "rejected.jsonl"
+        legacy = {
+            "key": "A:iris:meta-ai:0",
+            "condition": "A",
+            "dataset": "iris",
+            "model": "meta-ai",
+            "seed": 0,
+            "error": None,
+            "cost_metrics": {
+                "total_input_tokens": 0,
+                "total_output_tokens": 0,
+                "total_calls": 0,
+            },
+        }
+        results.write_text(json.dumps(legacy) + "\n", encoding="utf-8")
+
+        first = mx.migrate_rejected_rows(
+            results, rejected, design_sha="e" * 64, accepted_advices={}
+        )
+        before = rejected.read_text(encoding="utf-8")
+        second = mx.migrate_rejected_rows(
+            results, rejected, design_sha="e" * 64, accepted_advices={}
+        )
+
+        assert first == second == set()
+        assert not results.exists()
+        assert not results.with_name("results.jsonl.tmp").exists()
+        assert rejected.read_text(encoding="utf-8") == before
+        rejection = json.loads(before)
+        assert rejection["key"] == legacy["key"]
+        assert "cell_usage_invalid" in rejection["reason_codes"]
+
+    def test_duplicate_result_key_aborts_before_writes(self, tmp_path):
+        design_sha = "e" * 64
+        advice = self.accepted_advice(design_sha)
+        row = self.complete_row(advice)
+        results = tmp_path / "results.jsonl"
+        rejected = tmp_path / "rejected.jsonl"
+        results.write_text(
+            "\n".join(json.dumps(row) for _ in range(2)) + "\n",
+            encoding="utf-8",
+        )
+
+        with pytest.raises(mx.ProtocolError, match="duplicate result key"):
+            mx.migrate_rejected_rows(
+                results,
+                rejected,
+                design_sha=design_sha,
+                accepted_advices={advice["advice_key"]: advice},
+            )
+
+        assert not rejected.exists()
+        assert not results.with_name("results.jsonl.tmp").exists()
