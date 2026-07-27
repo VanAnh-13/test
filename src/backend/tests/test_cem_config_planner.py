@@ -263,7 +263,12 @@ class TestBuilderIntegration:
     def test_builder_without_model_unchanged(self):
         """Không có model → không xuất hiện variant wm_planner (hành vi cũ)."""
         camp = run(
-            build_campaign(GOAL, user_id="u1", config={"n_job_candidates": 3})
+            build_campaign(
+                GOAL,
+                user_id="u1",
+                config={"n_job_candidates": 3},
+                outcome_model=None,
+            )
         )
         assert len(camp.variants) == 3
         assert all(v.source != "wm_planner" for v in camp.variants)

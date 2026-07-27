@@ -1147,7 +1147,7 @@
     {
       "id": "WM-ARTIFACT-002",
       "title": "Outcome checkpoint v2 manifest with SHA-256 for head and ensemble members",
-      "status": "blocked",
+      "status": "done",
       "acceptance_criteria": [
         "scripts/train_outcome_model.py writes manifest.json atomically only after the head and every ensemble member are saved successfully.",
         "The manifest records schema and vocabulary versions, warmup source SHA-256, config SHA-256, training parameters, head SHA-256, and exactly five member SHA-256 values.",
@@ -1157,6 +1157,7 @@
       "allowed_files": [
         "src/backend/scripts/train_outcome_model.py",
         "src/backend/tests/test_train_outcome_model.py",
+        "src/backend/tests/test_cem_config_planner.py",
         "src/backend/data/world_model/outcome_head_v2.npz",
         "src/backend/data/world_model/outcome_ensemble_v2/manifest.json",
         "src/backend/data/world_model/outcome_ensemble_v2/manifest.json.tmp",
@@ -1175,15 +1176,17 @@
         "cd src/backend && PYTHONUTF8=1 .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=300"
       ],
       "verification": {
-        "status": "failed",
+        "status": "passed",
         "commands_run": [
           "cd src/backend && PYTHONUTF8=1 .venv/Scripts/python.exe -m pytest tests/test_train_outcome_model.py -q --timeout=180 (27 passed)",
           "cd src/backend && PYTHONUTF8=1 .venv/Scripts/python.exe scripts/train_outcome_model.py --source jsonl --jsonl data/world_model/warmup_trajectories.jsonl --dry-run (120 docs, 120 samples)",
           "cd src/backend && PYTHONUTF8=1 .venv/Scripts/python.exe scripts/train_outcome_model.py --source jsonl --jsonl data/world_model/warmup_trajectories.jsonl (exit 0; canonical head plus 5 members and manifest regenerated)",
-          "cd src/backend && PYTHONUTF8=1 .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=300 (533 passed, 1 failed, 7 deselected)"
+          "cd src/backend && PYTHONUTF8=1 .venv/Scripts/python.exe -m pytest tests/test_cem_config_planner.py::TestBuilderIntegration::test_builder_without_model_unchanged -q --timeout=180 (1 passed)",
+          "cd src/backend && PYTHONUTF8=1 .venv/Scripts/python.exe -m pytest tests/test_cem_config_planner.py -q --timeout=180 (22 passed)",
+          "cd src/backend && PYTHONUTF8=1 .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=300 (534 passed, 7 deselected)"
         ],
-        "tested_at": "2026-07-27T10:42:04+07:00",
-        "notes": "Acceptance criteria and both independent Checker reviews pass. Blocked only because the full suite test tests/test_cem_config_planner.py::TestBuilderIntegration::test_builder_without_model_unchanged implicitly uses outcome_model='auto' and now correctly loads the regenerated canonical checkpoint. The minimal isolation fix requires exact whitelist approval for src/backend/tests/test_cem_config_planner.py; that file has not been modified."
+        "tested_at": "2026-07-27T10:55:09+07:00",
+        "notes": "All acceptance criteria pass. Standards and Spec Checkers report no blockers. Canonical source/config/vocabulary/head/member hashes validate with expected_k=5; no temp or extra member remains. The user-approved no-model test now passes outcome_model=None explicitly, isolating it from canonical checkpoints."
       }
     },
     {

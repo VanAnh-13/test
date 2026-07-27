@@ -968,3 +968,17 @@ openclaw"; 3. "Không nói là DeerFlow, mà chỉ dựa trên công nghệ củ
 - That test claims a no-model scenario but omits `outcome_model=None`; its default `auto` now loads the required canonical checkpoint and correctly emits a `wm_planner` variant.
 - Minimal repair: explicitly pass `outcome_model=None` in that test, then rerun the isolated test and full suite.
 - Exact path `src/backend/tests/test_cem_config_planner.py` is outside WM-ARTIFACT-002 whitelist and has not been modified. User approval is required before adding it.
+
+## 2026-07-27 - WM-ARTIFACT-002 RESUMED
+
+- User replied `ok`, explicitly approving `src/backend/tests/test_cem_config_planner.py`.
+- WIP reopened for the same task; the only intended code change is to pass `outcome_model=None` in the no-model integration test.
+- Public TDD seam: `build_campaign(..., outcome_model=None)` must preserve the no-world-model campaign behavior even when canonical checkpoints exist on disk.
+
+## 2026-07-27 - WM-ARTIFACT-002 DONE
+
+- User-approved isolation fix: `test_builder_without_model_unchanged` now passes `outcome_model=None`; no production code changed in the unblock slice.
+- RED evidence before approval: isolated test failed because canonical checkpoints were loaded through the default `auto` seam.
+- GREEN evidence: isolated test 1 passed; complete planner test file 22 passed; full non-Ollama suite 534 passed and 7 deselected.
+- Final Standards and Spec Checkers found no blocker, scope creep, or file outside the approved whitelist.
+- WM-ARTIFACT-002 meets Definition of Done; WIP released.
