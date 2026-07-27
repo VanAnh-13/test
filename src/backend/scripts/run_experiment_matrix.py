@@ -31,6 +31,7 @@ import sys
 import tempfile
 import time
 import uuid
+from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
@@ -1188,6 +1189,28 @@ def apply_condition(condition: str, scratch_dir: Path) -> None:
 
     wm_hooks._outcome_model_cache["fingerprint"] = None
 
+@contextmanager
+def _activated_condition(condition: str, scratch_dir: Path):
+    had_previous = "HAGENT_CONFIG" in os.environ
+    previous = os.environ.get("HAGENT_CONFIG")
+    try:
+        apply_condition(condition, scratch_dir)
+        yield
+    finally:
+        if had_previous:
+            assert previous is not None
+            os.environ["HAGENT_CONFIG"] = previous
+        else:
+            os.environ.pop("HAGENT_CONFIG", None)
+
+        from hagent.bridge import config as bridge_config
+
+        bridge_config.load_config.cache_clear()
+        from hagent.agent.campaign import wm_hooks
+
+        wm_hooks._outcome_model_cache["fingerprint"] = None
+
+
 
 # ── RealJobEnv: job sklearn thật in-process ──────────────
 
@@ -1420,14 +1443,13 @@ def build_cell_evidence(
     }
 
 
-def run_cell(
+def _run_cell_active(
     condition: str,
     dataset_name: str,
     model: str,
     seed: int,
     *,
     cfg: dict,
-    scratch_dir: Path,
     advice: dict,
     design_sha: str,
     experiment_id: str,
@@ -1437,7 +1459,6 @@ def run_cell(
     from hagent.agent.execution.tool_runner import set_tool_invoker
     from hagent.agent.graph import run_agent
 
-    apply_condition(condition, scratch_dir)
     dataset = load_dataset(dataset_name)
     env = RealJobEnv(dataset, job_cfg=cfg.get("job") or {}, seed=seed)
     if (
@@ -1561,6 +1582,33 @@ def run_cell(
         if reasons:
             row["error"] = "ProtocolError: " + ",".join(reasons)
     return row
+
+
+def run_cell(
+    condition: str,
+    dataset_name: str,
+    model: str,
+    seed: int,
+    *,
+    cfg: dict,
+    scratch_dir: Path,
+    advice: dict,
+    design_sha: str,
+    experiment_id: str,
+    agent_runner: Optional[Callable[..., Any]] = None,
+) -> Dict[str, Any]:
+    with _activated_condition(condition, scratch_dir):
+        return _run_cell_active(
+            condition,
+            dataset_name,
+            model,
+            seed,
+            cfg=cfg,
+            advice=advice,
+            design_sha=design_sha,
+            experiment_id=experiment_id,
+            agent_runner=agent_runner,
+        )
 
 
 def main(

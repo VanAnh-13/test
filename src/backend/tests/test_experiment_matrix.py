@@ -9,6 +9,7 @@ import asyncio
 import copy
 import importlib.util
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -753,13 +754,17 @@ class TestCellAdviceEvidence:
         with pytest.raises(mx.ProtocolError, match="executed"):
             mx.build_cell_evidence(result, env, advice)
 
-    def test_run_cell_clears_invoker_when_message_rendering_fails(self, tmp_path):
+    def test_run_cell_clears_invoker_when_message_rendering_fails(
+        self, tmp_path, monkeypatch
+    ):
         import hagent.agent.execution.tool_runner as tool_runner
 
         design_sha = "e" * 64
         advice = TestEnumerationAndResume.accepted_advice(design_sha)
         cfg = matrix_config()
         cfg["prompt"] = "Train {dataset} target {target} with {missing}"
+        original_config = str(mx.BACKEND / "hagent" / "hagent.yaml")
+        monkeypatch.setenv("HAGENT_CONFIG", original_config)
 
         try:
             with pytest.raises(KeyError, match="missing"):
@@ -779,6 +784,7 @@ class TestCellAdviceEvidence:
                 )
 
             assert tool_runner._tool_invoker is None
+            assert os.environ["HAGENT_CONFIG"] == original_config
         finally:
             tool_runner.set_tool_invoker(None)
 
@@ -1408,9 +1414,12 @@ class TestMatrixCli:
         assert not Path(cfg["advice_output"]).exists()
         assert not Path(cfg["rejected_output"]).exists()
 
-    def test_live_only_uses_one_advice_and_resumes_without_new_calls(self, tmp_path):
+    def test_live_only_uses_one_advice_and_resumes_without_new_calls(
+        self, tmp_path, monkeypatch
+    ):
         from hagent.agent.execution.tool_runner import invoke_tool
 
+        monkeypatch.delenv("HAGENT_CONFIG", raising=False)
         config_path, cfg = self.write_config(tmp_path)
         cfg["job"] = {
             "cv": 2,
@@ -1488,3 +1497,4 @@ class TestMatrixCli:
             row, mx.design_sha256(cfg), advice_state["accepted"]
         ) == []
         assert not Path(cfg["rejected_output"]).exists()
+        assert "HAGENT_CONFIG" not in os.environ
