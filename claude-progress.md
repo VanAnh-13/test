@@ -925,3 +925,46 @@ openclaw"; 3. "Không nói là DeerFlow, mà chỉ dựa trên công nghệ củ
 ### Handoff
 
 - Maker implements an atomic, verifiable checkpoint manifest using test-first slices.
+
+### Scope extension approval
+
+- User replied `continue` after the exact atomic-write blocker was reported.
+- Added exact transient path `src/backend/data/world_model/outcome_ensemble_v2/manifest.json.tmp`; it may exist only during same-directory fsync + os.replace and must be absent after success or failure.
+- Root took over as the sole Maker after the delegated Maker exhausted its usage allocation.
+
+## 2026-07-27 - WM-ARTIFACT-002 BLOCKED ON FULL-SUITE ISOLATION
+
+### Scope and implementation
+
+- Added atomic same-directory manifest publication with fsync, os.replace, stale-manifest invalidation, and cleanup after write or self-validation failure.
+- Manifest binds the warmup source, effective model config, vocabulary, full training schema, head, and exact ensemble member set with full 64-character SHA-256 values.
+- Effective config records the executed ensemble size and omits storage paths; validator cross-checks config and vocabulary against non-pickled metadata in every NPZ.
+- Canonical NPZ archives were normalized so validation can use allow_pickle=False.
+- Public validation rejects missing, extra, tampered, misdeclared, incomplete, or semantically mismatched artifacts.
+
+### Canonical artifact evidence
+
+- Warmup: 120 trajectory documents and 120 extracted samples.
+- Source SHA-256: `7098cc0b8f2cceb0249a52523e65fb0c84870f256712402d81d32878e42e239f`.
+- Config SHA-256: `6dd87a982eeebc57bdbd680c0793aabe2aeccf3c35081552f3c05025a12dafc2`.
+- Vocabulary SHA-256: `8711d6f8fda46cde285a35adc04fba8527d8e98eb6d651efc1dfb50f0de358e0`.
+- Head SHA-256: `9be6d5233ac7cc77c2f1d3251f5d5887b756ccb967610ea60296e30afe38f07e`.
+- Member SHA-256 values: `9be6d5233ac7cc77c2f1d3251f5d5887b756ccb967610ea60296e30afe38f07e`, `2532a502b13f6896e3f09beb312bc12f4e270fa573c79281e5e80231722105ca`, `a44f5381fe704530c3bd45e3d8c814cf3bea3b34a7513da79c4303fa0136158f`, `044894c552a1dd4fee0735fcaaf2952006ab2063174eb3e03848a554eee88af1`, `5e70751349c912ccd05e16c6c1e0a1d91a5ac8bcd48f0929584a0e1a95531e11`.
+- Public validator passed with expected_k=5; exactly five members exist; source hash matches; no manifest temp remains; every NPZ metadata array loads with allow_pickle=False.
+
+### Verification
+
+- Targeted pytest: `27 passed`.
+- Trainer dry-run: exit 0, 120/120.
+- Canonical trainer: exit 0, head plus five members plus manifest regenerated.
+- Independent Standards Checker: no implementation blocker.
+- Independent Spec Checker: all WM-ARTIFACT-002 acceptance criteria met.
+- Ruff comparison: current task files add no lint findings relative to fixed point `3369d28` (10 existing trainer findings and 3 existing test findings remain unchanged).
+- Full non-Ollama suite: `533 passed, 1 failed, 7 deselected`.
+
+### Blocker and handoff
+
+- The only failure is `tests/test_cem_config_planner.py::TestBuilderIntegration::test_builder_without_model_unchanged`.
+- That test claims a no-model scenario but omits `outcome_model=None`; its default `auto` now loads the required canonical checkpoint and correctly emits a `wm_planner` variant.
+- Minimal repair: explicitly pass `outcome_model=None` in that test, then rerun the isolated test and full suite.
+- Exact path `src/backend/tests/test_cem_config_planner.py` is outside WM-ARTIFACT-002 whitelist and has not been modified. User approval is required before adding it.

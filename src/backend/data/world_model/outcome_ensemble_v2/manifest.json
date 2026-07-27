@@ -1,0 +1,189 @@
+{
+  "config": {
+    "outcome_ensemble": {
+      "enabled": true,
+      "hidden_dim": 64,
+      "k": 5,
+      "latent_dim": 64,
+      "meta_profile": "v2",
+      "metrics": [
+        "accuracy",
+        "f1",
+        "precision",
+        "recall",
+        "balanced_accuracy",
+        "mae",
+        "mse",
+        "rmse",
+        "r2"
+      ],
+      "model_vocab": [
+        "DecisionTreeClassifier",
+        "RandomForestClassifier",
+        "KNeighborsClassifier",
+        "SVC",
+        "LogisticRegression",
+        "GaussianNB"
+      ],
+      "problem_types": [
+        "classification",
+        "regression"
+      ],
+      "search_algorithms": [
+        "grid_search",
+        "bayesian_search",
+        "genetic_algorithm",
+        "random_search",
+        "successive_halving"
+      ],
+      "time_limit_norm": 600.0,
+      "use_latent": false
+    },
+    "outcome_head": {
+      "backend": "outcome_head_v1",
+      "enabled": true,
+      "hidden_dim": 64,
+      "latent_dim": 64,
+      "meta_profile": "v2",
+      "metrics": [
+        "accuracy",
+        "f1",
+        "precision",
+        "recall",
+        "balanced_accuracy",
+        "mae",
+        "mse",
+        "rmse",
+        "r2"
+      ],
+      "model_vocab": [
+        "DecisionTreeClassifier",
+        "RandomForestClassifier",
+        "KNeighborsClassifier",
+        "SVC",
+        "LogisticRegression",
+        "GaussianNB"
+      ],
+      "problem_types": [
+        "classification",
+        "regression"
+      ],
+      "search_algorithms": [
+        "grid_search",
+        "bayesian_search",
+        "genetic_algorithm",
+        "random_search",
+        "successive_halving"
+      ],
+      "time_limit_norm": 600.0,
+      "use_latent": false
+    }
+  },
+  "config_sha256": "6dd87a982eeebc57bdbd680c0793aabe2aeccf3c35081552f3c05025a12dafc2",
+  "ensemble_members": [
+    {
+      "filename": "member_0.npz",
+      "sha256": "9be6d5233ac7cc77c2f1d3251f5d5887b756ccb967610ea60296e30afe38f07e"
+    },
+    {
+      "filename": "member_1.npz",
+      "sha256": "2532a502b13f6896e3f09beb312bc12f4e270fa573c79281e5e80231722105ca"
+    },
+    {
+      "filename": "member_2.npz",
+      "sha256": "a44f5381fe704530c3bd45e3d8c814cf3bea3b34a7513da79c4303fa0136158f"
+    },
+    {
+      "filename": "member_3.npz",
+      "sha256": "044894c552a1dd4fee0735fcaaf2952006ab2063174eb3e03848a554eee88af1"
+    },
+    {
+      "filename": "member_4.npz",
+      "sha256": "5e70751349c912ccd05e16c6c1e0a1d91a5ac8bcd48f0929584a0e1a95531e11"
+    }
+  ],
+  "head": {
+    "filename": "outcome_head_v2.npz",
+    "sha256": "9be6d5233ac7cc77c2f1d3251f5d5887b756ccb967610ea60296e30afe38f07e"
+  },
+  "schema_version": 1,
+  "source_sha256": "7098cc0b8f2cceb0249a52523e65fb0c84870f256712402d81d32878e42e239f",
+  "training": {
+    "ensemble_size": 5,
+    "epochs": 200,
+    "min_samples": 8,
+    "n_samples": 120,
+    "n_trajectory_docs": 120,
+    "seed": 0
+  },
+  "vocabulary": {
+    "outcome_ensemble": {
+      "meta_profile": "v2",
+      "metrics": [
+        "accuracy",
+        "f1",
+        "precision",
+        "recall",
+        "balanced_accuracy",
+        "mae",
+        "mse",
+        "rmse",
+        "r2"
+      ],
+      "model_vocab": [
+        "DecisionTreeClassifier",
+        "RandomForestClassifier",
+        "KNeighborsClassifier",
+        "SVC",
+        "LogisticRegression",
+        "GaussianNB"
+      ],
+      "problem_types": [
+        "classification",
+        "regression"
+      ],
+      "search_algorithms": [
+        "grid_search",
+        "bayesian_search",
+        "genetic_algorithm",
+        "random_search",
+        "successive_halving"
+      ]
+    },
+    "outcome_head": {
+      "meta_profile": "v2",
+      "metrics": [
+        "accuracy",
+        "f1",
+        "precision",
+        "recall",
+        "balanced_accuracy",
+        "mae",
+        "mse",
+        "rmse",
+        "r2"
+      ],
+      "model_vocab": [
+        "DecisionTreeClassifier",
+        "RandomForestClassifier",
+        "KNeighborsClassifier",
+        "SVC",
+        "LogisticRegression",
+        "GaussianNB"
+      ],
+      "problem_types": [
+        "classification",
+        "regression"
+      ],
+      "search_algorithms": [
+        "grid_search",
+        "bayesian_search",
+        "genetic_algorithm",
+        "random_search",
+        "successive_halving"
+      ]
+    }
+  },
+  "vocabulary_sha256": "8711d6f8fda46cde285a35adc04fba8527d8e98eb6d651efc1dfb50f0de358e0",
+  "vocabulary_version": "outcome-v2"
+}
