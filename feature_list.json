@@ -34,7 +34,7 @@
       "**/docker-compose*.yaml"
     ]
   },
-  "current_task_id": "MATRIX-META-001",
+  "current_task_id": "WM-ARTIFACT-002",
   "features": [
     {
       "id": "HARNESS-001",
@@ -1111,7 +1111,7 @@
     {
       "id": "MATRIX-META-001",
       "title": "Full ma trận thí nghiệm A/B/C × 6 datasets × meta-ai × 3 seeds (user chỉ định: meta test full, qwen user tự test)",
-      "status": "in_progress",
+      "status": "blocked",
       "acceptance_criteria": [
         "Warmup: scripts/generate_warmup_trajectories.py chạy search sklearn THẬT trên dataset synthetic TÁCH BIỆT hoàn toàn 6 bộ eval (chống leakage — checkpoint chưa từng thấy iris/wine/...); meta tính bằng đúng meta_features_from_frame (train/serve consistency); artifact JSONL versionable.",
         "Checkpoint v2 (head + ensemble) train từ warmup JSONL qua scripts/train_outcome_model.py; SHA256 ghi vào progress log; vocab 5 thuật toán từ hagent.yaml, KHÔNG đổi vocab (đóng băng).",
@@ -1142,6 +1142,42 @@
         "commands_run": [],
         "tested_at": null,
         "notes": "run_experiment_matrix.py trong allowed_files CHỈ để sửa lỗi pre-flight phát hiện (nếu có), không đổi thiết kế điều kiện. TẠM DỪNG thao tác chính (warmup generator vẫn chạy nền) — user chen yêu cầu DOCKER-BACKEND-002; quay lại ngay khi docker xong. Checkpoint ensemble gồm nhiều member_*.npz trong outcome_ensemble_v2/ — whitelist đại diện bằng manifest.json, member sinh máy cùng SHA ghi ở progress log."
+      }
+    },
+    {
+      "id": "WM-ARTIFACT-002",
+      "title": "Outcome checkpoint v2 manifest with SHA-256 for head and ensemble members",
+      "status": "in_progress",
+      "acceptance_criteria": [
+        "scripts/train_outcome_model.py writes manifest.json atomically only after the head and every ensemble member are saved successfully.",
+        "The manifest records schema and vocabulary versions, warmup source SHA-256, config SHA-256, training parameters, head SHA-256, and exactly five member SHA-256 values.",
+        "A public validator or public-interface test rejects missing members, extra members, hash mismatches, and manifests that do not match the checkpoints.",
+        "Regenerate canonical checkpoints from warmup_trajectories.jsonl with every generated artifact covered by an exact whitelist path."
+      ],
+      "allowed_files": [
+        "src/backend/scripts/train_outcome_model.py",
+        "src/backend/tests/test_train_outcome_model.py",
+        "src/backend/data/world_model/outcome_head_v2.npz",
+        "src/backend/data/world_model/outcome_ensemble_v2/manifest.json",
+        "src/backend/data/world_model/outcome_ensemble_v2/member_0.npz",
+        "src/backend/data/world_model/outcome_ensemble_v2/member_1.npz",
+        "src/backend/data/world_model/outcome_ensemble_v2/member_2.npz",
+        "src/backend/data/world_model/outcome_ensemble_v2/member_3.npz",
+        "src/backend/data/world_model/outcome_ensemble_v2/member_4.npz",
+        "feature_list.json",
+        "claude-progress.md"
+      ],
+      "test_commands": [
+        "cd src/backend && PYTHONUTF8=1 .venv/Scripts/python.exe -m pytest tests/test_train_outcome_model.py -q --timeout=180",
+        "cd src/backend && PYTHONUTF8=1 .venv/Scripts/python.exe scripts/train_outcome_model.py --source jsonl --jsonl data/world_model/warmup_trajectories.jsonl --dry-run",
+        "cd src/backend && PYTHONUTF8=1 .venv/Scripts/python.exe scripts/train_outcome_model.py --source jsonl --jsonl data/world_model/warmup_trajectories.jsonl",
+        "cd src/backend && PYTHONUTF8=1 .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=300"
+      ],
+      "verification": {
+        "status": "pending",
+        "commands_run": [],
+        "tested_at": null,
+        "notes": "The user explicitly approved this scope with IMPLEMENT THIS PLAN. This is prerequisite task one; only one Maker may write trainer or artifact files, and Checker plus Verifier run after code freeze."
       }
     },
     {

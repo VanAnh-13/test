@@ -907,3 +907,21 @@ openclaw"; 3. "Không nói là DeerFlow, mà chỉ dựa trên công nghệ củ
 ### Handoff
 - ...
 ```
+
+## 2026-07-27 - PLAN IMPLEMENTATION START
+
+### Scope decision
+
+- User explicitly approved implementation of the multi-agent continuation plan.
+- `MATRIX-META-001` is blocked at adversarial pre-flight: the existing row has zero LLM calls, ensemble members were not exact-whitelisted, and table generation was not fail-closed.
+- WIP moved to prerequisite `WM-ARTIFACT-002`; exact head/member/manifest/trainer/test paths are now whitelisted.
+
+### Working-tree baseline
+
+- Fixed review point: `b63f0fb9031461a327930232038073d7d3338a3a`.
+- Preserved pre-existing untracked artifacts: matrix results, outcome head v2, and five ensemble members.
+- Canonical Windows harness passed with Git Bash and `PYTHONUTF8=1`.
+
+### Handoff
+
+- Maker implements an atomic, verifiable checkpoint manifest using test-first slices.
