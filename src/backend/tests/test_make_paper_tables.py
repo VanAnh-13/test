@@ -25,6 +25,16 @@ _spec.loader.exec_module(mpt)
 
 BENCH = Path(__file__).parent.parent / "benchmarks"
 CONFIG = BENCH / "agent_matrix_config.yaml"
+WM_MANIFEST = (
+    Path(__file__).parent.parent
+    / "data"
+    / "world_model"
+    / "outcome_ensemble_v2"
+    / "manifest.json"
+)
+WM_CHECKPOINT_SHA = json.loads(WM_MANIFEST.read_text(encoding="utf-8"))["head"][
+    "sha256"
+]
 FROZEN_DESIGN_SHA = "0860d3662ed8a2420aa46887cce84fdb70787c34f5b2271690976905bb4893bb"
 
 
@@ -126,7 +136,11 @@ def complete_matrix_evidence():
                             "job_id": job_id,
                             "status": "completed",
                         },
-                        "variant_sources": ["requested"],
+                        "variant_sources": (
+                            ["requested"]
+                            if condition == "A"
+                            else ["requested", "wm_planner"]
+                        ),
                         "budget_score_trace": [
                             {
                                 "sequence": 1,
@@ -149,7 +163,9 @@ def complete_matrix_evidence():
                             "total_output_tokens": 3,
                             "total_calls": 1,
                         },
-                        "checkpoint_sha": "c" * 64,
+                        "checkpoint_sha": (
+                            None if condition == "A" else WM_CHECKPOINT_SHA
+                        ),
                         "git_sha": "d" * 40,
                     }
                 )
@@ -171,7 +187,23 @@ def _validate(rows, evidence):
         accepted_advices=evidence["accepted"],
         current_dataset_hashes=evidence["dataset_hashes"],
         current_advice_keys=evidence["advice_keys"],
+        expected_checkpoint_sha=WM_CHECKPOINT_SHA,
     )
+
+
+def _write_matrix_bundle(tmp_path, evidence, *, rows=None):
+    matrix_path = tmp_path / "matrix.jsonl"
+    advice_path = tmp_path / "advice.jsonl"
+    matrix_rows = rows if rows is not None else evidence["rows"]
+    matrix_path.write_text(
+        "".join(json.dumps(row, sort_keys=True) + "\n" for row in matrix_rows),
+        encoding="utf-8",
+    )
+    advice_path.write_text(
+        "".join(json.dumps(row, sort_keys=True) + "\n" for row in evidence["journal"]),
+        encoding="utf-8",
+    )
+    return matrix_path, advice_path
 
 
 class TestStrictMatrixGate:
@@ -214,6 +246,58 @@ class TestStrictMatrixGate:
         rows[0]["design_sha256"] = "f" * 64
 
         with pytest.raises(mpt.TableGateError, match="design_sha_mismatch"):
+            _validate(rows, complete_matrix_evidence)
+
+    def test_rejects_missing_design_sha(self, complete_matrix_evidence):
+        rows = deepcopy(complete_matrix_evidence["rows"])
+        rows[0].pop("design_sha256")
+
+        with pytest.raises(mpt.TableGateError, match="design_sha_mismatch"):
+            _validate(rows, complete_matrix_evidence)
+
+    def test_rejects_incomplete_seed_grid(self, complete_matrix_evidence):
+        rows = deepcopy(complete_matrix_evidence["rows"])
+        row = rows[-1]
+        row["seed"] = 3
+        row["key"] = matrix_protocol.cell_key(
+            row["condition"], row["dataset"], row["model"], row["seed"]
+        )
+
+        with pytest.raises(mpt.TableGateError, match="cell_dimension_invalid"):
+            _validate(rows, complete_matrix_evidence)
+
+    def test_rejects_score_that_disagrees_with_trace(self, complete_matrix_evidence):
+        rows = deepcopy(complete_matrix_evidence["rows"])
+        rows[0]["best_real_score"] -= 0.1
+
+        with pytest.raises(mpt.TableGateError, match="execution trace"):
+            _validate(rows, complete_matrix_evidence)
+
+    def test_rejects_checkpoint_or_wm_source_in_condition_a(
+        self, complete_matrix_evidence
+    ):
+        rows = deepcopy(complete_matrix_evidence["rows"])
+        rows[0]["checkpoint_sha"] = WM_CHECKPOINT_SHA
+        rows[0]["variant_sources"].append("wm_planner")
+
+        with pytest.raises(mpt.TableGateError, match="condition A"):
+            _validate(rows, complete_matrix_evidence)
+
+    def test_rejects_missing_wm_evidence_in_condition_b(self, complete_matrix_evidence):
+        rows = deepcopy(complete_matrix_evidence["rows"])
+        row = next(row for row in rows if row["condition"] == "B")
+        row["checkpoint_sha"] = None
+        row["variant_sources"] = ["requested"]
+
+        with pytest.raises(mpt.TableGateError, match="condition B"):
+            _validate(rows, complete_matrix_evidence)
+
+    def test_rejects_checkpoint_not_bound_to_manifest(self, complete_matrix_evidence):
+        rows = deepcopy(complete_matrix_evidence["rows"])
+        row = next(row for row in rows if row["condition"] == "C")
+        row["checkpoint_sha"] = "e" * 64
+
+        with pytest.raises(mpt.TableGateError, match="manifest"):
             _validate(rows, complete_matrix_evidence)
 
     def test_rejects_unaccepted_advice(self, complete_matrix_evidence):
@@ -265,21 +349,20 @@ def _row(cond, ds, seed, score, ext=0, err=None):
 
 
 class TestAgentMatrixTable:
-    def test_generates_valid_latex(self, tmp_path):
-        rows = [
-            _row("A", "iris", 0, 0.95),
-            _row("A", "iris", 1, 0.97),
-            _row("C", "iris", 0, 0.96, ext=1),
-        ]
+    def test_generates_valid_latex(self, complete_matrix_evidence):
+        rows = _validate(
+            deepcopy(complete_matrix_evidence["rows"]), complete_matrix_evidence
+        )
         tex = mpt.agent_matrix_table(rows)
         assert "\\begin{table}" in tex and "\\end{table}" in tex
-        assert "0.9600 $\\pm$ 0.0100" in tex  # mean±std của A:iris
+        assert "0.7050 $\\pm$ 0.0041" in tex
         assert tex.count("&") > 5
         assert "KHÔNG sửa tay" in tex
+        assert FROZEN_DESIGN_SHA in tex
 
-    def test_single_seed_no_pm(self):
-        tex = mpt.agent_matrix_table([_row("A", "wine", 0, 0.9)])
-        assert "$\\pm$" not in tex.split("wine")[1].split("\\\\")[0]
+    def test_renderer_rejects_single_seed(self):
+        with pytest.raises(mpt.TableGateError, match="54"):
+            mpt.agent_matrix_table([_row("A", "wine", 0, 0.9)])
 
     def test_load_jsonl_preserves_error_rows_for_the_gate(self, tmp_path):
         p = tmp_path / "r.jsonl"
@@ -303,16 +386,205 @@ class TestHpoTwoScalesTable:
         assert "successive\\_halving" in tex
         assert "3.62$\\times$" in tex  # con số headline covtype phải vào bảng
         assert "\\bottomrule" in tex
+        assert "single seed" in tex.lower()
+
+    def test_validates_real_raw_grid_and_summary(self):
+        small = json.loads((BENCH / "hpo_real_fair.json").read_text(encoding="utf-8"))
+        large = json.loads((BENCH / "hpo_large_clean.json").read_text(encoding="utf-8"))
+
+        mpt.validate_hpo_inputs(small, large)
+
+    def test_rejects_summary_that_disagrees_with_raw_results(self):
+        small = json.loads((BENCH / "hpo_real_fair.json").read_text(encoding="utf-8"))
+        large = json.loads((BENCH / "hpo_large_clean.json").read_text(encoding="utf-8"))
+        small["summary"]["grid_search"]["mean_test"] += 0.1
+
+        with pytest.raises(mpt.TableGateError, match="summary"):
+            mpt.validate_hpo_inputs(small, large)
+
+    def test_rejects_incomplete_raw_grid(self):
+        small = json.loads((BENCH / "hpo_real_fair.json").read_text(encoding="utf-8"))
+        large = json.loads((BENCH / "hpo_large_clean.json").read_text(encoding="utf-8"))
+        small["results"].pop()
+
+        with pytest.raises(mpt.TableGateError, match="90"):
+            mpt.validate_hpo_inputs(small, large)
+
+    def test_rejects_missing_frozen_hpo_configuration(self):
+        small = json.loads((BENCH / "hpo_real_fair.json").read_text(encoding="utf-8"))
+        large = json.loads((BENCH / "hpo_large_clean.json").read_text(encoding="utf-8"))
+        small.pop("budget")
+        large.pop("budget")
+
+        with pytest.raises(mpt.TableGateError, match="budget"):
+            mpt.validate_hpo_inputs(small, large)
+
+    @pytest.mark.parametrize(
+        "content",
+        [
+            '{"summary":{"grid_search":{},"grid_search":{}}}',
+            '{"summary":{"grid_search":{"mean_test":Infinity}}}',
+            "[]",
+        ],
+    )
+    def test_strict_hpo_document_parser(self, tmp_path, content):
+        path = tmp_path / "hpo.json"
+        path.write_text(content, encoding="utf-8")
+
+        with pytest.raises(mpt.TableGateError):
+            mpt.load_json_document(path, "HPO")
 
 
 class TestEndToEnd:
-    def test_main_writes_tables(self, tmp_path, monkeypatch):
+    def test_missing_matrix_preserves_existing_outputs(self, tmp_path):
         out = tmp_path / "tables"
-        monkeypatch.setattr(
-            sys,
-            "argv",
-            ["make_paper_tables.py", "--out-dir", str(out)],
+        out.mkdir()
+        agent_table = out / "agent_matrix.tex"
+        hpo_table = out / "hpo_two_scales.tex"
+        agent_table.write_bytes(b"agent-sentinel")
+        hpo_table.write_bytes(b"hpo-sentinel")
+
+        rc = mpt.main(
+            [
+                "--matrix",
+                str(tmp_path / "missing.jsonl"),
+                "--advice",
+                str(tmp_path / "missing-advice.jsonl"),
+                "--config",
+                str(CONFIG),
+                "--hpo-small",
+                str(BENCH / "hpo_real_fair.json"),
+                "--hpo-large",
+                str(BENCH / "hpo_large_clean.json"),
+                "--out-dir",
+                str(out),
+            ]
         )
-        rc = mpt.main()
-        assert rc == 0
-        assert (out / "hpo_two_scales.tex").is_file()
+
+        assert rc == 2
+        assert agent_table.read_bytes() == b"agent-sentinel"
+        assert hpo_table.read_bytes() == b"hpo-sentinel"
+
+    def test_complete_evidence_writes_both_tables_deterministically(
+        self, tmp_path, complete_matrix_evidence
+    ):
+        matrix_path, advice_path = _write_matrix_bundle(
+            tmp_path, complete_matrix_evidence
+        )
+        out = tmp_path / "tables"
+        argv = [
+            "--matrix",
+            str(matrix_path),
+            "--advice",
+            str(advice_path),
+            "--config",
+            str(CONFIG),
+            "--hpo-small",
+            str(BENCH / "hpo_real_fair.json"),
+            "--hpo-large",
+            str(BENCH / "hpo_large_clean.json"),
+            "--out-dir",
+            str(out),
+        ]
+
+        assert mpt.main(argv) == 0
+        first = {
+            name: (out / name).read_bytes()
+            for name in ("agent_matrix.tex", "hpo_two_scales.tex")
+        }
+        _write_matrix_bundle(
+            tmp_path,
+            complete_matrix_evidence,
+            rows=list(reversed(complete_matrix_evidence["rows"])),
+        )
+        assert mpt.main(argv) == 0
+
+        assert all(first.values())
+        assert {
+            name: (out / name).read_bytes()
+            for name in ("agent_matrix.tex", "hpo_two_scales.tex")
+        } == first
+        assert b"wm_checkpoint_sha256=" in first["agent_matrix.tex"]
+        assert b"wm_checkpoint_sha256=None" not in first["agent_matrix.tex"]
+
+    def test_invalid_hpo_preserves_both_existing_outputs(
+        self, tmp_path, complete_matrix_evidence
+    ):
+        matrix_path, advice_path = _write_matrix_bundle(
+            tmp_path, complete_matrix_evidence
+        )
+        bad_small = json.loads(
+            (BENCH / "hpo_real_fair.json").read_text(encoding="utf-8")
+        )
+        bad_small["summary"]["grid_search"]["mean_test"] += 0.1
+        bad_small_path = tmp_path / "bad-small.json"
+        bad_small_path.write_text(json.dumps(bad_small), encoding="utf-8")
+        out = tmp_path / "tables"
+        out.mkdir()
+        agent_table = out / "agent_matrix.tex"
+        hpo_table = out / "hpo_two_scales.tex"
+        agent_table.write_bytes(b"agent-sentinel")
+        hpo_table.write_bytes(b"hpo-sentinel")
+
+        rc = mpt.main(
+            [
+                "--matrix",
+                str(matrix_path),
+                "--advice",
+                str(advice_path),
+                "--config",
+                str(CONFIG),
+                "--hpo-small",
+                str(bad_small_path),
+                "--hpo-large",
+                str(BENCH / "hpo_large_clean.json"),
+                "--out-dir",
+                str(out),
+            ]
+        )
+
+        assert rc == 2
+        assert agent_table.read_bytes() == b"agent-sentinel"
+        assert hpo_table.read_bytes() == b"hpo-sentinel"
+
+    def test_output_failure_rolls_back_both_tables(
+        self, tmp_path, complete_matrix_evidence, monkeypatch
+    ):
+        matrix_path, advice_path = _write_matrix_bundle(
+            tmp_path, complete_matrix_evidence
+        )
+        out = tmp_path / "tables"
+        out.mkdir()
+        agent_table = out / "agent_matrix.tex"
+        hpo_table = out / "hpo_two_scales.tex"
+        agent_table.write_bytes(b"agent-sentinel")
+        hpo_table.write_bytes(b"hpo-sentinel")
+        original_write_text = Path.write_text
+
+        def flaky_write_text(self, data, *args, **kwargs):
+            if self.name == "hpo_two_scales.tex":
+                raise OSError("simulated hpo write failure")
+            return original_write_text(self, data, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "write_text", flaky_write_text)
+
+        rc = mpt.main(
+            [
+                "--matrix",
+                str(matrix_path),
+                "--advice",
+                str(advice_path),
+                "--config",
+                str(CONFIG),
+                "--hpo-small",
+                str(BENCH / "hpo_real_fair.json"),
+                "--hpo-large",
+                str(BENCH / "hpo_large_clean.json"),
+                "--out-dir",
+                str(out),
+            ]
+        )
+
+        assert rc == 2
+        assert agent_table.read_bytes() == b"agent-sentinel"
+        assert hpo_table.read_bytes() == b"hpo-sentinel"
