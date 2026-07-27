@@ -32,7 +32,7 @@ import tempfile
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 BACKEND = Path(__file__).resolve().parent.parent
 if str(BACKEND) not in sys.path:
@@ -159,6 +159,153 @@ def anonymized_advice_payload(
         "meta_features": safe_meta,
         "metric": metric,
         "search_algorithms": list(algorithms),
+    }
+
+
+def _advice_prompt(payload: Dict[str, Any]) -> str:
+    return (
+        "Select exactly one HPO search algorithm from the supplied ordered pool. "
+        'Return exactly one JSON object: {"search_algorithm":"<enum>"}. '
+        "Do not add prose, markdown, or fields.\n"
+        + _canonical_json(payload)
+    )
+
+
+def _invoke_advice_model(model: str, prompt: str) -> tuple[str, dict]:
+    from hagent.agent.llm_config import create_chat_model, require_model_config
+    from hagent.agent.middlewares.usage_tracker import (
+        UsageTracker,
+        UsageTrackingCallback,
+    )
+
+    require_model_config(model)
+    tracker = UsageTracker()
+    chat_model = create_chat_model(
+        model,
+        temperature=0,
+        max_tokens=64,
+        callbacks=[UsageTrackingCallback(tracker)],
+    )
+    message = chat_model.invoke(prompt)
+    usage = tracker.summary()
+    if usage.get("total_calls") == 0:
+        direct = getattr(message, "usage_metadata", None) or {}
+        metadata = getattr(message, "response_metadata", None) or {}
+        token_usage = metadata.get("token_usage") or metadata.get("usage") or {}
+        usage = {
+            "total_input_tokens": direct.get("input_tokens")
+            or token_usage.get("prompt_tokens")
+            or token_usage.get("input_tokens")
+            or 0,
+            "total_output_tokens": direct.get("output_tokens")
+            or token_usage.get("completion_tokens")
+            or token_usage.get("output_tokens")
+            or 0,
+            "total_calls": 1,
+        }
+    return getattr(message, "content", None), usage
+
+
+def _strict_advice_algorithm(response: str) -> str:
+    if not isinstance(response, str):
+        raise ProtocolError("advice response must be text")
+
+    def no_duplicates(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ProtocolError("advice response contains duplicate fields")
+            result[key] = value
+        return result
+
+    try:
+        value = json.loads(response, object_pairs_hook=no_duplicates)
+    except (json.JSONDecodeError, TypeError, ValueError) as exc:
+        raise ProtocolError("advice response is not strict JSON") from exc
+    if not isinstance(value, dict) or set(value) != {"search_algorithm"}:
+        raise ProtocolError("advice response must contain only search_algorithm")
+    algorithm = value["search_algorithm"]
+    if not isinstance(algorithm, str) or algorithm not in ADVICE_ALGORITHMS:
+        raise ProtocolError("advice search_algorithm is outside the frozen enum")
+    return algorithm
+
+
+def _strict_usage(usage: dict) -> Dict[str, int]:
+    if not isinstance(usage, dict):
+        raise ProtocolError("advice usage is missing")
+    values = [
+        usage.get("total_input_tokens"),
+        usage.get("total_output_tokens"),
+        usage.get("total_calls"),
+    ]
+    if any(type(value) is not int or value < 0 for value in values):
+        raise ProtocolError("advice usage values must be non-negative integers")
+    input_tokens, output_tokens, calls = values
+    if calls != 1 or input_tokens + output_tokens <= 0:
+        raise ProtocolError("advice usage must prove exactly one non-zero-token call")
+    return {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": input_tokens + output_tokens,
+        "total_calls": calls,
+    }
+
+
+def request_paired_advice(
+    dataset: Dict[str, Any],
+    *,
+    model: str,
+    design_sha: str,
+    experiment_id: str,
+    invoke: Optional[Callable[[str, str], tuple[str, dict]]] = None,
+) -> Dict[str, Any]:
+    if (
+        not isinstance(design_sha, str)
+        or len(design_sha) != 64
+        or any(char not in "0123456789abcdef" for char in design_sha)
+    ):
+        raise ProtocolError("design_sha must be a lowercase SHA-256")
+    if not isinstance(model, str) or not model:
+        raise ProtocolError("model is required")
+    if not isinstance(experiment_id, str) or not experiment_id:
+        raise ProtocolError("experiment_id is required")
+
+    payload = anonymized_advice_payload(dataset)
+    prompt = _advice_prompt(payload)
+    boundary = invoke or _invoke_advice_model
+    try:
+        response, raw_usage = boundary(model, prompt)
+    except Exception as exc:
+        raise ProtocolError("Meta advice invocation failed") from exc
+    algorithm = _strict_advice_algorithm(response)
+    usage = _strict_usage(raw_usage)
+    data_sha = dataset_sha256(dataset)
+    key_material = {
+        "design_sha256": design_sha,
+        "dataset_sha256": data_sha,
+        "model": model,
+        "metric": PROTOCOL_METRIC,
+        "search_algorithms": list(ADVICE_ALGORITHMS),
+    }
+    return {
+        "record_type": "paired_meta_advice",
+        "status": "accepted",
+        "protocol_version": PROTOCOL_VERSION,
+        "experiment_id": experiment_id,
+        "design_sha256": design_sha,
+        "advice_key": hashlib.sha256(
+            _canonical_json(key_material).encode("utf-8")
+        ).hexdigest(),
+        "dataset_sha256": data_sha,
+        "model": model,
+        "metric": PROTOCOL_METRIC,
+        "search_algorithms": list(ADVICE_ALGORITHMS),
+        "algorithm": algorithm,
+        "prompt_sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+        "response_sha256": hashlib.sha256(response.encode("utf-8")).hexdigest(),
+        "token_usage": usage,
+        "cost_usd": None,
+        "accepted_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
 
 

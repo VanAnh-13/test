@@ -141,6 +141,124 @@ class TestProtocolDesign:
         assert mx.dataset_sha256(dataset) != mx.dataset_sha256(changed)
 
 
+class TestPairedAdvice:
+    def test_one_anonymous_invoke_returns_secret_free_provenance(self):
+        from automl.search.datasets_real import load_dataset
+
+        dataset = load_dataset("iris")
+        seen = []
+
+        def invoke(model, prompt):
+            seen.append((model, prompt))
+            return (
+                '{"search_algorithm":"bayesian_search"}',
+                {
+                    "total_input_tokens": 17,
+                    "total_output_tokens": 4,
+                    "total_calls": 1,
+                },
+            )
+
+        record = mx.request_paired_advice(
+            dataset,
+            model="meta-ai",
+            design_sha="a" * 64,
+            experiment_id="matrix-aaaaaaaaaaaaaaaa",
+            invoke=invoke,
+        )
+
+        assert len(seen) == 1
+        assert seen[0][0] == "meta-ai"
+        assert "iris" not in seen[0][1]
+        assert dataset["source"] not in seen[0][1]
+        assert record["algorithm"] == "bayesian_search"
+        assert record["token_usage"] == {
+            "input_tokens": 17,
+            "output_tokens": 4,
+            "total_tokens": 21,
+            "total_calls": 1,
+        }
+        assert len(record["prompt_sha256"]) == 64
+        assert len(record["response_sha256"]) == 64
+        assert "prompt" not in record
+        assert "response" not in record
+        assert record["cost_usd"] is None
+
+    @pytest.mark.parametrize(
+        "response",
+        [
+            "not-json",
+            "```json\n{\"search_algorithm\":\"grid_search\"}\n```",
+            "[]",
+            '{"search_algorithm":"GRID_SEARCH"}',
+            '{"search_algorithm":"grid_search","extra":1}',
+            '{"search_algorithm":"grid_search","search_algorithm":"random_search"}',
+        ],
+    )
+    def test_malformed_or_noncanonical_advice_fails_closed(self, response):
+        from automl.search.datasets_real import load_dataset
+
+        def invoke(_model, _prompt):
+            return response, {
+                "total_input_tokens": 2,
+                "total_output_tokens": 1,
+                "total_calls": 1,
+            }
+
+        with pytest.raises(mx.ProtocolError):
+            mx.request_paired_advice(
+                load_dataset("iris"),
+                model="meta-ai",
+                design_sha="a" * 64,
+                experiment_id="matrix-aaaaaaaaaaaaaaaa",
+                invoke=invoke,
+            )
+
+    @pytest.mark.parametrize(
+        "usage",
+        [
+            {"total_input_tokens": 0, "total_output_tokens": 0, "total_calls": 1},
+            {"total_input_tokens": 1, "total_output_tokens": 0, "total_calls": 0},
+            {"total_input_tokens": 1, "total_output_tokens": 0, "total_calls": 2},
+            {"total_input_tokens": True, "total_output_tokens": 0, "total_calls": 1},
+        ],
+    )
+    def test_invalid_usage_fails_closed(self, usage):
+        from automl.search.datasets_real import load_dataset
+
+        with pytest.raises(mx.ProtocolError, match="usage"):
+            mx.request_paired_advice(
+                load_dataset("iris"),
+                model="meta-ai",
+                design_sha="a" * 64,
+                experiment_id="matrix-aaaaaaaaaaaaaaaa",
+                invoke=lambda _model, _prompt: (
+                    '{"search_algorithm":"grid_search"}',
+                    usage,
+                ),
+            )
+
+    def test_network_error_fails_without_retry(self):
+        from automl.search.datasets_real import load_dataset
+
+        calls = 0
+
+        def invoke(_model, _prompt):
+            nonlocal calls
+            calls += 1
+            raise OSError("provider unavailable")
+
+        with pytest.raises(mx.ProtocolError, match="invocation failed"):
+            mx.request_paired_advice(
+                load_dataset("iris"),
+                model="meta-ai",
+                design_sha="a" * 64,
+                experiment_id="matrix-aaaaaaaaaaaaaaaa",
+                invoke=invoke,
+            )
+        assert calls == 1
+
+
 class TestRealJobEnv:
     def test_real_training_job_on_iris(self):
         from automl.search.datasets_real import load_dataset
