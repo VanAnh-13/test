@@ -1001,3 +1001,47 @@ openclaw"; 3. "Không nói là DeerFlow, mà chỉ dựa trên công nghệ củ
 - User approved the exact additional whitelist path `src/backend/benchmarks/agent_matrix_results.jsonl.tmp` and requested implementation to continue.
 - WIP returned to MATRIX-PROTOCOL-001; root remains the sole Maker.
 - Public seams are design/payload, injected advice boundary, strict sidecar/resume migration, evidence-bound cell execution, and call-free dry-run CLI.
+
+## 2026-07-27 - MATRIX-PROTOCOL-001 DONE
+
+### Scope and decisions
+
+- Froze the main matrix at A/B/C x six datasets x one model x three seeds (54 cells); C_mpc remains outside this protocol.
+- Bound the design SHA to dimensions, condition patches, prompt/job config, the seven-field anonymous meta-feature schema, the fixed five-algorithm pool, and zero provider retries.
+- Added paired advice journaling with pending/dispatched/accepted states. Advice is deduplicated once per dataset/model key and reused across A/B/C and all seeds.
+- Fail-closed behavior rejects malformed/duplicate-key/non-finite JSON, invalid enum, network failure, zero usage, conflicting execution evidence, dataset/prompt/design drift, and incomplete resume rows.
+- A dispatched claim is never retried automatically. Provider-authenticated reconciliation is not available, so ambiguous dispatched claims remain blocked rather than being accepted from an unverified receipt.
+- No live or paid Meta request was made; all provider behavior was verified through an injected no-network boundary.
+
+### Evidence and artifacts
+
+- Frozen design SHA-256: `0860d3662ed8a2420aa46887cce84fdb70787c34f5b2271690976905bb4893bb`.
+- Legacy `A:iris:meta-ai:0` had zero calls and incomplete protocol evidence. It was migrated idempotently to `agent_matrix_preflight_rejected.jsonl`; no result row was retained.
+- Rejected sidecar SHA-256: `63546511053c3738834f26902120c52ab2c89d2a4abb47fd34d839b7957abe83`.
+- Original canonical row SHA-256 inside the rejection record: `de45ce9a052a08dae1451538e720ee0fe6d5559e4fb98197793b1c7e5f121127`.
+- Rejection ID: `af426b42df6fc77c9070cfba93ea82cb0bd41e5b066a567e1cddcea8ddfc7b57`.
+- Strict validation confirmed one rejection, `cell_usage_invalid`, no raw prompt/response/secret fields, 64-hex hashes, and byte-identical second migration.
+- Final dry-run reports 54 todo cells; results, temp, and advice sidecars are absent, and the rejected sidecar is unchanged.
+
+### Files changed
+
+- `src/backend/scripts/run_experiment_matrix.py`
+- `src/backend/tests/test_experiment_matrix.py`
+- `src/backend/benchmarks/agent_matrix_preflight_rejected.jsonl`
+- `feature_list.json`
+- `claude-progress.md`
+
+### Verification
+
+- Targeted matrix suite: `66 passed`.
+- Minimal HAGENT_CONFIG leak repro: RED `1 failed, 1 passed`; after the fix GREEN `2 passed`.
+- Full suite first exposed the process-global config leak: `508 passed, 82 failed, 7 deselected`.
+- Final full suite: `590 passed, 7 deselected` in 56.43 seconds.
+- Two independent protocol Checkers passed the frozen protocol. The final regression Checker passed the environment/cache restoration fix with no blocker.
+- `git diff --check` has no content error; changed files remain inside the exact task whitelist.
+
+### Residual risk and handoff
+
+- The code cannot guarantee distributed exactly-once recovery after a provider accepted a request but the process crashed before journaling the response. It deliberately fails closed at `dispatched`; human/provider-authenticated reconciliation is required.
+- Matrix execution is still 0/54 and requires the planned live A+B go/no-go before any paid full run.
+- Next prerequisite: create and execute `PAPER-TABLE-GATE-001` with an exact whitelist before reopening `MATRIX-META-001`.

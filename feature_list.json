@@ -34,7 +34,7 @@
       "**/docker-compose*.yaml"
     ]
   },
-  "current_task_id": "MATRIX-PROTOCOL-001",
+  "current_task_id": null,
   "features": [
     {
       "id": "HARNESS-001",
@@ -1192,7 +1192,7 @@
     {
       "id": "MATRIX-PROTOCOL-001",
       "title": "Paired Meta advice protocol with fail-closed evidence and resumable design binding",
-      "status": "in_progress",
+      "status": "done",
       "acceptance_criteria": [
         "Call Meta AI exactly once per dataset/model advice key using only anonymized meta-features, metric, and the fixed pool of five search algorithms; reuse that decision across every A/B/C condition and three seeds.",
         "Reject malformed JSON or enum values, zero token usage, network errors, and advice that conflicts with the requested algorithm; no fallback advice may be executed.",
@@ -1215,10 +1215,14 @@
         "cd src/backend && PYTHONUTF8=1 .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=300"
       ],
       "verification": {
-        "status": "pending",
-        "commands_run": [],
-        "tested_at": null,
-        "notes": "User approved the exact sibling temp path for crash-safe legacy migration and asked development to continue. No live paid call is authorized in this task."
+        "status": "passed",
+        "commands_run": [
+          "cd src/backend && PYTHONUTF8=1 .venv/Scripts/python.exe -m pytest tests/test_experiment_matrix.py -q --timeout=180 (66 passed)",
+          "cd src/backend && PYTHONUTF8=1 .venv/Scripts/python.exe scripts/run_experiment_matrix.py --dry-run (54 cells, 0 done, 54 todo; rejected sidecar unchanged; results/temp/advice absent)",
+          "cd src/backend && PYTHONUTF8=1 .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=300 (590 passed, 7 deselected)"
+        ],
+        "tested_at": "2026-07-27T16:22:00+07:00",
+        "notes": "All acceptance criteria pass with an injected no-network Meta boundary. Two independent protocol reviews and the final regression Checker report no blockers. Legacy A:iris:meta-ai:0 zero-call evidence was migrated idempotently to the strict rejected sidecar; no results temp or advice artifact remains. Design SHA is 0860d3662ed8a2420aa46887cce84fdb70787c34f5b2271690976905bb4893bb. No live or paid Meta call was made."
       }
     },
     {
