@@ -982,6 +982,9 @@ class RealJobEnv:
         )
 
         algo = str(params.get("search_algorithm") or "grid_search")
+        budget_seconds = float(
+            params.get("time_limit") or self.job_cfg.get("time_limit") or 60
+        )
         cfg = dict(
             cv=StratifiedKFold(
                 n_splits=int(self.job_cfg.get("cv", 3)), shuffle=True,
@@ -993,7 +996,7 @@ class RealJobEnv:
             random_state=self.seed,
             save_log=False,
             verbose=0,
-            max_time=float(params.get("time_limit") or self.job_cfg.get("time_limit") or 60),
+            max_time=budget_seconds,
             # BO mặc định infer_dimensions=True sẽ tự nới grid thành không
             # gian liên tục — mọi thuật toán PHẢI cùng không gian 18 điểm
             infer_dimensions=False,
@@ -1009,12 +1012,27 @@ class RealJobEnv:
         )
         return {
             "search_algorithm": algo,
+            "budget_seconds": budget_seconds,
             "best_params": best_params,
             "best_score": float(best_score),
             "best_model": "RandomForestClassifier",
             "seconds": round(time.perf_counter() - t0, 2),
             "time_limited": bool(time_limited),
         }
+
+    def job_trace(self) -> List[dict]:
+        return [
+            {
+                "sequence": sequence,
+                "job_id": job_id,
+                "search_algorithm": job["search_algorithm"],
+                "budget_seconds": float(job["budget_seconds"]),
+                "score": float(job["best_score"]),
+                "elapsed_seconds": float(job["seconds"]),
+                "time_limited": bool(job["time_limited"]),
+            }
+            for sequence, (job_id, job) in enumerate(self.jobs.items(), 1)
+        ]
 
 
 # ── Cell execution ───────────────────────────────────────
@@ -1048,6 +1066,90 @@ def cell_key(condition: str, dataset: str, model: str, seed: int) -> str:
     return f"{condition}:{dataset}:{model}:{seed}"
 
 
+def build_cell_message(cfg: dict, dataset_name: str, advice: dict) -> str:
+    algorithm = advice.get("algorithm")
+    if algorithm not in ADVICE_ALGORITHMS:
+        raise ProtocolError("cell advice algorithm is invalid")
+    prompt = str(cfg.get("prompt") or "Train a model on {dataset}, target {target}.")
+    base = prompt.format(dataset=dataset_name, target="target")
+    return (
+        f"{base}\nProtocol requirement: use {algorithm} search exactly "
+        "for the requested candidate."
+    )
+
+
+def build_cell_evidence(
+    result: Dict[str, Any],
+    env: RealJobEnv,
+    advice: dict,
+) -> Dict[str, Any]:
+    _validate_advice_record(advice, line_number=0)
+    if advice.get("status") != "accepted":
+        raise ProtocolError("cell advice is not accepted")
+    campaign = result.get("campaign")
+    variants = campaign.get("variants") if isinstance(campaign, dict) else None
+    if not isinstance(variants, list):
+        raise ProtocolError("requested advice was not executed")
+    requested = [
+        variant
+        for variant in variants
+        if isinstance(variant, dict) and variant.get("source") == "requested"
+    ]
+    if len(requested) != 1:
+        raise ProtocolError("requested advice was not executed exactly once")
+    variant = requested[0]
+    params = variant.get("params") if isinstance(variant.get("params"), dict) else {}
+    job_id = variant.get("job_id")
+    job = env.jobs.get(job_id) if isinstance(job_id, str) else None
+    if (
+        params.get("search_algorithm") != advice["algorithm"]
+        or variant.get("status") != "completed"
+        or job is None
+        or job.get("search_algorithm") != advice["algorithm"]
+    ):
+        raise ProtocolError("requested advice was not executed")
+    trace = env.job_trace()
+    executed = list(dict.fromkeys(item["search_algorithm"] for item in trace))
+    if advice["algorithm"] not in executed:
+        raise ProtocolError("requested advice was not executed")
+    event_types = [
+        event["type"]
+        for event in (result.get("execution_events") or [])
+        if isinstance(event, dict) and isinstance(event.get("type"), str)
+    ]
+    provenance_fields = (
+        "experiment_id",
+        "design_sha256",
+        "advice_key",
+        "algorithm",
+        "prompt_sha256",
+        "response_sha256",
+        "token_usage",
+    )
+    return {
+        "advice_provenance": {
+            field: advice[field] for field in provenance_fields
+        },
+        "requested_variant": {
+            "source": "requested",
+            "algorithm": advice["algorithm"],
+            "job_id": job_id,
+            "status": variant["status"],
+        },
+        "variant_sources": sorted(
+            {
+                item["source"]
+                for item in variants
+                if isinstance(item, dict)
+                and isinstance(item.get("source"), str)
+            }
+        ),
+        "budget_score_trace": trace,
+        "executed_algorithms": executed,
+        "event_types": event_types,
+    }
+
+
 def run_cell(
     condition: str,
     dataset_name: str,
@@ -1056,6 +1158,10 @@ def run_cell(
     *,
     cfg: dict,
     scratch_dir: Path,
+    advice: dict,
+    design_sha: str,
+    experiment_id: str,
+    agent_runner: Optional[Callable[..., Any]] = None,
 ) -> Dict[str, Any]:
     from automl.search.datasets_real import load_dataset
     from hagent.agent.execution.tool_runner import set_tool_invoker
@@ -1065,16 +1171,25 @@ def run_cell(
     dataset = load_dataset(dataset_name)
     env = RealJobEnv(dataset, job_cfg=cfg.get("job") or {}, seed=seed)
     set_tool_invoker(env.invoke)
+    if (
+        advice.get("design_sha256") != design_sha
+        or advice.get("experiment_id") != experiment_id
+        or advice.get("dataset_sha256") != dataset_sha256(dataset)
+        or advice.get("model") != model
+    ):
+        set_tool_invoker(None)
+        raise ProtocolError("cell advice provenance does not match cell")
+    runner = agent_runner or run_agent
 
-    prompt = str(cfg.get("prompt") or "Train a model on {dataset}, target {target}.")
-    message = prompt.format(dataset=dataset_name, target="target")
+
+    message = build_cell_message(cfg, dataset_name, advice)
 
     t0 = time.perf_counter()
     error = None
     result: Dict[str, Any] = {}
     try:
-        result = asyncio.new_event_loop().run_until_complete(
-            run_agent(
+        result = asyncio.run(
+            runner(
                 message,
                 user_id=f"mx_{condition}_{dataset_name}_{seed}",
                 world_model={
@@ -1094,43 +1209,91 @@ def run_cell(
             )
         )
     except Exception as exc:  # ghi lỗi vào row, không sập cả ma trận
-        error = f"{type(exc).__name__}: {exc}"
+        error = f"{type(exc).__name__}: cell execution failed"
     finally:
         set_tool_invoker(None)
     elapsed = time.perf_counter() - t0
 
     campaign = result.get("campaign") or {}
     variants = campaign.get("variants") or []
-    events = result.get("execution_events") or []
-    ev_types = [e.get("type") for e in events if isinstance(e, dict)]
-    real_scores = [j["best_score"] for j in env.jobs.values()]
+    real_scores = [job["best_score"] for job in env.jobs.values()]
+    trace = env.job_trace()
+    provenance_fields = (
+        "experiment_id",
+        "design_sha256",
+        "advice_key",
+        "algorithm",
+        "prompt_sha256",
+        "response_sha256",
+        "token_usage",
+    )
+    evidence = {
+        "advice_provenance": {
+            field: advice[field] for field in provenance_fields
+        },
+        "requested_variant": None,
+        "variant_sources": sorted(
+            {
+                variant["source"]
+                for variant in variants
+                if isinstance(variant, dict)
+                and isinstance(variant.get("source"), str)
+            }
+        ),
+        "budget_score_trace": trace,
+        "executed_algorithms": list(
+            dict.fromkeys(item["search_algorithm"] for item in trace)
+        ),
+        "event_types": [
+            event["type"]
+            for event in (result.get("execution_events") or [])
+            if isinstance(event, dict) and isinstance(event.get("type"), str)
+        ],
+    }
+    if error is None:
+        try:
+            evidence = build_cell_evidence(result, env, advice)
+        except ProtocolError:
+            error = "ProtocolError: advice execution evidence invalid"
 
-    return {
+    row = {
         "key": cell_key(condition, dataset_name, model, seed),
         "condition": condition,
         "dataset": dataset_name,
         "model": model,
         "seed": seed,
         "error": error,
+        "design_sha256": design_sha,
+        "experiment_id": experiment_id,
+        "dataset_sha256": dataset_sha256(dataset),
+        **evidence,
         "route": result.get("route"),
         "response_chars": len(result.get("response") or ""),
-        "campaign_status": result.get("campaign_status"),
+        "campaign_status": result.get("campaign_status") or campaign.get("status"),
         "n_variants": len(variants),
-        "variant_sources": sorted({v.get("source") for v in variants if isinstance(v, dict)}),
         "extension_rounds": campaign.get("extension_rounds"),
         "best_real_score": max(real_scores) if real_scores else None,
         "n_real_jobs": len(env.jobs),
         "job_seconds_total": round(
-            sum(j.get("seconds") or 0 for j in env.jobs.values()), 2
+            sum(job.get("seconds") or 0 for job in env.jobs.values()), 2
         ),
-        "n_outcome_surprise": ev_types.count("campaign_outcome_surprise"),
-        "n_extended": ev_types.count("campaign_extended"),
+        "n_outcome_surprise": evidence["event_types"].count(
+            "campaign_outcome_surprise"
+        ),
+        "n_extended": evidence["event_types"].count("campaign_extended"),
         "cost_metrics": result.get("cost_metrics"),
         "checkpoint_sha": _checkpoint_sha(),
         "git_sha": _git_sha(),
         "wall_seconds": round(elapsed, 2),
-        "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
+    if row["error"] is None:
+        reasons = validate_result_evidence(
+            row, design_sha, {advice["advice_key"]: advice}
+        )
+        if reasons:
+            row["error"] = "ProtocolError: " + ",".join(reasons)
+    return row
 
 
 def main() -> int:

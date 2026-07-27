@@ -385,14 +385,26 @@ class TestRealJobEnv:
                 {"search_algorithm": "grid_search", "dataset_id": "iris"},
             )
             info = await env.invoke("get_job_info", {"job_id": r["job_id"]})
-            return info
+            return info, r["job_id"]
 
-        info = run(go())
+        info, job_id = run(go())
         assert info["status"] == "completed"
         assert 0.8 < info["best_score"] <= 1.0  # iris grid thật phải > 0.8
         job = list(env.jobs.values())[0]
         assert job["best_params"]  # tham số thật từ search thật
         assert job["seconds"] > 0
+        assert env.job_trace() == [
+            {
+                "sequence": 1,
+                "job_id": job_id,
+                "search_algorithm": "grid_search",
+                "budget_seconds": 30.0,
+                "score": job["best_score"],
+                "elapsed_seconds": job["seconds"],
+                "time_limited": False,
+            }
+        ]
+
 
     def test_dataset_info_from_registry(self):
         from automl.search.datasets_real import load_dataset
@@ -410,7 +422,158 @@ class TestRealJobEnv:
         assert info.get("error")
 
 
+class TestCellAdviceEvidence:
+    def test_message_pins_advice_as_requested_constraint(self):
+        from hagent.agent.planning.goal_parser import parse_goal
+
+        message = mx.build_cell_message(
+            matrix_config(),
+            "iris",
+            {"algorithm": "successive_halving"},
+        )
+        goal = parse_goal(message, known_dataset_ids=["iris"])
+
+        assert goal["constraints"]["search_algorithm"] == "successive_halving"
+
+    def test_reordered_requested_variant_is_bound_to_executed_job(self):
+        from automl.search.datasets_real import load_dataset
+
+        design_sha = "e" * 64
+        advice = TestEnumerationAndResume.accepted_advice(design_sha)
+        env = mx.RealJobEnv(
+            load_dataset("iris"),
+            job_cfg={
+                "cv": 2,
+                "time_limit": 30,
+                "param_grid": {"max_depth": [3], "n_estimators": [10]},
+            },
+            seed=0,
+        )
+        started = run(
+            env.invoke(
+                "start_training",
+                {
+                    "search_algorithm": advice["algorithm"],
+                    "dataset_id": "iris",
+                    "time_limit": 30,
+                },
+            )
+        )
+        job_id = started["job_id"]
+        result = {
+            "campaign": {
+                "variants": [
+                    {
+                        "source": "diversified",
+                        "params": {"search_algorithm": "random_search"},
+                        "job_id": "other",
+                        "status": "completed",
+                    },
+                    {
+                        "source": "requested",
+                        "params": {"search_algorithm": advice["algorithm"]},
+                        "job_id": job_id,
+                        "status": "completed",
+                    },
+                ]
+            },
+            "execution_events": [{"type": "campaign_done"}],
+        }
+
+        evidence = mx.build_cell_evidence(result, env, advice)
+
+        assert evidence["requested_variant"]["job_id"] == job_id
+        assert evidence["executed_algorithms"] == [advice["algorithm"]]
+        assert evidence["event_types"] == ["campaign_done"]
+
+    def test_unexecuted_advice_fails_closed(self):
+        from automl.search.datasets_real import load_dataset
+
+        advice = TestEnumerationAndResume.accepted_advice("e" * 64)
+        env = mx.RealJobEnv(load_dataset("iris"), job_cfg={}, seed=0)
+        result = {
+            "campaign": {
+                "variants": [
+                    {
+                        "source": "requested",
+                        "params": {"search_algorithm": advice["algorithm"]},
+                        "job_id": "missing",
+                        "status": "completed",
+                    }
+                ]
+            }
+        }
+
+        with pytest.raises(mx.ProtocolError, match="executed"):
+            mx.build_cell_evidence(result, env, advice)
+
+
+    def test_run_cell_emits_complete_protocol_evidence(self, tmp_path):
+        from hagent.agent.execution.tool_runner import invoke_tool
+
+        design_sha = "e" * 64
+        advice = TestEnumerationAndResume.accepted_advice(design_sha)
+        cfg = matrix_config()
+        cfg["job"] = {
+            "cv": 2,
+            "time_limit": 30,
+            "param_grid": {"max_depth": [3], "n_estimators": [10]},
+        }
+
+        async def agent_runner(message, **_kwargs):
+            assert advice["algorithm"] in message
+            started = await invoke_tool(
+                "start_training",
+                {
+                    "search_algorithm": advice["algorithm"],
+                    "dataset_id": "iris",
+                    "time_limit": 30,
+                },
+            )
+            return {
+                "response": "done",
+                "campaign_status": "done",
+                "campaign": {
+                    "status": "done",
+                    "variants": [
+                        {
+                            "source": "requested",
+                            "params": {"search_algorithm": advice["algorithm"]},
+                            "job_id": started["job_id"],
+                            "status": "completed",
+                        }
+                    ],
+                    "extension_rounds": 0,
+                },
+                "execution_events": [{"type": "campaign_done"}],
+                "cost_metrics": {
+                    "total_input_tokens": 8,
+                    "total_output_tokens": 2,
+                    "total_calls": 1,
+                },
+            }
+
+        row = mx.run_cell(
+            "A",
+            "iris",
+            "meta-ai",
+            0,
+            cfg=cfg,
+            scratch_dir=tmp_path,
+            advice=advice,
+            design_sha=design_sha,
+            experiment_id=advice["experiment_id"],
+            agent_runner=agent_runner,
+        )
+
+        assert row["error"] is None
+        assert mx.validate_result_evidence(
+            row, design_sha, {advice["advice_key"]: advice}
+        ) == []
+
+
 class TestEnumerationAndResume:
+
     def test_cell_key_format(self):
         assert mx.cell_key("A", "iris", "m", 0) == "A:iris:m:0"
 
