@@ -251,6 +251,17 @@ def _strict_usage(usage: dict) -> Dict[str, int]:
     }
 
 
+def _advice_key(design_sha: str, data_sha: str, model: str) -> str:
+    material = {
+        "design_sha256": design_sha,
+        "dataset_sha256": data_sha,
+        "model": model,
+        "metric": PROTOCOL_METRIC,
+        "search_algorithms": list(ADVICE_ALGORITHMS),
+    }
+    return hashlib.sha256(_canonical_json(material).encode("utf-8")).hexdigest()
+
+
 def request_paired_advice(
     dataset: Dict[str, Any],
     *,
@@ -280,22 +291,13 @@ def request_paired_advice(
     algorithm = _strict_advice_algorithm(response)
     usage = _strict_usage(raw_usage)
     data_sha = dataset_sha256(dataset)
-    key_material = {
-        "design_sha256": design_sha,
-        "dataset_sha256": data_sha,
-        "model": model,
-        "metric": PROTOCOL_METRIC,
-        "search_algorithms": list(ADVICE_ALGORITHMS),
-    }
     return {
         "record_type": "paired_meta_advice",
         "status": "accepted",
         "protocol_version": PROTOCOL_VERSION,
         "experiment_id": experiment_id,
         "design_sha256": design_sha,
-        "advice_key": hashlib.sha256(
-            _canonical_json(key_material).encode("utf-8")
-        ).hexdigest(),
+        "advice_key": _advice_key(design_sha, data_sha, model),
         "dataset_sha256": data_sha,
         "model": model,
         "metric": PROTOCOL_METRIC,
@@ -307,6 +309,201 @@ def request_paired_advice(
         "cost_usd": None,
         "accepted_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
+
+
+_ADVICE_COMMON_FIELDS = {
+    "record_type",
+    "status",
+    "protocol_version",
+    "experiment_id",
+    "design_sha256",
+    "advice_key",
+    "dataset_sha256",
+    "model",
+    "metric",
+    "search_algorithms",
+    "prompt_sha256",
+}
+_PENDING_FIELDS = _ADVICE_COMMON_FIELDS | {"created_at"}
+_ACCEPTED_FIELDS = _ADVICE_COMMON_FIELDS | {
+    "algorithm",
+    "response_sha256",
+    "token_usage",
+    "cost_usd",
+    "accepted_at",
+}
+
+
+def _is_sha256(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(char in "0123456789abcdef" for char in value)
+    )
+
+
+def _validate_advice_record(record: dict, *, line_number: int) -> None:
+    if not isinstance(record, dict):
+        raise ProtocolError(f"advice line {line_number} is not an object")
+    status = record.get("status")
+    fields = _PENDING_FIELDS if status == "pending" else _ACCEPTED_FIELDS
+    if status not in ("pending", "accepted") or set(record) != fields:
+        raise ProtocolError(f"advice line {line_number} has an invalid schema")
+    if (
+        record["record_type"] != "paired_meta_advice"
+        or record["protocol_version"] != PROTOCOL_VERSION
+        or record["metric"] != PROTOCOL_METRIC
+        or record["search_algorithms"] != list(ADVICE_ALGORITHMS)
+    ):
+        raise ProtocolError(f"advice line {line_number} conflicts with protocol")
+    for field in (
+        "design_sha256",
+        "advice_key",
+        "dataset_sha256",
+        "prompt_sha256",
+    ):
+        if not _is_sha256(record.get(field)):
+            raise ProtocolError(f"advice line {line_number} has invalid {field}")
+    if not isinstance(record.get("model"), str) or not record["model"]:
+        raise ProtocolError(f"advice line {line_number} has invalid model")
+    if not isinstance(record.get("experiment_id"), str) or not record["experiment_id"]:
+        raise ProtocolError(f"advice line {line_number} has invalid experiment_id")
+    expected_key = _advice_key(
+        record["design_sha256"], record["dataset_sha256"], record["model"]
+    )
+    if record["advice_key"] != expected_key:
+        raise ProtocolError(f"advice line {line_number} has invalid advice_key")
+    if status == "accepted":
+        if record.get("algorithm") not in ADVICE_ALGORITHMS:
+            raise ProtocolError(f"advice line {line_number} has invalid algorithm")
+        if not _is_sha256(record.get("response_sha256")):
+            raise ProtocolError(f"advice line {line_number} has invalid response_sha256")
+        usage = record.get("token_usage")
+        if not isinstance(usage, dict) or set(usage) != {
+            "input_tokens",
+            "output_tokens",
+            "total_tokens",
+            "total_calls",
+        }:
+            raise ProtocolError(f"advice line {line_number} has invalid token usage")
+        values = list(usage.values())
+        if any(type(value) is not int or value < 0 for value in values):
+            raise ProtocolError(f"advice line {line_number} has invalid token usage")
+        if (
+            usage["total_calls"] != 1
+            or usage["total_tokens"]
+            != usage["input_tokens"] + usage["output_tokens"]
+            or usage["total_tokens"] <= 0
+        ):
+            raise ProtocolError(f"advice line {line_number} has invalid token usage")
+        if record.get("cost_usd") is not None:
+            raise ProtocolError(f"advice line {line_number} must use null unknown cost")
+
+
+def _append_jsonl(path: Path, record: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8", newline="\n") as handle:
+        handle.write(_canonical_json(record) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def load_advice_index(path: Path) -> Dict[str, Dict[str, dict]]:
+    state: Dict[str, Dict[str, dict]] = {"pending": {}, "accepted": {}}
+    if not path.is_file():
+        return state
+    for line_number, line in enumerate(
+        path.read_text(encoding="utf-8").splitlines(), 1
+    ):
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ProtocolError(f"advice line {line_number} is malformed") from exc
+        _validate_advice_record(record, line_number=line_number)
+        key = record["advice_key"]
+        status = record["status"]
+        if status == "pending":
+            if key in state["pending"] or key in state["accepted"]:
+                raise ProtocolError(f"duplicate pending advice key {key}")
+            state["pending"][key] = record
+            continue
+        if key in state["accepted"]:
+            raise ProtocolError(f"duplicate accepted advice key {key}")
+        pending = state["pending"].get(key)
+        if pending is None:
+            raise ProtocolError(f"accepted advice key {key} has no pending claim")
+        for field in _ADVICE_COMMON_FIELDS - {"status"}:
+            if record[field] != pending[field]:
+                raise ProtocolError(f"accepted advice key {key} conflicts with pending")
+        state["accepted"][key] = record
+    return state
+
+
+def ensure_paired_advices(
+    *,
+    cells: List[tuple[str, str, str, int]],
+    datasets: Dict[str, Dict[str, Any]],
+    sidecar_path: Path,
+    design_sha: str,
+    experiment_id: str,
+    invoke: Optional[Callable[[str, str], tuple[str, dict]]] = None,
+) -> Dict[tuple[str, str], dict]:
+    state = load_advice_index(sidecar_path)
+    pairs: List[tuple[str, str]] = []
+    for cell in cells:
+        if not isinstance(cell, tuple) or len(cell) != 4:
+            raise ProtocolError("cell must be condition, dataset, model, seed")
+        pair = (cell[1], cell[2])
+        if pair not in pairs:
+            pairs.append(pair)
+    result: Dict[tuple[str, str], dict] = {}
+    for dataset_name, model in pairs:
+        dataset = datasets.get(dataset_name)
+        if dataset is None:
+            raise ProtocolError(f"dataset {dataset_name} is not loaded")
+        data_sha = dataset_sha256(dataset)
+        key = _advice_key(design_sha, data_sha, model)
+        accepted = state["accepted"].get(key)
+        if accepted is not None:
+            result[(dataset_name, model)] = accepted
+            continue
+        if key in state["pending"]:
+            raise ProtocolError(f"advice key {key} is pending; refusing duplicate call")
+        prompt_sha = hashlib.sha256(
+            _advice_prompt(anonymized_advice_payload(dataset)).encode("utf-8")
+        ).hexdigest()
+        pending = {
+            "record_type": "paired_meta_advice",
+            "status": "pending",
+            "protocol_version": PROTOCOL_VERSION,
+            "experiment_id": experiment_id,
+            "design_sha256": design_sha,
+            "advice_key": key,
+            "dataset_sha256": data_sha,
+            "model": model,
+            "metric": PROTOCOL_METRIC,
+            "search_algorithms": list(ADVICE_ALGORITHMS),
+            "prompt_sha256": prompt_sha,
+            "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        }
+        _append_jsonl(sidecar_path, pending)
+        state["pending"][key] = pending
+        accepted = request_paired_advice(
+            dataset,
+            model=model,
+            design_sha=design_sha,
+            experiment_id=experiment_id,
+            invoke=invoke,
+        )
+        for field in _ADVICE_COMMON_FIELDS - {"status"}:
+            if accepted[field] != pending[field]:
+                raise ProtocolError(f"accepted advice key {key} conflicts with claim")
+        _append_jsonl(sidecar_path, accepted)
+        state["accepted"][key] = accepted
+        result[(dataset_name, model)] = accepted
+    return result
 
 
 

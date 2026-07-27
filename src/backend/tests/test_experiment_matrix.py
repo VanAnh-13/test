@@ -259,6 +259,115 @@ class TestPairedAdvice:
         assert calls == 1
 
 
+class TestAdviceJournal:
+    def test_one_advice_is_reused_across_conditions_and_seeds(self, tmp_path):
+        from automl.search.datasets_real import load_dataset
+
+        cells = [
+            (condition, "iris", "meta-ai", seed)
+            for condition in ("A", "B", "C")
+            for seed in (0, 1, 2)
+        ]
+        sidecar = tmp_path / "advice.jsonl"
+        calls = 0
+
+        def invoke(_model, _prompt):
+            nonlocal calls
+            calls += 1
+            return (
+                '{"search_algorithm":"random_search"}',
+                {
+                    "total_input_tokens": 3,
+                    "total_output_tokens": 2,
+                    "total_calls": 1,
+                },
+            )
+
+        kwargs = {
+            "cells": cells,
+            "datasets": {"iris": load_dataset("iris")},
+            "sidecar_path": sidecar,
+            "design_sha": "b" * 64,
+            "experiment_id": "matrix-bbbbbbbbbbbbbbbb",
+            "invoke": invoke,
+        }
+        first = mx.ensure_paired_advices(**kwargs)
+        second = mx.ensure_paired_advices(**kwargs)
+
+        assert calls == 1
+        assert first[("iris", "meta-ai")] == second[("iris", "meta-ai")]
+        records = [
+            json.loads(line)
+            for line in sidecar.read_text(encoding="utf-8").splitlines()
+        ]
+        assert [record["status"] for record in records] == ["pending", "accepted"]
+        assert all("prompt" not in record and "response" not in record for record in records)
+
+    def test_pending_call_is_not_retried(self, tmp_path):
+        from automl.search.datasets_real import load_dataset
+
+        sidecar = tmp_path / "advice.jsonl"
+        kwargs = {
+            "cells": [("A", "iris", "meta-ai", 0)],
+            "datasets": {"iris": load_dataset("iris")},
+            "sidecar_path": sidecar,
+            "design_sha": "c" * 64,
+            "experiment_id": "matrix-cccccccccccccccc",
+        }
+
+        with pytest.raises(mx.ProtocolError, match="invocation failed"):
+            mx.ensure_paired_advices(
+                **kwargs,
+                invoke=lambda _model, _prompt: (_ for _ in ()).throw(
+                    OSError("network")
+                ),
+            )
+
+        retry_calls = 0
+
+        def retry(_model, _prompt):
+            nonlocal retry_calls
+            retry_calls += 1
+            return (
+                '{"search_algorithm":"grid_search"}',
+                {
+                    "total_input_tokens": 1,
+                    "total_output_tokens": 1,
+                    "total_calls": 1,
+                },
+            )
+
+        with pytest.raises(mx.ProtocolError, match="pending"):
+            mx.ensure_paired_advices(**kwargs, invoke=retry)
+        assert retry_calls == 0
+
+    def test_duplicate_accepted_record_is_corruption(self, tmp_path):
+        from automl.search.datasets_real import load_dataset
+
+        sidecar = tmp_path / "advice.jsonl"
+        mx.ensure_paired_advices(
+            cells=[("A", "iris", "meta-ai", 0)],
+            datasets={"iris": load_dataset("iris")},
+            sidecar_path=sidecar,
+            design_sha="d" * 64,
+            experiment_id="matrix-dddddddddddddddd",
+            invoke=lambda _model, _prompt: (
+                '{"search_algorithm":"grid_search"}',
+                {
+                    "total_input_tokens": 1,
+                    "total_output_tokens": 1,
+                    "total_calls": 1,
+                },
+            ),
+        )
+        accepted = sidecar.read_text(encoding="utf-8").splitlines()[-1]
+        with sidecar.open("a", encoding="utf-8") as handle:
+            handle.write(accepted + "\n")
+
+        with pytest.raises(mx.ProtocolError, match="duplicate accepted"):
+            mx.load_advice_index(sidecar)
+
+
 class TestRealJobEnv:
     def test_real_training_job_on_iris(self):
         from automl.search.datasets_real import load_dataset
