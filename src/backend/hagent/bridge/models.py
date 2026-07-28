@@ -107,6 +107,7 @@ class ConversationMessage(BaseModel):
     content: str
     timestamp: datetime | None = None
     provider: str = ""
+    message_id: str | None = None
     model: str = ""
 
 

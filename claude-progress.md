@@ -1318,3 +1318,39 @@ openclaw"; 3. "Không nói là DeerFlow, mà chỉ dựa trên công nghệ củ
 - Independent sub-agent review remained unavailable because the environment quota was exhausted.
 - The documented `AGENTS.md` fallback review checked cancellation/failure/success cleanup, serialization failure, duplicate terminal suppression, secret-safe errors, owner history forwarding, middleware response extraction, and the exact six-file whitelist; no blocker remained.
 - Tests use deterministic graph/runtime doubles and do not call a paid or live LLM endpoint.
+
+## 2026-07-28 - SSE-BRIDGE-001 START
+
+### Scope
+
+- Opened exactly one WIP task after committing `SSE-CORE-001` at `4ac760ae0fee5ae839bd5792fb5d9d408e80ebee`.
+- Maker scope is limited to Bridge stream schemas/app flow, atomic conversation persistence, focused tests, and control files.
+- Toolkit graph, frontend, dependencies, auth, compose, package/lock files, and synchronous chat behavior are outside this task.
+
+### Acceptance seams
+
+- Bridge snapshots owner-scoped history and writes the user message exactly once before opening upstream SSE.
+- Upstream frames are validated and canonicalized; only one terminal is forwarded and no sentinel is accepted or emitted.
+- Final assistant content is persisted with an idempotency key before `done`; malformed/error/persist failure paths emit only `error`.
+- Cancellation closes upstream and never stores partial assistant tokens.
+
+## 2026-07-28 - SSE-BRIDGE-001 COMPLETE
+
+### Delivered
+
+- Added public owner-scoped `POST /api/v1/chat/stream` with the shared chat schema, prior history, selected model forwarding, and `X-Conversation-Id`.
+- Validated and proxied typed monotonic SSE while suppressing duplicate terminals and rejecting malformed frames or sentinels.
+- Added atomic owner-scoped final-assistant persistence before `done`; cancellation and every failure path avoid partial assistant storage.
+
+### Verification
+
+- Targeted: `tests/test_bridge_streaming.py` -> 6 passed.
+- Integration regression across API contract, multi-turn, toolkit SSE, and Bridge SSE -> 46 passed.
+- Full backend: `tests -m "not ollama"` -> 681 passed, 7 deselected.
+- Focused Ruff `E,F,I` checks and `git diff --check` passed.
+
+### Review and residual risk
+
+- Independent sub-agent review remained unavailable because the environment quota was exhausted.
+- The documented `AGENTS.md` fallback review checked owner isolation, write ordering, atomic idempotency, model/history forwarding, typed IDs, duplicate/missing terminals, malformed/upstream/persistence errors, cancellation cleanup, secret-safe errors, and the exact six-file whitelist; no blocker remained.
+- Tests use deterministic upstream/Mongo doubles and do not call a paid or live LLM endpoint.

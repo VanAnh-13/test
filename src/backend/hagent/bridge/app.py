@@ -12,12 +12,14 @@ Xử lý:
 """
 
 import asyncio
+import json
 import logging
 import os
 import re
 import time
 import uuid
 from contextlib import asynccontextmanager
+from typing import AsyncIterator
 
 import httpx
 from fastapi import (
@@ -30,6 +32,7 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 
 from ..world import updater as world_updater
 from ..world.schema import WorldState
@@ -271,6 +274,277 @@ async def _call_hagent_gateway(
         model_name=model_name,
     )
 
+
+_BRIDGE_SSE_EVENTS = frozenset(
+    {
+        "meta",
+        "route",
+        "phase",
+        "plan",
+        "plan_event",
+        "surprise",
+        "token",
+        "tool_call",
+        "tool_result",
+        "done",
+        "error",
+    }
+)
+_BRIDGE_TERMINALS = frozenset({"done", "error"})
+
+
+class _UpstreamStatusError(RuntimeError):
+    def __init__(self, status_code: int):
+        super().__init__("Agent runtime returned an HTTP error")
+        self.status_code = status_code
+
+
+class _BridgePersistenceError(RuntimeError):
+    pass
+
+
+def _stream_runtime_url() -> str:
+    base = get_hautoml_config()["base_url"].rstrip("/")
+    sync_url = os.getenv(
+        "HAGENT_AGENT_RUN_URL",
+        f"{base}/api/v1/chat/agent-run",
+    ).rstrip("/")
+    return os.getenv(
+        "HAGENT_AGENT_RUN_STREAM_URL",
+        sync_url if sync_url.endswith("/stream") else f"{sync_url}/stream",
+    )
+
+
+async def _stream_agent_runtime_lines(
+    *,
+    message: str,
+    user_token: str | None,
+    user_id: str,
+    session_id: str,
+    context_extra: dict | None,
+    model_name: str | None,
+) -> AsyncIterator[str]:
+    """Open the private toolkit stream and yield decoded SSE lines."""
+    del user_id
+    _validate_model_name(model_name)
+    base = get_hautoml_config()["base_url"].rstrip("/")
+    context = dict(context_extra or {})
+    for key in _RESERVED_RUNTIME_CONTEXT_KEYS:
+        context.pop(key, None)
+    context["hautoml_url"] = base
+    payload = {
+        "message": message,
+        "conversation_id": session_id,
+        "context": context,
+    }
+    if model_name is not None:
+        payload["model"] = model_name
+    headers = {"Content-Type": "application/json"}
+    if user_token:
+        headers["Authorization"] = f"Bearer {user_token}"
+
+    timeout = httpx.Timeout(300.0, read=None)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        async with client.stream(
+            "POST",
+            _stream_runtime_url(),
+            json=payload,
+            headers=headers,
+        ) as response:
+            if not 200 <= response.status_code < 300:
+                raise _UpstreamStatusError(response.status_code)
+            async for line in response.aiter_lines():
+                yield line
+
+
+def _decode_sse_frame(
+    event_name: str | None,
+    event_id: str | None,
+    data_lines: list[str],
+) -> tuple[str, int, dict]:
+    if not event_name or event_id is None or not data_lines:
+        raise ValueError("Incomplete upstream SSE frame")
+    parsed_id = int(event_id)
+    payload = json.loads("\n".join(data_lines))
+    if not isinstance(payload, dict):
+        raise ValueError("Upstream SSE data must be an object")
+    return event_name, parsed_id, payload
+
+
+async def _iter_upstream_sse(
+    lines: AsyncIterator[str],
+) -> AsyncIterator[tuple[str, int, dict]]:
+    event_name = None
+    event_id = None
+    data_lines: list[str] = []
+
+    async for raw_line in lines:
+        if not isinstance(raw_line, str):
+            raise TypeError("Upstream SSE line must be text")
+        line = raw_line.rstrip("\r")
+        if not line:
+            if event_name is not None or event_id is not None or data_lines:
+                yield _decode_sse_frame(event_name, event_id, data_lines)
+            event_name = None
+            event_id = None
+            data_lines = []
+            continue
+        if line.startswith(":"):
+            continue
+        field, separator, value = line.partition(":")
+        if not separator:
+            raise ValueError("Malformed upstream SSE line")
+        value = value.lstrip(" ")
+        if field == "event":
+            event_name = value
+        elif field == "id":
+            event_id = value
+        elif field == "data":
+            data_lines.append(value)
+
+    if event_name is not None or event_id is not None or data_lines:
+        yield _decode_sse_frame(event_name, event_id, data_lines)
+
+
+def _format_bridge_sse(event_name: str, event_id: int, data: dict) -> str:
+    payload = json.dumps(data, ensure_ascii=False)
+    return f"event: {event_name}\nid: {event_id}\ndata: {payload}\n\n"
+
+
+def _bridge_error_code(exc: Exception) -> str:
+    if isinstance(exc, _BridgePersistenceError):
+        return "persistence_failed"
+    if isinstance(exc, _UpstreamStatusError):
+        return "upstream_http_error"
+    if isinstance(exc, httpx.TimeoutException):
+        return "upstream_timeout"
+    if isinstance(exc, httpx.RequestError):
+        return "upstream_unavailable"
+    if isinstance(exc, (TypeError, ValueError, json.JSONDecodeError)):
+        return "invalid_upstream_stream"
+    return "bridge_stream_failed"
+
+
+def _bridge_error_frame(event_id: int, code: str) -> str:
+    return _format_bridge_sse(
+        "error",
+        event_id,
+        {
+            "type": "error",
+            "error": {
+                "code": code,
+                "message": "Chat stream failed",
+            },
+        },
+    )
+
+
+async def _bridge_event_stream(
+    *,
+    message: str,
+    user: TokenPayload,
+    conversation_id: str,
+    context_extra: dict,
+    model_name: str | None,
+    world_state_store: WorldStateStore,
+    message_id: str,
+) -> AsyncIterator[str]:
+    upstream = _stream_agent_runtime_lines(
+        message=message,
+        user_token=user.raw_token,
+        user_id=user.user_id,
+        session_id=conversation_id,
+        context_extra=context_extra,
+        model_name=model_name,
+    )
+    last_event_id = 0
+    terminal_sent = False
+
+    try:
+        async for event_name, event_id, data in _iter_upstream_sse(upstream):
+            if event_name not in _BRIDGE_SSE_EVENTS:
+                raise ValueError("Unsupported upstream SSE event")
+            if data.get("type") != event_name:
+                raise ValueError("Upstream SSE event/data mismatch")
+            if event_id <= last_event_id:
+                raise ValueError("Upstream SSE IDs must be strictly increasing")
+            last_event_id = event_id
+
+            if event_name == "done":
+                upstream_response = data.get("response")
+                if not isinstance(upstream_response, dict):
+                    raise ValueError("Upstream done response must be an object")
+                result = dict(upstream_response)
+                if not isinstance(result.get("message"), str):
+                    raise ValueError("Upstream done response has no message")
+                normalized = _to_chat_response(result, conversation_id).model_dump()
+
+                try:
+                    await _apply_tool_outputs_to_world_state(
+                        world_state_store,
+                        user.user_id,
+                        result,
+                    )
+                    await conv_store.add_assistant_message_once(
+                        conversation_id=conversation_id,
+                        user_id=user.user_id,
+                        content=normalized["message"],
+                        message_id=message_id,
+                        provider=normalized.get("provider", ""),
+                        model=normalized.get("model", ""),
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    raise _BridgePersistenceError from exc
+
+                tracked_job_id = _extract_training_job_id(normalized["message"])
+                if tracked_job_id:
+                    try:
+                        _schedule_training_result_notification(
+                            conversation_id=conversation_id,
+                            user_id=user.user_id,
+                            user_token=user.raw_token,
+                            job_id=tracked_job_id,
+                        )
+                    except Exception as exc:
+                        logger.error(
+                            "Stream notification scheduling failed: %s",
+                            type(exc).__name__,
+                        )
+
+                data = {"type": "done", "response": normalized}
+                frame = _format_bridge_sse("done", event_id, data)
+                terminal_sent = True
+                yield frame
+                break
+
+            if event_name == "error":
+                frame = _format_bridge_sse("error", event_id, data)
+                terminal_sent = True
+                yield frame
+                break
+
+            yield _format_bridge_sse(event_name, event_id, data)
+
+        if not terminal_sent:
+            raise ValueError("Upstream stream ended without a terminal event")
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        logger.error("Bridge SSE failed: %s", type(exc).__name__)
+        if not terminal_sent:
+            terminal_sent = True
+            yield _bridge_error_frame(last_event_id + 1, _bridge_error_code(exc))
+    finally:
+        close = getattr(upstream, "aclose", None)
+        if close is not None:
+            try:
+                await close()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.debug("Upstream SSE close failed: %s", type(exc).__name__)
 
 def _extract_training_job_id(message: str) -> str | None:
     """Chỉ lấy job_id khi nội dung cho thấy vừa submit training."""
@@ -655,6 +929,52 @@ async def chat(
 
     return _to_chat_response(result, conversation_id)
 
+
+@hagent_bridge.post("/api/v1/chat/stream")
+async def chat_stream(
+    request: Request,
+    req: ChatRequest,
+    user: TokenPayload = Depends(get_current_user),
+):
+    """Public owner-scoped SSE chat; Bridge owns history and persistence."""
+    _validate_model_name(req.model)
+    conversation_id = req.conversation_id or uuid.uuid4().hex
+    world_state_store: WorldStateStore = request.app.state.world_state_store
+
+    await world_state_store.ensure(user.user_id)
+    world_state_snapshot = await world_state_store.get(user.user_id)
+    history = await conv_store.get_message_history(
+        conversation_id,
+        user.user_id,
+        limit=20,
+    )
+    await conv_store.add_message(
+        conversation_id=conversation_id,
+        user_id=user.user_id,
+        role="user",
+        content=req.message,
+    )
+
+    context_extra = _runtime_context(req.context, world_state_snapshot, history)
+    message_id = f"stream:{uuid.uuid4().hex}"
+    return StreamingResponse(
+        _bridge_event_stream(
+            message=req.message,
+            user=user,
+            conversation_id=conversation_id,
+            context_extra=context_extra,
+            model_name=req.model,
+            world_state_store=world_state_store,
+            message_id=message_id,
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+            "X-Conversation-Id": conversation_id,
+        },
+    )
 
 @hagent_bridge.post("/api/v1/chat/upload", response_model=ChatResponse)
 async def chat_with_file(

@@ -1649,6 +1649,41 @@
         "tested_at": "2026-07-28T14:43:36+07:00",
         "notes": "The private toolkit stream route is conversation-stateless, forwards sanitized history/context/model, and returns typed monotonic SSE without a sentinel. The sole terminal is a safe error or a nested sync-equivalent response reconstructed from root final graph state, not internal token concatenation. Middleware receives the internal response field before public message mapping. Usage/model context tokens reset in finally for success, failure, and cancellation, and cancellation propagates. Independent Checker remained unavailable because the environment quota was exhausted; the documented AGENTS.md fallback review found no blocker and only whitelisted files changed."
       }
+    },
+    {
+      "id": "SSE-BRIDGE-001",
+      "title": "Proxy typed agent SSE through Bridge with exactly-once persistence",
+      "status": "done",
+      "acceptance_criteria": [
+        "Public POST /api/v1/chat/stream uses the chat schema, owner-scoped prior history, saves the user message once, forwards the selected model, and returns X-Conversation-Id.",
+        "Bridge validates and forwards typed monotonic SSE, ignores duplicate terminal events, atomically saves the final assistant once before done, and never saves partial assistant text.",
+        "Abort closes the upstream stream; malformed/upstream/error/persistence failures produce exactly one error and no done; no sentinel is emitted.",
+        "Targeted Bridge streaming tests, full non-Ollama suite, review fallback, and exact whitelist validation pass."
+      ],
+      "allowed_files": [
+        "src/backend/hagent/bridge/models.py",
+        "src/backend/hagent/bridge/app.py",
+        "src/backend/hagent/bridge/conversation.py",
+        "src/backend/tests/test_bridge_streaming.py",
+        "feature_list.json",
+        "claude-progress.md"
+      ],
+      "test_commands": [
+        "cd src/backend && PYTHONUTF8=1 .venv/Scripts/python.exe -m pytest tests/test_bridge_streaming.py -q --timeout=300",
+        "cd src/backend && PYTHONUTF8=1 .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=300"
+      ],
+      "verification": {
+        "status": "passed",
+        "commands_run": [
+          "PYTHONUTF8=1 .venv/Scripts/python.exe -m pytest tests/test_bridge_streaming.py -q --timeout=300 outside sandbox (exit 0; 6 passed)",
+          "PYTHONUTF8=1 .venv/Scripts/python.exe -m pytest tests/test_bridge_agent_contract.py tests/test_chat_multiturn.py tests/test_agent_streaming.py tests/test_bridge_streaming.py -q --timeout=300 outside sandbox (exit 0; 46 passed)",
+          "initial full-suite Git Bash invocation split the quoted marker and exited 1 before running tests; corrected Windows Python invocation followed",
+          "PYTHONUTF8=1 .venv/Scripts/python.exe -m pytest tests -m not-ollama -q --timeout=300 outside sandbox (exit 0; 681 passed, 7 deselected)",
+          "ruff check on task files for E,F,I with E501 excluded; git diff --check passed"
+        ],
+        "tested_at": "2026-07-28T15:02:25+07:00",
+        "notes": "Bridge owns the public stream lifecycle: it snapshots owner-scoped history, persists the user once, forwards the selected model and typed monotonic events, and returns X-Conversation-Id. A final assistant message is appended with an owner-scoped atomic idempotency filter before done; duplicate terminals are ignored, and malformed/upstream/persistence failures emit one safe error without done. Cancellation closes upstream and stores no partial assistant content. Independent Checker remained unavailable because the environment quota was exhausted; the documented AGENTS.md fallback review found no blocker and only exact whitelisted files changed."
+      }
     }
   ]
 }

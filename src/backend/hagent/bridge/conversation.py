@@ -7,6 +7,7 @@ Cấu hình tải từ hagent.yaml — KHÔNG hard-code.
 
 import uuid
 from datetime import datetime, timezone
+
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from pymongo import ASCENDING
 
@@ -141,6 +142,57 @@ async def add_message(
         }
         await _get_collection().insert_one(doc)
 
+
+async def add_assistant_message_once(
+    conversation_id: str,
+    user_id: str,
+    content: str,
+    message_id: str,
+    provider: str = "",
+    model: str = "",
+) -> bool:
+    """Atomically append one final assistant message for a stream turn."""
+    if not message_id or not message_id.strip():
+        raise ValueError("message_id is required")
+
+    owner = str(user_id)
+    now = datetime.now(timezone.utc)
+    message = {
+        "message_id": message_id,
+        "role": "assistant",
+        "content": content,
+        "timestamp": now,
+        "provider": provider,
+        "model": model,
+    }
+    update_fields: dict = {
+        "$push": {"messages": message},
+        "$set": {"updated_at": now},
+    }
+    if provider:
+        update_fields["$set"]["provider"] = provider
+    if model:
+        update_fields["$set"]["model"] = model
+
+    collection = _get_collection()
+    owner_query = {
+        "conversation_id": conversation_id,
+        "user_id": owner,
+    }
+    result = await collection.update_one(
+        {
+            **owner_query,
+            "messages.message_id": {"$ne": message_id},
+        },
+        update_fields,
+    )
+    if result.matched_count:
+        return bool(result.modified_count)
+
+    existing = await collection.find_one(owner_query, {"_id": 1})
+    if existing is None:
+        raise RuntimeError("Conversation missing during assistant persistence")
+    return False
 
 async def get_message_history(
     conversation_id: str, user_id: str, limit: int = 50
