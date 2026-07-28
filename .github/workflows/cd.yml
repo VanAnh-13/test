@@ -11,6 +11,7 @@ on:
   push:
     branches:
       - main
+      - hagent
     paths:
       - "docs/**"
       - "mkdocs.yml"
@@ -25,14 +26,12 @@ on:
         type: boolean
         default: true
       build_images:
-        description: "Build Docker images (toolkit/worker)"
+        description: "Build Docker images (toolkit/bridge)"
         type: boolean
         default: true
 
 permissions:
-  contents: write
-  pages: write
-  id-token: write
+  contents: read
 
 concurrency:
   group: cd-${{ github.ref }}
@@ -42,8 +41,11 @@ jobs:
   deploy-docs:
     name: Deploy docs
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     if: |
-      github.event_name == 'push' ||
+      (github.event_name == 'push' &&
+       github.ref == 'refs/heads/main') ||
       (github.event_name == 'workflow_dispatch' && inputs.deploy_docs == true)
     steps:
       - name: Checkout
@@ -101,13 +103,13 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Build worker image
+      - name: Build HAgent Bridge image
         uses: docker/build-push-action@v6
         with:
           context: src/backend
-          file: src/backend/worker.dockerfile
+          file: src/backend/hagent/bridge/Dockerfile
           push: false
-          tags: hautoml-worker:cd-${{ github.sha }}
+          tags: hagent-bridge:cd-${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -116,7 +118,8 @@ jobs:
           {
             echo "## CD — Docker build"
             echo "- Built \`hautoml-toolkit:cd-${{ github.sha }}\`"
-            echo "- Built \`hautoml-worker:cd-${{ github.sha }}\`"
+            echo "- Built \`hagent-bridge:cd-${{ github.sha }}\`"
+            echo "- Worker services reuse the toolkit image"
             echo "- Push disabled (set registry secrets to enable publish)"
             echo "- World Model train E2E: workflow \`world-model-train-e2e.yml\` (CI gate before CD)"
           } >> "$GITHUB_STEP_SUMMARY"

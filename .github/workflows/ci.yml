@@ -13,6 +13,7 @@ on:
     branches:
       - main
       - dev
+      - hagent
       - features/**
       - hotfix/**
     paths:
@@ -22,6 +23,7 @@ on:
     branches:
       - main
       - dev
+      - hagent
       - features/**
     paths:
       - "src/backend/**"
@@ -133,6 +135,15 @@ jobs:
           print(f"\nAll {len(checks)} YAML checks passed ✓")
           PY
 
+      - name: Pytest — full backend suite
+        working-directory: src/backend
+        env:
+          PYTHONUTF8: "1"
+        run: |
+          set -o pipefail
+          python -m pytest tests -m "not ollama" -q --timeout=300 \
+            2>&1 | tee ci_pytest.txt
+
       - name: Start Mock LLM server
         working-directory: src/backend
         run: |
@@ -147,31 +158,6 @@ jobs:
           done
           echo "Mock LLM failed to start"
           exit 1
-
-      - name: Pytest — core + world + phases 2–7 + student
-        working-directory: src/backend
-        run: |
-          set -o pipefail
-          python -m pytest \
-            tests/test_deerflow_automl.py \
-            tests/test_phase2_multiagent.py \
-            tests/test_phase3_context.py \
-            tests/test_world_state_store.py \
-            tests/test_world_updater.py \
-            tests/test_phase4_world_model_lewm.py \
-            tests/test_phase4_executor_reviser.py \
-            tests/test_phase6_campaign.py \
-            tests/test_phase7_eval_hierarchy.py \
-            tests/test_hierarchy_adaptive.py \
-            tests/test_agent_harness.py \
-            tests/test_student_performance_e2e.py \
-            tests/test_world_model_deep.py \
-            -v \
-            --timeout=90 \
-            --tb=short \
-            -m "not ollama" \
-            --color=yes \
-            2>&1 | tee ci_pytest.txt
 
       - name: Agent harness (offline + graph)
         working-directory: src/backend

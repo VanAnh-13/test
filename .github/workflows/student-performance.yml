@@ -18,6 +18,7 @@ on:
     branches:
       - main
       - dev
+      - hagent
       - features/**
     paths:
       - "src/backend/**"
@@ -27,6 +28,7 @@ on:
     branches:
       - main
       - dev
+      - hagent
       - features/**
     paths:
       - "src/backend/**"
@@ -67,7 +69,6 @@ jobs:
       LLM_DEFAULT_MODEL: "ci-mock"
       LANGCHAIN_TRACING_V2: "false"
       DO_NOT_TRACK: "1"
-      HAGENT_RUNTIME_MODE: deerflow
 
     steps:
       - name: Checkout
@@ -165,7 +166,6 @@ jobs:
       OPENAI_API_KEY: "not-needed"
       LANGCHAIN_TRACING_V2: "false"
       DO_NOT_TRACK: "1"
-      HAGENT_RUNTIME_MODE: deerflow
 
     steps:
       - name: Checkout

@@ -1436,6 +1436,47 @@
         "tested_at": "2026-07-27T01:10:00+07:00",
         "notes": "Gộp verify build/up smoke với DOCKER-BACKEND-002 + OPENCLAW-REMOVE-001. requirements.txt (protected) chỉ đổi 1 dòng COMMENT branding. Attribution GIỮ đúng yêu cầu: 'inspired by DeerFlow 2.0 (ByteDance)' + các dòng Reference/Tham chiếu deerflow (~10 dòng)."
       }
+    },
+    {
+      "id": "CI-BASELINE-001",
+      "title": "Repair HAgent CI/CD baseline and remove obsolete workflow references",
+      "status": "blocked",
+      "acceptance_criteria": [
+        "CI runs on branch hagent and executes the canonical full non-Ollama backend suite without referencing deleted test files.",
+        "CD builds only the current toolkit and HAgent Bridge Dockerfiles; the worker reuses the toolkit image and no deleted worker Dockerfile is referenced.",
+        "The approved workflow scope contains no obsolete DeerFlow branding or runtime setting, and the deprecated DeerFlow workflow alias is removed.",
+        "Every retained workflow path resolves; actionlint passes; current Docker images build; an actual GitHub workflow run on hagent is green before the task is marked done."
+      ],
+      "allowed_files": [
+        ".github/workflows/ci.yml",
+        ".github/workflows/cd.yml",
+        ".github/workflows/deerflow-automl-tests.yml",
+        ".github/workflows/agent-train-student.yml",
+        ".github/workflows/student-performance.yml",
+        "feature_list.json",
+        "claude-progress.md"
+      ],
+      "test_commands": [
+        "actionlint .github/workflows/*.yml",
+        "cd src/backend && PYTHONUTF8=1 .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=300",
+        "cd src/backend && docker compose config --quiet",
+        "cd src/backend && docker compose build toolkit hagent_bridge",
+        "gh run list --branch hagent --limit 10"
+      ],
+      "verification": {
+        "status": "blocked",
+        "commands_run": [
+          "Static retained-workflow checks and PyYAML BaseLoader parse - passed for 4 YAML files; all required paths exist; no DeerFlow/OpenClaw/worker.dockerfile/HAGENT_RUNTIME_MODE remnants",
+          "PYTHONUTF8=1 .venv/Scripts/python.exe -m pytest tests -m 'not ollama' -q --timeout=300 - 616 passed, 7 deselected in 71.30s",
+          "docker compose config --quiet - exit 0 (only expected warnings for unset local secrets)",
+          "docker compose build toolkit hagent_bridge - exit 0; both images built",
+          "actionlint .github/workflows/*.yml - exit 1: actionlint is not installed",
+          "gh run list --branch hagent --limit 10 - exit 1: gh is not installed; no matching real workflow run verified",
+          "Independent spec Checker - no code blocker; independent standards Checker - least-privilege blocker fixed and re-review passed"
+        ],
+        "tested_at": "2026-07-28T10:50:15+07:00",
+        "notes": "Local implementation and all available local gates pass. The task remains blocked, not done, because mandatory actionlint and a real successful GitHub workflow run on hagent at the implementation commit SHA cannot be verified on this machine. Protected .github scope was explicitly approved. Baseline: b714f7d4028821e88e9ecc451ab761bad97dd281."
+      }
     }
   ]
 }

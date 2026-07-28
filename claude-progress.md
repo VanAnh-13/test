@@ -1083,3 +1083,51 @@ openclaw"; 3. "Không nói là DeerFlow, mà chỉ dựa trên công nghệ củ
 ### Residual risk and handoff
 
 - Matrix execution is still 0/54, so no production paper table exists yet. Reopen `MATRIX-META-001` only after regenerating checkpoint/manifest, running the live A+B go/no-go, freezing design/config/code, and executing the 54-cell operator run.
+
+## 2026-07-28 - CI-BASELINE-001 START
+
+### Scope
+
+- User approved the sequential CI, memory, API, multi-turn, SSE/UI, E2E, and manuscript implementation plan.
+- WIP opened only for `CI-BASELINE-001`; `MATRIX-META-001` remains blocked and no live or paid model call is authorized.
+- Exact protected workflow scope is limited to `ci.yml`, `cd.yml`, `deerflow-automl-tests.yml`, `agent-train-student.yml`, and `student-performance.yml`.
+
+### Baseline
+
+- Fixed review point: `b714f7d4028821e88e9ecc451ab761bad97dd281`.
+- Working tree was clean; canonical Windows harness passed with WIP=0 before activation.
+- Public verification seams are workflow triggers, referenced paths, canonical pytest command, current Docker image build targets, actionlint, and an actual GitHub run on `hagent`.
+
+### Known external gates
+
+- `actionlint` and `gh` are not currently installed and the remote has no confirmed `hagent` workflow run.
+- The task must be marked `blocked`, not `done`, if those gates cannot be executed after local implementation.
+
+## 2026-07-28 - CI-BASELINE-001 BLOCKED
+
+### Implemented scope
+
+- Added `hagent` triggers for canonical CI/student workflows and for CD image validation; docs deployment remains restricted to `main` or explicit manual dispatch.
+- Replaced the drifting pytest file list with the canonical full non-Ollama suite and moved the standalone mock server after pytest so the suite fixture owns port `11435` without conflict.
+- CD now builds only the toolkit and HAgent Bridge Dockerfiles; worker services continue to reuse the toolkit image.
+- Removed the deprecated DeerFlow workflow alias, legacy runtime settings, and stale branding inside the approved five-workflow scope.
+- Tightened CD permissions to `contents: read` by default; only the docs deployment job receives `contents: write`.
+
+### Verification
+
+- Static retained-workflow/path checks passed; all four retained YAML files parse successfully and no approved retained workflow contains DeerFlow, OpenClaw, `worker.dockerfile`, or `HAGENT_RUNTIME_MODE` remnants.
+- Full backend suite passed: `616 passed, 7 deselected in 71.30s`.
+- `docker compose config --quiet` exited `0`; it emitted only expected warnings for locally unset secret variables without printing secret values.
+- `docker compose build toolkit hagent_bridge` exited `0`; both images built successfully.
+- `actionlint .github/workflows/*.yml` exited `1` because `actionlint` is not installed.
+- `gh run list --branch hagent --limit 10` exited `1` because `gh` is not installed; no real green workflow run matching the implementation commit was verified.
+
+### Checker review
+
+- Spec Checker found no blocker and confirmed the mock/test ordering, current Docker paths, branch triggers, alias deletion, and whitelist scope.
+- Standards Checker found one excessive-permissions blocker in CD. The default was reduced to read-only, the docs job alone was granted write access, and the Checker re-review found no remaining blocker.
+
+### Blocker and handoff
+
+- Local implementation is ready, but Definition of Done explicitly requires successful `actionlint` and a real green GitHub workflow run on `hagent` whose head SHA matches the implementation commit.
+- Because those gates are unavailable on this machine, `CI-BASELINE-001` is `blocked`, `current_task_id` is cleared, and the next planned task may start without misrepresenting CI as complete.
