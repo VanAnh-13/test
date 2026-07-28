@@ -1131,3 +1131,43 @@ openclaw"; 3. "Không nói là DeerFlow, mà chỉ dựa trên công nghệ củ
 
 - Local implementation is ready, but Definition of Done explicitly requires successful `actionlint` and a real green GitHub workflow run on `hagent` whose head SHA matches the implementation commit.
 - Because those gates are unavailable on this machine, `CI-BASELINE-001` is `blocked`, `current_task_id` is cleared, and the next planned task may start without misrepresenting CI as complete.
+
+## 2026-07-28 - API-CONTRACT-001 START
+
+### Scope
+
+- Opened exactly one WIP task after `CI-BASELINE-001` was safely blocked.
+- Maker whitelist is limited to Bridge models/app, toolkit chat router, the dedicated contract test, and control files.
+- No auth, root `app.py`, package/lockfile, compose, secret, paid API, or live external call is authorized.
+
+### Baseline and public seams
+
+- Fixed review point: `583e9963dbd9`.
+- Public request seam: sync chat forwards `{message, conversation_id, context, model}`; upload additionally forwards `model`.
+- Public response seam: provider/model/route plus tool, planning, campaign, hierarchy, world-model, evaluation, execution, revision, and cost metadata.
+- Failure seam: invalid model `400`, upstream 4xx preserved, network `502`, timeout `504`, never fake HTTP `200` success.
+- Provider discovery must reflect the toolkit registry, not a duplicated hard-coded list.
+
+## 2026-07-28 - API-CONTRACT-001 DONE
+
+### Implemented scope
+
+- Standardized Bridge and toolkit request forwarding for `message`, `conversation_id`, public `context`, and `model`; upload endpoints now accept and forward `model`.
+- Kept JWT exclusively in the Authorization header, removed request-header logging, stripped principal/token fields from runtime JSON, and made persisted server world state authoritative over forwarded snapshots.
+- Exposed provider/model/route, tool, planning, campaign, hierarchy, world-model, evaluation, execution event/log, revision, and cost metadata through both response schemas.
+- Replaced the hard-coded provider list with aliases grouped from the shared toolkit model registry.
+- Made invalid models fail with HTTP 400, preserved upstream 4xx status, mapped network failures to 502 and timeouts to 504, and rejected malformed or 5xx runtime responses with 502 instead of fake HTTP 200 success.
+
+### Verification
+
+- Targeted contract suite: `27 passed`.
+- Full backend non-Ollama suite: `643 passed, 7 deselected in 70.53s`.
+- The first sandboxed full-suite attempt was discarded because Windows denied pytest temp directories and joblib named pipes; the approved outside-sandbox rerun exited 0.
+- Focused Ruff `E402,F,I` check on all four task code/test files exited 0. Full Ruff comparison reduced baseline findings from 44 to 36 and introduced no new finding class.
+- `git diff --check` and JSON validation exited 0; the working set contains only the six exact whitelisted paths.
+
+### Checker and handoff
+
+- Two independent read-only Checker launches were attempted after code freeze, but the environment stopped both at startup because the sub-agent usage quota was exhausted.
+- Following the explicit `AGENTS.md` fallback, root performed a separate acceptance, trust-boundary, error-semantics, lint-delta, test-sufficiency, and whitelist review and found no blocker. This limitation is recorded rather than represented as an independent review.
+- Multi-turn history remains intentionally deferred to `CHAT-MULTITURN-001`; this task only stabilizes the transport and response contract.

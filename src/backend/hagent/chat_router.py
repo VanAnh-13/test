@@ -7,22 +7,22 @@ Hỗ trợ cả synchronous và SSE streaming responses.
 Lưu lịch sử chat vào MongoDB database AutoML.
 """
 
-import uuid
 import logging
+import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Request
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
-from pymongo.asynchronous.database import AsyncDatabase
 from pydantic import BaseModel, Field
+from pymongo.asynchronous.database import AsyncDatabase
 
 from database.database import get_db
-from users.routers import get_current_user
 from hagent import chat_store
 from hagent.bridge.config import (
+    get_error_messages,
     get_hautoml_config,
     get_suggestions,
-    get_error_messages,
 )
+from users.routers import get_current_user
 
 logger = logging.getLogger("hagent.chat_router")
 
@@ -31,29 +31,40 @@ router = APIRouter(prefix="/api/v1/chat", tags=["HAgent Chat"])
 
 # ─── Schemas ─────────────────────────────────────────────
 
+
 class ChatRequest(BaseModel):
     message: str = Field(..., description="Nội dung tin nhắn")
-    conversation_id: str | None = Field(None, description="ID cuộc hội thoại (tạo mới nếu null)")
+    conversation_id: str | None = Field(
+        None, description="ID cuộc hội thoại (tạo mới nếu null)"
+    )
     context: dict | None = Field(None, description="Ngữ cảnh bổ sung")
-    model: str | None = Field(None, description="Tên model LLM (None = dùng default từ config)")
+    model: str | None = Field(
+        None, description="Tên model LLM (None = dùng default từ config)"
+    )
 
 
 class ChatResponse(BaseModel):
     message: str
     conversation_id: str
-    sources: list[str] = []
-    suggestions: list[str] = []
-    tool_outputs: list[dict] = []
+    sources: list[str] = Field(default_factory=list)
+    suggestions: list[str] = Field(default_factory=list)
+    tool_outputs: list[dict] = Field(default_factory=list)
     provider: str = ""
     model: str = ""
+    route: str = ""
     # World Model / planning surface (optional, deep integration)
     plan_status: str | None = None
     selected_plan: dict | None = None
+    planning: dict | None = None
     surprise: dict | None = None
     cost_metrics: dict | None = None
-    execution_events: list | None = None
+    execution_events: list = Field(default_factory=list)
+    execution_log: list = Field(default_factory=list)
+    revision_count: int = 0
     world_model: dict | None = None
+    campaign: dict | None = None
     campaign_status: str | None = None
+    hierarchy: dict | None = None
     hierarchy_status: str | None = None
     evaluation: dict | None = None
 
@@ -91,6 +102,51 @@ def _wm_summary(world_model: dict | None) -> dict | None:
         "job_ids": list(jobs.keys())[:20],
         "last_surprise": world_model.get("last_surprise"),
     }
+
+
+_CONTEXT_FIELDS = (
+    "dataset_id",
+    "dataset_name",
+    "target_column",
+    "problem_type",
+    "metric",
+    "models",
+)
+
+
+def _apply_request_context(
+    world_model: dict | None,
+    context: dict | None,
+    user_id: str,
+) -> dict:
+    """Merge only public request fields; persisted server state remains authoritative."""
+    merged = dict(world_model or {"user_id": user_id, "datasets": {}, "jobs": {}})
+    if not isinstance(context, dict):
+        return merged
+
+    public_context = {
+        key: context[key]
+        for key in _CONTEXT_FIELDS
+        if key in context and context[key] is not None
+    }
+    if public_context:
+        merged["request_context"] = public_context
+
+    dataset_id = public_context.get("dataset_id")
+    if dataset_id:
+        datasets = dict(merged.get("datasets") or {})
+        datasets.setdefault(
+            dataset_id,
+            {
+                "id": dataset_id,
+                "name": public_context.get("dataset_name") or dataset_id,
+                "target": public_context.get("target_column"),
+                "problem_type_inferred": public_context.get("problem_type"),
+            },
+        )
+        merged["datasets"] = datasets
+        merged["active_dataset_id"] = dataset_id
+    return merged
 
 
 async def _load_world_model(db: AsyncDatabase, user_id: str) -> dict | None:
@@ -137,8 +193,6 @@ async def _call_agent(
 
     # Tên model sai → 400 kèm danh sách hợp lệ, KHÔNG âm thầm dùng default
     if model_name:
-        from fastapi import HTTPException
-
         from hagent.agent.llm_config import require_model_config
 
         try:
@@ -158,6 +212,11 @@ async def _call_agent(
             db_name=db_name,
             model_name=model_name,
         )
+        plan_status = result.get("plan_status")
+        selected_plan = result.get("selected_plan")
+        planning = result.get("planning")
+        if planning is None and (plan_status is not None or selected_plan is not None):
+            planning = {"status": plan_status, "selected_plan": selected_plan}
         return {
             "message": result.get("response", ""),
             "sources": result.get("sources", []),
@@ -165,17 +224,28 @@ async def _call_agent(
             "tool_outputs": result.get("tool_outputs", []),
             "provider": result.get("provider", "hagent"),
             "model": result.get("model", ""),
-            "plan_status": result.get("plan_status"),
-            "selected_plan": result.get("selected_plan"),
+            "route": result.get("route", "direct"),
+            "plan_status": plan_status,
+            "selected_plan": selected_plan,
+            "planning": planning,
             "surprise": result.get("surprise"),
             "cost_metrics": result.get("cost_metrics"),
             "execution_events": result.get("execution_events") or [],
+            "execution_log": result.get("execution_log") or [],
+            "revision_count": result.get("revision_count") or 0,
             "world_model": result.get("world_model"),
+            "campaign": result.get("campaign"),
             "campaign_status": result.get("campaign_status"),
+            "hierarchy": result.get("hierarchy"),
             "hierarchy_status": result.get("hierarchy_status"),
             "evaluation": result.get("evaluation"),
         }
 
+    except HTTPException:
+        raise
+    except TimeoutError as exc:
+        logger.exception("Agent runtime timeout")
+        raise HTTPException(status_code=504, detail="Agent runtime timed out") from exc
     except Exception as exc:
         logger.exception("Agent runtime error")
         # Phân loại lỗi từ config
@@ -196,14 +266,37 @@ async def _call_agent(
                 detail = detail[:240] + "…"
             msg = f"{msg} ({type(exc).__name__}: {detail})"
 
-        return {
-            "message": f"⚠️ {msg}",
-            "sources": [],
-            "suggestions": ["Thử lại sau", "Kiểm tra trạng thái hệ thống"],
-            "tool_outputs": [],
-            "provider": "error",
-            "model": "",
-        }
+        raise HTTPException(status_code=500, detail=msg) from exc
+
+
+def _to_chat_response(
+    result: dict,
+    conversation_id: str,
+) -> ChatResponse:
+    return ChatResponse(
+        message=result["message"],
+        conversation_id=conversation_id,
+        sources=result.get("sources", []),
+        suggestions=result.get("suggestions", []),
+        tool_outputs=result.get("tool_outputs", []),
+        provider=result.get("provider", "hagent"),
+        model=result.get("model", ""),
+        route=result.get("route", "direct"),
+        plan_status=result.get("plan_status"),
+        selected_plan=result.get("selected_plan"),
+        planning=result.get("planning"),
+        surprise=result.get("surprise"),
+        cost_metrics=result.get("cost_metrics"),
+        execution_events=result.get("execution_events") or [],
+        execution_log=result.get("execution_log") or [],
+        revision_count=result.get("revision_count") or 0,
+        world_model=_wm_summary(result.get("world_model")),
+        campaign=result.get("campaign"),
+        campaign_status=result.get("campaign_status"),
+        hierarchy=result.get("hierarchy"),
+        hierarchy_status=result.get("hierarchy_status"),
+        evaluation=result.get("evaluation"),
+    )
 
 
 # ─── Endpoints ───────────────────────────────────────────
@@ -226,30 +319,15 @@ async def agent_run(
     conversation_id = req.conversation_id or uuid.uuid4().hex
     auth_header = request.headers.get("Authorization", "")
     user_token = (
-        auth_header.replace("Bearer ", "")
-        if auth_header.startswith("Bearer ")
-        else ""
+        auth_header.replace("Bearer ", "") if auth_header.startswith("Bearer ") else ""
     )
-    world_model = await _load_world_model(db, str(user_id))
-    # Prefer world_state from bridge context when provided
-    if isinstance(req.context, dict) and req.context.get("world_state"):
-        world_model = req.context.get("world_state") or world_model
-
-    # Seed world_model from structured chat context (dataset_id etc.) so
-    # hierarchy/campaign can run even before tools hydrate WM.
-    if isinstance(req.context, dict):
-        world_model = dict(world_model or {"user_id": str(user_id), "datasets": {}, "jobs": {}})
-        ctx_ds = req.context.get("dataset_id")
-        if ctx_ds:
-            datasets = dict(world_model.get("datasets") or {})
-            if ctx_ds not in datasets:
-                datasets[ctx_ds] = {
-                    "id": ctx_ds,
-                    "name": req.context.get("dataset_name") or ctx_ds,
-                    "target": req.context.get("target_column"),
-                }
-            world_model["datasets"] = datasets
-            world_model["active_dataset_id"] = ctx_ds
+    server_world_model = await _load_world_model(db, str(user_id))
+    forwarded_world_model = (
+        req.context.get("world_state") if isinstance(req.context, dict) else None
+    )
+    merged_world_model = dict(forwarded_world_model or {})
+    merged_world_model.update(server_world_model or {})
+    world_model = _apply_request_context(merged_world_model, req.context, str(user_id))
 
     client = getattr(db, "client", None)
     db_name = getattr(db, "name", None)
@@ -300,24 +378,7 @@ async def agent_run(
         except Exception as exc:
             logger.debug("agent-run WM persist failed: %s", exc)
 
-    return ChatResponse(
-        message=result["message"],
-        conversation_id=conversation_id,
-        sources=result.get("sources", []),
-        suggestions=result.get("suggestions", []),
-        tool_outputs=result.get("tool_outputs", []),
-        provider=result.get("provider", "hagent"),
-        model=result.get("model", "multi-agent"),
-        plan_status=result.get("plan_status"),
-        selected_plan=result.get("selected_plan"),
-        surprise=result.get("surprise"),
-        cost_metrics=result.get("cost_metrics"),
-        execution_events=result.get("execution_events"),
-        world_model=_wm_summary(result.get("world_model")),
-        campaign_status=result.get("campaign_status"),
-        hierarchy_status=result.get("hierarchy_status"),
-        evaluation=result.get("evaluation"),
-    )
+    return _to_chat_response(result, conversation_id)
 
 
 @router.post("/", response_model=ChatResponse)
@@ -333,13 +394,17 @@ async def chat(
 
     # Lấy token từ header
     auth_header = request.headers.get("Authorization", "")
-    user_token = auth_header.replace("Bearer ", "") if auth_header.startswith("Bearer ") else ""
+    user_token = (
+        auth_header.replace("Bearer ", "") if auth_header.startswith("Bearer ") else ""
+    )
 
     # Lưu tin nhắn người dùng
     await chat_store.add_message(db, conversation_id, user_id, "user", req.message)
 
     # Load World Model
-    world_model = await _load_world_model(db, str(user_id))
+    world_model = _apply_request_context(
+        await _load_world_model(db, str(user_id)), req.context, str(user_id)
+    )
     client = getattr(db, "client", None)
     db_name = getattr(db, "name", None)
 
@@ -355,26 +420,11 @@ async def chat(
     )
 
     # Lưu phản hồi trợ lý
-    await chat_store.add_message(db, conversation_id, user_id, "assistant", result["message"])
-
-    return ChatResponse(
-        message=result["message"],
-        conversation_id=conversation_id,
-        sources=result.get("sources", []),
-        suggestions=result.get("suggestions", []),
-        tool_outputs=result.get("tool_outputs", []),
-        provider=result.get("provider", ""),
-        model=result.get("model", ""),
-        plan_status=result.get("plan_status"),
-        selected_plan=result.get("selected_plan"),
-        surprise=result.get("surprise"),
-        cost_metrics=result.get("cost_metrics"),
-        execution_events=result.get("execution_events"),
-        world_model=_wm_summary(result.get("world_model")),
-        campaign_status=result.get("campaign_status"),
-        hierarchy_status=result.get("hierarchy_status"),
-        evaluation=result.get("evaluation"),
+    await chat_store.add_message(
+        db, conversation_id, user_id, "assistant", result["message"]
     )
+
+    return _to_chat_response(result, conversation_id)
 
 
 @router.post("/stream")
@@ -399,7 +449,9 @@ async def chat_stream(
     conversation_id = req.conversation_id or uuid.uuid4().hex
 
     auth_header = request.headers.get("Authorization", "")
-    user_token = auth_header.replace("Bearer ", "") if auth_header.startswith("Bearer ") else ""
+    user_token = (
+        auth_header.replace("Bearer ", "") if auth_header.startswith("Bearer ") else ""
+    )
 
     # Lưu tin nhắn người dùng
     await chat_store.add_message(db, conversation_id, user_id, "user", req.message)
@@ -422,6 +474,7 @@ async def chat_stream(
             # Thu thập response để lưu DB
             if '"type": "done"' in chunk:
                 import json
+
                 try:
                     data = json.loads(chunk.replace("data: ", "").strip())
                     full_response = data.get("response", "")
@@ -431,7 +484,11 @@ async def chat_stream(
         # Lưu phản hồi hoàn chỉnh
         if full_response:
             await chat_store.add_message(
-                db, conversation_id, user_id, "assistant", full_response,
+                db,
+                conversation_id,
+                user_id,
+                "assistant",
+                full_response,
             )
 
     return StreamingResponse(
@@ -452,6 +509,7 @@ async def chat_with_file(
     message: str = Form(...),
     file: UploadFile = File(...),
     conversation_id: str | None = Form(None),
+    model: str | None = Form(None),
     db: AsyncDatabase = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
@@ -461,9 +519,12 @@ async def chat_with_file(
     hautoml_cfg = get_hautoml_config()
 
     auth_header = request.headers.get("Authorization", "")
-    user_token = auth_header.replace("Bearer ", "") if auth_header.startswith("Bearer ") else ""
+    user_token = (
+        auth_header.replace("Bearer ", "") if auth_header.startswith("Bearer ") else ""
+    )
 
     import httpx
+
     file_info = ""
     try:
         file_content = await file.read()
@@ -473,7 +534,9 @@ async def chat_with_file(
                 files={"files": (file.filename, file_content, file.content_type)},
             )
             if resp.status_code == 200:
-                file_info = f"\n[File đã upload: {file.filename} — {len(file_content)} bytes]"
+                file_info = (
+                    f"\n[File đã upload: {file.filename} — {len(file_content)} bytes]"
+                )
             else:
                 file_info = f"\n[Upload file thất bại: {resp.status_code}]"
     except Exception as e:
@@ -489,26 +552,19 @@ async def chat_with_file(
         user_token=user_token,
         user_id=str(user_id),
         world_model=world_model,
-        model_name=req.model,
+        model_name=model,
     )
 
     await chat_store.add_message(db, conv_id, user_id, "assistant", result["message"])
 
-    return ChatResponse(
-        message=result["message"],
-        conversation_id=conv_id,
-        sources=result.get("sources", []),
-        suggestions=result.get("suggestions", []),
-        tool_outputs=result.get("tool_outputs", []),
-        provider=result.get("provider", ""),
-        model=result.get("model", ""),
-    )
+    return _to_chat_response(result, conv_id)
 
 
 @router.get("/health")
 async def health_check():
     """Kiểm tra kết nối — HAgent agent + HAutoML backend."""
     import httpx
+
     hautoml_cfg = get_hautoml_config()
 
     hautoml_ok = False
@@ -521,6 +577,7 @@ async def health_check():
 
     # Liệt kê LLM models từ config
     from hagent.agent.llm_config import list_available_models
+
     models = list_available_models()
 
     return {
@@ -542,6 +599,7 @@ async def get_chat_suggestions():
 async def list_llm_models():
     """Liệt kê các LLM models khả dụng."""
     from hagent.agent.llm_config import list_available_models
+
     return {"models": list_available_models()}
 
 
@@ -552,7 +610,9 @@ async def clear_conversation(
     current_user: dict = Depends(get_current_user),
 ):
     """Xóa cuộc hội thoại."""
-    deleted = await chat_store.delete_conversation(db, conversation_id, current_user["_id"])
+    deleted = await chat_store.delete_conversation(
+        db, conversation_id, current_user["_id"]
+    )
     if not deleted:
         raise HTTPException(status_code=404, detail="Không tìm thấy cuộc hội thoại")
     return {"status": "deleted", "conversation_id": conversation_id}
@@ -575,7 +635,9 @@ async def get_conversation_messages(
     current_user: dict = Depends(get_current_user),
 ):
     """Lấy toàn bộ tin nhắn của một cuộc hội thoại."""
-    messages = await chat_store.get_message_history(db, conversation_id, current_user["_id"], limit=200)
+    messages = await chat_store.get_message_history(
+        db, conversation_id, current_user["_id"], limit=200
+    )
     return {
         "conversation_id": conversation_id,
         "messages": [

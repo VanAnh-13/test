@@ -1477,6 +1477,42 @@
         "tested_at": "2026-07-28T10:50:15+07:00",
         "notes": "Local implementation and all available local gates pass. The task remains blocked, not done, because mandatory actionlint and a real successful GitHub workflow run on hagent at the implementation commit SHA cannot be verified on this machine. Protected .github scope was explicitly approved. Baseline: b714f7d4028821e88e9ecc451ab761bad97dd281."
       }
+    },
+    {
+      "id": "API-CONTRACT-001",
+      "title": "Standardize Bridge to toolkit chat and response contracts",
+      "status": "done",
+      "acceptance_criteria": [
+        "Sync chat accepts and forwards the canonical message, conversation_id, context, and model contract; upload accepts and forwards model; trusted server context overrides untrusted client fields.",
+        "Bridge responses expose the complete provider/model/route, tool, planning, campaign, hierarchy, world-model, evaluation, execution, revision, and cost metadata returned by the toolkit.",
+        "The providers endpoint reflects the toolkit model registry rather than a hard-coded list.",
+        "Invalid models return 400, upstream 4xx status is preserved, network failures return 502, timeouts return 504, and failures are never converted to HTTP 200 success.",
+        "Targeted contract tests, full non-Ollama suite, independent Checker review, and whitelist validation pass."
+      ],
+      "allowed_files": [
+        "src/backend/hagent/bridge/models.py",
+        "src/backend/hagent/bridge/app.py",
+        "src/backend/hagent/chat_router.py",
+        "src/backend/tests/test_bridge_agent_contract.py",
+        "feature_list.json",
+        "claude-progress.md"
+      ],
+      "test_commands": [
+        "cd src/backend && PYTHONUTF8=1 .venv/Scripts/python.exe -m pytest tests/test_bridge_agent_contract.py -q --timeout=300",
+        "cd src/backend && PYTHONUTF8=1 .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=300"
+      ],
+      "verification": {
+        "status": "passed",
+        "commands_run": [
+          "PYTHONUTF8=1 .venv/Scripts/python.exe -m pytest tests/test_bridge_agent_contract.py -q --timeout=300 (exit 0; 27 passed)",
+          "PYTHONUTF8=1 .venv/Scripts/python.exe -m pytest tests -m not-ollama -q --timeout=300 outside sandbox (exit 0; 643 passed, 7 deselected)",
+          "ruff check --select E402,F,I on the four task code/test files (exit 0)",
+          "git diff --check (exit 0)",
+          "python -m json.tool feature_list.json (exit 0)"
+        ],
+        "tested_at": "2026-07-28T13:28:03+07:00",
+        "notes": "Contract behavior is covered by 27 tests. The initial sandboxed full-suite attempt was invalidated by Windows temp/named-pipe permission errors; the approved outside-sandbox rerun passed. Two independent Checker launches were attempted but both were stopped by the environment's agent usage quota; the AGENTS.md fallback self-review found no blocker, no new lint class versus baseline, and only whitelisted files changed."
+      }
     }
   ]
 }

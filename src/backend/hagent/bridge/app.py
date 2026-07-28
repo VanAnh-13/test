@@ -11,52 +11,65 @@ Xử lý:
   - Chuyển tiếp upload file
 """
 
-import uuid
-import logging
 import asyncio
+import logging
 import os
 import re
 import time
+import uuid
 from contextlib import asynccontextmanager
 
 import httpx
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Request, Response
+from fastapi import (
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    UploadFile,
+)
 from fastapi.middleware.cors import CORSMiddleware
 
+from ..world import updater as world_updater
 from ..world.schema import WorldState
 from ..world.state_store import WorldStateStore
-from ..world import updater as world_updater
-from .config import get_world_state_config
-
-logger = logging.getLogger(__name__)
-
+from . import conversation as conv_store
+from .auth import TokenPayload, get_current_user, get_optional_user
 from .config import (
     get_bridge_config,
     get_hautoml_config,
+    get_llm_config,
+    get_llm_models,
     get_mongodb_config,
+    get_world_state_config,
 )
 from .models import (
     ChatRequest,
     ChatResponse,
     HealthResponse,
-    SuggestionsResponse,
     ProviderInfo,
     ProvidersResponse,
+    SuggestionsResponse,
 )
-from .auth import TokenPayload, get_current_user, get_optional_user
-from . import conversation as conv_store
 
 logger = logging.getLogger("hagent.bridge")
 
-UUID_PATTERN = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+UUID_PATTERN = (
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+)
 JOB_ID_LINE_RE = re.compile(rf"Job\s*ID\s*[:\-]\s*`?({UUID_PATTERN})`?", re.IGNORECASE)
 GENERIC_UUID_RE = re.compile(rf"\b({UUID_PATTERN})\b")
 TRAINING_STARTED_RE = re.compile(
     r"training\s+started|training\s+job\s+initiated|bắt\s+đầu\s+huấn\s+luyện|huấn\s+luyện\s+đã\s+bắt\s+đầu",
     re.IGNORECASE,
 )
-TRAINING_POLL_INTERVAL_SECONDS = float(os.getenv("HAGENT_TRAINING_POLL_INTERVAL_SECONDS", "10"))
-TRAINING_POLL_TIMEOUT_SECONDS = int(os.getenv("HAGENT_TRAINING_POLL_TIMEOUT_SECONDS", "7200"))
+TRAINING_POLL_INTERVAL_SECONDS = float(
+    os.getenv("HAGENT_TRAINING_POLL_INTERVAL_SECONDS", "10")
+)
+TRAINING_POLL_TIMEOUT_SECONDS = int(
+    os.getenv("HAGENT_TRAINING_POLL_TIMEOUT_SECONDS", "7200")
+)
 _training_watch_tasks: dict[str, asyncio.Task] = {}
 
 
@@ -80,7 +93,7 @@ async def lifespan(app: FastAPI):
         client=conv_store.get_db_client(),
         db_name=mongo_cfg["db_name"],
         collection_name=world_state_cfg["collection_name"],
-        ttl_seconds=world_state_cfg["ttl_seconds"]
+        ttl_seconds=world_state_cfg["ttl_seconds"],
     )
     await app.state.world_state_store.ensure_indexes()
     logger.info("WorldStateStore đã khởi tạo ✓")
@@ -109,7 +122,9 @@ async def lifespan(app: FastAPI):
         for task in list(_training_watch_tasks.values()):
             if not task.done():
                 task.cancel()
-        await asyncio.gather(*list(_training_watch_tasks.values()), return_exceptions=True)
+        await asyncio.gather(
+            *list(_training_watch_tasks.values()), return_exceptions=True
+        )
         _training_watch_tasks.clear()
 
     await conv_store.close_db()
@@ -138,6 +153,33 @@ hagent_bridge.add_middleware(
 
 
 # ─── Hàm gọi LLM ───────────────────────────────────────
+_RESERVED_RUNTIME_CONTEXT_KEYS = {"user_id", "user_token"}
+
+
+def _validate_model_name(model_name: str | None) -> None:
+    if model_name is None:
+        return
+    available = [
+        str(model.get("name")) for model in get_llm_models() if model.get("name")
+    ]
+    if model_name not in available:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Model {model_name!r} does not exist in the configured registry. "
+                f"Valid names: {available}"
+            ),
+        )
+
+
+def _upstream_error_detail(response: httpx.Response) -> object:
+    try:
+        payload = response.json()
+    except ValueError:
+        return f"HAgent runtime returned HTTP {response.status_code}"
+    if isinstance(payload, dict) and "detail" in payload:
+        return payload["detail"]
+    return f"HAgent runtime returned HTTP {response.status_code}"
 
 
 async def _call_agent_runtime(
@@ -147,6 +189,7 @@ async def _call_agent_runtime(
     user_id: str | None = None,
     session_id: str | None = None,
     context_extra: dict | None = None,
+    model_name: str | None = None,
 ) -> dict:
     """
     HAgent path: Bridge → toolkit /api/v1/chat/agent-run (LangGraph).
@@ -160,19 +203,18 @@ async def _call_agent_runtime(
         "HAGENT_AGENT_RUN_URL",
         f"{base}/api/v1/chat/agent-run",
     )
-    context = {
-        "user_token": user_token or "",
-        "user_id": user_id or "",
-        "hautoml_url": base,
-    }
-    if context_extra:
-        context.update(context_extra)
-
+    _validate_model_name(model_name)
+    context = dict(context_extra or {})
+    for key in _RESERVED_RUNTIME_CONTEXT_KEYS:
+        context.pop(key, None)
+    context["hautoml_url"] = base
     payload = {
         "message": message,
-        "conversation_id": session_id or user_id or "hagent_session",
+        "conversation_id": session_id or "hagent_session",
         "context": context,
     }
+    if model_name is not None:
+        payload["model"] = model_name
     headers = {"Content-Type": "application/json"}
     if user_token:
         headers["Authorization"] = f"Bearer {user_token}"
@@ -180,29 +222,35 @@ async def _call_agent_runtime(
     try:
         async with httpx.AsyncClient(timeout=300) as client:
             resp = await client.post(agent_url, json=payload, headers=headers)
-            if resp.status_code == 200:
-                data = resp.json()
-                return {
-                    "message": data.get("message", data.get("response", "")),
-                    "sources": data.get("sources", []),
-                    "suggestions": data.get("suggestions", []),
-                    "provider": data.get("provider", "hagent"),
-                    "model": data.get("model", "multi-agent"),
-                    "tool_outputs": data.get("tool_outputs", []),
-                    "campaign": data.get("campaign"),
-                    "hierarchy": data.get("hierarchy"),
-                    "cost_metrics": data.get("cost_metrics"),
-                }
-            logger.warning("HAgent runtime HTTP %d: %s", resp.status_code, resp.text)
-            return _error_response(
-                f"Lỗi HAgent runtime (HTTP {resp.status_code})"
-            )
-    except httpx.ConnectError:
-        logger.warning("Không kết nối được HAgent runtime tại %s", agent_url)
-        return _error_response(f"Mất kết nối tới HAgent runtime tại {agent_url}")
-    except Exception as e:
-        logger.error("Lỗi HAgent runtime: %s", e)
-        return _error_response(f"Lỗi truy vấn HAgent runtime: {str(e)}")
+        if 200 <= resp.status_code < 300:
+            data = resp.json()
+            if not isinstance(data, dict):
+                raise HTTPException(status_code=502, detail="Invalid runtime response")
+            data = dict(data)
+            message = data.get("message", data.get("response"))
+            if not isinstance(message, str):
+                raise HTTPException(status_code=502, detail="Invalid runtime response")
+            data["message"] = message
+            return data
+        status_code = resp.status_code if 400 <= resp.status_code < 500 else 502
+        logger.warning("HAgent runtime returned HTTP %d", resp.status_code)
+        raise HTTPException(
+            status_code=status_code,
+            detail=_upstream_error_detail(resp),
+        )
+    except HTTPException:
+        raise
+    except httpx.TimeoutException as exc:
+        logger.warning("HAgent runtime timed out at %s", agent_url)
+        raise HTTPException(status_code=504, detail="HAgent runtime timed out") from exc
+    except httpx.RequestError as exc:
+        logger.warning("Cannot reach HAgent runtime at %s", agent_url)
+        raise HTTPException(
+            status_code=502, detail="HAgent runtime unavailable"
+        ) from exc
+    except Exception as exc:
+        logger.exception("Invalid HAgent runtime response")
+        raise HTTPException(status_code=502, detail="Invalid runtime response") from exc
 
 
 async def _call_hagent_gateway(
@@ -212,6 +260,7 @@ async def _call_hagent_gateway(
     user_id: str | None = None,
     session_id: str | None = None,
     context_extra: dict | None = None,
+    model_name: str | None = None,
 ) -> dict:
     """Gọi HAgent runtime (LangGraph trên toolkit) — runtime duy nhất.
 
@@ -225,18 +274,8 @@ async def _call_hagent_gateway(
         user_id=user_id,
         session_id=session_id,
         context_extra=context_extra,
+        model_name=model_name,
     )
-
-
-def _error_response(msg: str) -> dict:
-    """Tạo phản hồi lỗi chuẩn."""
-    return {
-        "message": f"⚠️ {msg}",
-        "sources": [],
-        "suggestions": ["Thử lại sau"],
-        "provider": "hagent",
-        "model": "hagent-agent",
-    }
 
 
 def _extract_training_job_id(message: str) -> str | None:
@@ -297,12 +336,14 @@ def _format_training_success_message(job_id: str, job: dict) -> str:
 
 def _format_training_failed_message(job_id: str, job: dict) -> str:
     error_detail = job.get("infor") or job.get("error") or "Không rõ nguyên nhân"
-    return "\n".join([
-        "❌ Job training kết thúc với trạng thái lỗi.",
-        f"- Job ID: {job_id}",
-        f"- Chi tiết: {error_detail}",
-        "Bạn có thể gửi lại lệnh train hoặc kiểm tra cấu hình dataset/features.",
-    ])
+    return "\n".join(
+        [
+            "❌ Job training kết thúc với trạng thái lỗi.",
+            f"- Job ID: {job_id}",
+            f"- Chi tiết: {error_detail}",
+            "Bạn có thể gửi lại lệnh train hoặc kiểm tra cấu hình dataset/features.",
+        ]
+    )
 
 
 async def _poll_training_result_and_notify(
@@ -423,6 +464,31 @@ def _world_state_context(world_state: WorldState | None) -> dict:
     return world_state.to_dict() if world_state else {}
 
 
+_PUBLIC_CHAT_CONTEXT_FIELDS = (
+    "dataset_id",
+    "dataset_name",
+    "target_column",
+    "problem_type",
+    "metric",
+    "models",
+)
+
+
+def _runtime_context(
+    client_context: dict | None,
+    world_state: WorldState | None,
+) -> dict:
+    context = {
+        key: client_context[key]
+        for key in _PUBLIC_CHAT_CONTEXT_FIELDS
+        if isinstance(client_context, dict)
+        and key in client_context
+        and client_context[key] is not None
+    }
+    context["world_state"] = _world_state_context(world_state)
+    return context
+
+
 async def _apply_tool_outputs_to_world_state(
     world_state_store: WorldStateStore,
     user_id: str,
@@ -488,6 +554,33 @@ async def _apply_tool_outputs_to_world_state(
         await world_state_store.upsert(user_id, meta_patch)
 
 
+def _to_chat_response(result: dict, conversation_id: str) -> ChatResponse:
+    return ChatResponse(
+        message=result["message"],
+        conversation_id=conversation_id,
+        sources=result.get("sources", []),
+        suggestions=result.get("suggestions", []),
+        provider=result.get("provider", "hagent"),
+        model=result.get("model", ""),
+        route=result.get("route", "direct"),
+        tool_outputs=result.get("tool_outputs", []),
+        plan_status=result.get("plan_status"),
+        selected_plan=result.get("selected_plan"),
+        planning=result.get("planning"),
+        surprise=result.get("surprise"),
+        cost_metrics=result.get("cost_metrics"),
+        execution_events=result.get("execution_events") or [],
+        execution_log=result.get("execution_log") or [],
+        revision_count=result.get("revision_count") or 0,
+        world_model=result.get("world_model"),
+        campaign=result.get("campaign"),
+        campaign_status=result.get("campaign_status"),
+        hierarchy=result.get("hierarchy"),
+        hierarchy_status=result.get("hierarchy_status"),
+        evaluation=result.get("evaluation"),
+    )
+
+
 # ─── Endpoints ───────────────────────────────────────────
 
 
@@ -497,7 +590,7 @@ async def chat(
     req: ChatRequest,
     user: TokenPayload = Depends(get_current_user),
 ):
-    logger.debug(f"CHAT ENDPOINT HEADERS: {request.headers}")
+    _validate_model_name(req.model)
     conversation_id = req.conversation_id or uuid.uuid4().hex
     world_state_store: WorldStateStore = request.app.state.world_state_store
 
@@ -514,7 +607,9 @@ async def chat(
     )
 
     # Lấy lịch sử hội thoại
-    history = await conv_store.get_message_history(conversation_id, user.user_id, limit=20)
+    history = await conv_store.get_message_history(
+        conversation_id, user.user_id, limit=20
+    )
     history_dicts = [{"role": m.role, "content": m.content} for m in history[:-1]]
 
     # Gọi HAgent runtime với world_state trong context
@@ -524,7 +619,8 @@ async def chat(
         user_token=user.raw_token,
         user_id=user.user_id,
         session_id=conversation_id,
-        context_extra={"world_state": _world_state_context(world_state_snapshot)}
+        context_extra=_runtime_context(req.context, world_state_snapshot),
+        model_name=req.model,
     )
 
     await _apply_tool_outputs_to_world_state(world_state_store, user.user_id, result)
@@ -548,24 +644,7 @@ async def chat(
             job_id=tracked_job_id,
         )
 
-    return ChatResponse(
-        message=result["message"],
-        conversation_id=conversation_id,
-        sources=result.get("sources", []),
-        suggestions=result.get("suggestions", []),
-        provider=result.get("provider", ""),
-        model=result.get("model", ""),
-        tool_outputs=result.get("tool_outputs", []),
-        plan_status=result.get("plan_status"),
-        selected_plan=result.get("selected_plan"),
-        surprise=result.get("surprise"),
-        cost_metrics=result.get("cost_metrics"),
-        execution_events=result.get("execution_events"),
-        world_model=result.get("world_model"),
-        campaign_status=result.get("campaign_status"),
-        hierarchy_status=result.get("hierarchy_status"),
-        evaluation=result.get("evaluation"),
-    )
+    return _to_chat_response(result, conversation_id)
 
 
 @hagent_bridge.post("/api/v1/chat/upload", response_model=ChatResponse)
@@ -574,9 +653,11 @@ async def chat_with_file(
     message: str = Form(...),
     file: UploadFile = File(...),
     conversation_id: str | None = Form(None),
+    model: str | None = Form(None),
     user: TokenPayload = Depends(get_current_user),
 ):
     """Chat kèm upload file — chuyển tiếp file tới HAutoML."""
+    _validate_model_name(model)
     hautoml_cfg = get_hautoml_config()
     conv_id = conversation_id or uuid.uuid4().hex
     world_state_store: WorldStateStore = request.app.state.world_state_store
@@ -592,7 +673,7 @@ async def chat_with_file(
 
         # Xác định data_type từ đuôi file
         filename = file.filename or "uploaded_data.csv"
-        data_type = filename.split('.')[-1].lower() if '.' in filename else "csv"
+        data_type = filename.split(".")[-1].lower() if "." in filename else "csv"
 
         async with httpx.AsyncClient(timeout=60) as client:
             resp = await client.post(
@@ -601,15 +682,15 @@ async def chat_with_file(
                     "data_name": filename,
                     "data_type": data_type,
                 },
-                files={
-                    "file_data": (filename, file_content, file.content_type)
-                },
+                files={"file_data": (filename, file_content, file.content_type)},
                 headers={"Authorization": f"Bearer {user.raw_token}"},
             )
             if resp.status_code == 200:
                 file_info = f"\n[File đã upload vào hệ thống dataset: {filename} — {len(file_content)} bytes]"
             else:
-                file_info = f"\n[Upload file thất bại: {resp.status_code} - {resp.text}]"
+                file_info = (
+                    f"\n[Upload file thất bại: {resp.status_code} - {resp.text}]"
+                )
     except Exception as e:
         file_info = f"\n[Lỗi upload file: {e}]"
 
@@ -625,14 +706,19 @@ async def chat_with_file(
         user_token=user.raw_token,
         user_id=user.user_id,
         session_id=conv_id,
-        context_extra={"world_state": _world_state_context(world_state_snapshot)}
+        context_extra=_runtime_context(None, world_state_snapshot),
+        model_name=model,
     )
 
     await _apply_tool_outputs_to_world_state(world_state_store, user.user_id, result)
 
     await conv_store.add_message(
-        conv_id, user.user_id, "assistant", result["message"],
-        result.get("provider", ""), result.get("model", ""),
+        conv_id,
+        user.user_id,
+        "assistant",
+        result["message"],
+        result.get("provider", ""),
+        result.get("model", ""),
     )
 
     tracked_job_id = _extract_training_job_id(result["message"])
@@ -644,21 +730,7 @@ async def chat_with_file(
             job_id=tracked_job_id,
         )
 
-    return ChatResponse(
-        message=result["message"], conversation_id=conv_id,
-        sources=result.get("sources", []), suggestions=result.get("suggestions", []),
-        provider=result.get("provider", ""), model=result.get("model", ""),
-        tool_outputs=result.get("tool_outputs", []),
-        plan_status=result.get("plan_status"),
-        selected_plan=result.get("selected_plan"),
-        surprise=result.get("surprise"),
-        cost_metrics=result.get("cost_metrics"),
-        execution_events=result.get("execution_events"),
-        world_model=result.get("world_model"),
-        campaign_status=result.get("campaign_status"),
-        hierarchy_status=result.get("hierarchy_status"),
-        evaluation=result.get("evaluation"),
-    )
+    return _to_chat_response(result, conv_id)
 
 
 @hagent_bridge.get("/api/v1/chat/health", response_model=HealthResponse)
@@ -667,10 +739,7 @@ async def health_check():
     hautoml_cfg = get_hautoml_config()
     base = hautoml_cfg["base_url"].rstrip("/")
     # Ưu tiên URL agent/toolkit tường minh, fallback HAutoML base
-    runtime_url = (
-        os.getenv("HAGENT_URL")
-        or base
-    )
+    runtime_url = os.getenv("HAGENT_URL") or base
 
     # Kiểm tra agent runtime
     hagent_ok = False
@@ -735,19 +804,37 @@ async def clear_conversation(
 async def list_providers(
     user: TokenPayload | None = Depends(get_optional_user),
 ):
-    """Liệt kê tất cả LLM provider khả dụng. Giờ chỉ còn HAgent."""
+    """List configured model aliases grouped by their toolkit provider."""
+    del user
+    registry = [model for model in get_llm_models() if model.get("name")]
+    grouped: dict[str, list[str]] = {}
+    for model in registry:
+        provider_id = str(model.get("provider") or "unknown")
+        grouped.setdefault(provider_id, []).append(str(model["name"]))
+
+    default_model = str(get_llm_config().get("default_model") or "")
+    if not default_model and registry:
+        default_model = str(registry[0]["name"])
+    default_entry = next(
+        (model for model in registry if str(model["name"]) == default_model),
+        None,
+    )
+    default_provider = (
+        str(default_entry.get("provider") or "unknown") if default_entry else ""
+    )
     providers = [
         ProviderInfo(
-            name="HAgent",
-            provider_id="hagent",
-            models=["hagent-agent"],
+            name=provider_id.replace("_", " ").title(),
+            provider_id=provider_id,
+            models=model_names,
             available=True,
-            description="✅ HAgent",
+            description="Configured in the toolkit model registry",
         )
+        for provider_id, model_names in grouped.items()
     ]
     return ProvidersResponse(
-        default_provider="hagent",
-        default_model="hagent-agent",
+        default_provider=default_provider,
+        default_model=default_model,
         providers=providers,
     )
 
@@ -804,7 +891,7 @@ async def get_conversation_history(
     conversation = await conv_store.get_conversation(conversation_id, user.user_id)
     if not conversation:
         raise HTTPException(status_code=404, detail="Không tìm thấy cuộc hội thoại")
-    
+
     return {
         "conversation_id": conversation.conversation_id,
         "created_at": conversation.created_at,
@@ -818,10 +905,10 @@ async def get_conversation_history(
                 "content": msg.content,
                 "timestamp": msg.timestamp.isoformat() if msg.timestamp else None,
                 "provider": msg.provider,
-                "model": msg.model
+                "model": msg.model,
             }
             for msg in conversation.messages
-        ]
+        ],
     }
 
 
@@ -831,6 +918,7 @@ async def get_conversation_history(
 def main():
     """Chạy bridge server với uvicorn."""
     import uvicorn
+
     cfg = get_bridge_config()
     uvicorn.run(
         "hagent.bridge.app:hagent_bridge",

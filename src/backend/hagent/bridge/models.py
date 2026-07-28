@@ -6,16 +6,19 @@ Tất cả giá trị mặc định được tải từ hagent.yaml thông qua c
 """
 
 from datetime import datetime
-from pydantic import BaseModel, Field
 
+from pydantic import BaseModel, Field
 
 # ─── Chat ────────────────────────────────────────────────
 
 
 class ChatRequest(BaseModel):
     """Schema cho request chat — provider và model là tùy chọn."""
+
     message: str = Field(..., description="Nội dung tin nhắn")
-    conversation_id: str | None = Field(None, description="ID cuộc hội thoại (tạo mới nếu null)")
+    conversation_id: str | None = Field(
+        None, description="ID cuộc hội thoại (tạo mới nếu null)"
+    )
     context: dict | None = Field(None, description="Ngữ cảnh bổ sung")
     provider: str | None = Field(None, description="Provider LLM — xem hagent.yaml")
     model: str | None = Field(None, description="Model cụ thể — xem hagent.yaml")
@@ -23,21 +26,28 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     """Schema cho response chat."""
+
     message: str
     conversation_id: str
-    sources: list[str] = []
-    suggestions: list[str] = []
+    sources: list[str] = Field(default_factory=list)
+    suggestions: list[str] = Field(default_factory=list)
     provider: str = ""
     model: str = ""
-    tool_outputs: list[dict] = []
+    route: str = ""
+    tool_outputs: list[dict] = Field(default_factory=list)
     # World Model / planning surface
     plan_status: str | None = None
     selected_plan: dict | None = None
+    planning: dict | None = None
     surprise: dict | None = None
     cost_metrics: dict | None = None
-    execution_events: list | None = None
+    execution_events: list = Field(default_factory=list)
+    execution_log: list = Field(default_factory=list)
+    revision_count: int = 0
     world_model: dict | None = None
+    campaign: dict | None = None
     campaign_status: str | None = None
+    hierarchy: dict | None = None
     hierarchy_status: str | None = None
     evaluation: dict | None = None
 
@@ -47,6 +57,7 @@ class ChatResponse(BaseModel):
 
 class HealthResponse(BaseModel):
     """Schema cho health check — tất cả giá trị từ YAML."""
+
     hagent_url: str
     connected: bool
     hautoml_connected: bool
@@ -61,6 +72,7 @@ class HealthResponse(BaseModel):
 
 class SuggestionsResponse(BaseModel):
     """Schema cho gợi ý chat ban đầu."""
+
     suggestions: list[str]
 
 
@@ -69,6 +81,7 @@ class SuggestionsResponse(BaseModel):
 
 class ProviderInfo(BaseModel):
     """Thông tin một provider — dữ liệu từ YAML."""
+
     name: str
     provider_id: str
     models: list[str]
@@ -78,6 +91,7 @@ class ProviderInfo(BaseModel):
 
 class ProvidersResponse(BaseModel):
     """Danh sách tất cả providers — dữ liệu từ YAML."""
+
     default_provider: str
     default_model: str
     providers: list[ProviderInfo]
@@ -88,6 +102,7 @@ class ProvidersResponse(BaseModel):
 
 class ConversationMessage(BaseModel):
     """Một tin nhắn trong cuộc hội thoại."""
+
     role: str
     content: str
     timestamp: datetime | None = None
@@ -97,9 +112,10 @@ class ConversationMessage(BaseModel):
 
 class Conversation(BaseModel):
     """Một cuộc hội thoại đầy đủ."""
+
     conversation_id: str
     user_id: str
-    messages: list[ConversationMessage] = []
+    messages: list[ConversationMessage] = Field(default_factory=list)
     created_at: datetime | None = None
     updated_at: datetime | None = None
     provider: str = ""
