@@ -34,7 +34,8 @@ auth:
 # ── Bộ nhớ (Phase 3 — Context Engineering) ───────────────
 memory:
   enabled: true
-  backend: "local"           # local | mongodb
+  backend: "auto"            # auto | local | mongodb
+  collection: "memory_facts"
   storage_dir: "./data/memory"
   max_facts: 15              # Max facts inject vào prompt
   extraction:

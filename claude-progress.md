@@ -1245,3 +1245,39 @@ openclaw"; 3. "Không nói là DeerFlow, mà chỉ dựa trên công nghệ củ
 - Independent sub-agent review remained unavailable because the environment quota was exhausted.
 - The explicit `AGENTS.md` fallback self-review checked config semantics, failure filtering, provenance/source boundaries, deterministic keys, regression risk, and the five-file whitelist and found no blocker.
 - Mongo persistence remains deferred to the next task, `MEM-MONGO-002`.
+
+## 2026-07-28 - MEM-MONGO-002 START
+
+### Scope
+
+- Opened exactly one WIP task after committing `MEM-CORE-001` at `960d37b4481f`.
+- Maker scope is limited to the Mongo fact store, memory factory, memory YAML stanza, dedicated tests, and control files.
+- No dependency, lockfile, compose, auth, API, or migration file is in scope.
+
+### Acceptance seams
+
+- Compound unique identity is `(user_id, key)` and every operation is owner-scoped.
+- Save is an upsert while reads reconstruct the existing `Fact` interface.
+- `backend: auto` chooses Mongo only when `MONGODB_CONNECT` is configured; absence uses local dev/test storage.
+- Any configured Mongo initialization/runtime failure is surfaced and never converted into a local fallback.
+
+## 2026-07-28 - MEM-MONGO-002 COMPLETE
+
+### Delivered
+
+- Added an asynchronous `MongoFactStore` with a unique `(user_id, key)` index, owner-scoped CRUD/search, access counting, bounded results, and upsert persistence.
+- Changed memory `backend: auto` to select Mongo only from the presence of `MONGODB_CONNECT`; an empty or failing configured Mongo path now fails closed without local fallback.
+- Added 11 focused tests covering storage documents, all owner boundaries, selection semantics, runtime failures, zero limits, and YAML defaults.
+
+### Verification
+
+- Targeted: `tests/test_memory_mongo.py` -> 11 passed.
+- Regression: `tests/test_phase3_context.py` -> 42 passed.
+- Full backend: `tests -m "not ollama"` -> 666 passed, 7 deselected.
+- Focused Ruff `E,F,I` and `git diff --check` passed.
+
+### Review and residual risk
+
+- Independent sub-agent review remained unavailable because the environment quota was exhausted.
+- The documented `AGENTS.md` fallback self-review checked the FactStore interface, every Mongo query for owner scoping, fail-closed selection, configured/runtime failure propagation, and the exact six-file whitelist; no blocker remained.
+- No live Mongo service was required by the approved test command; production connectivity is still surfaced on the first store operation and is never converted into local persistence.

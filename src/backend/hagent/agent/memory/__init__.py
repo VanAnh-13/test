@@ -14,10 +14,10 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +108,9 @@ class LocalFactStore(FactStore):
 
     def _save_facts(self, user_id: str, facts: dict[str, dict]) -> None:
         fpath = self._user_file(user_id)
-        fpath.write_text(json.dumps(facts, ensure_ascii=False, indent=2), encoding="utf-8")
+        fpath.write_text(
+            json.dumps(facts, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
 
     async def save(self, user_id: str, fact: Fact) -> None:
         facts = self._load_facts(user_id)
@@ -175,22 +177,41 @@ class LocalFactStore(FactStore):
 
 
 def create_fact_store() -> FactStore:
-    """
-    Tạo FactStore từ YAML config.
-    Config: memory.backend, memory.storage_dir
-    """
+    """Create the configured owner-scoped fact store."""
     try:
         from hagent.bridge.config import load_config
+
         cfg = load_config()
         memory_cfg = cfg.get("memory", {}) or {}
     except Exception:
         memory_cfg = {}
 
-    backend = memory_cfg.get("backend", "local")
-    storage_dir = memory_cfg.get("storage_dir", "./data/memory")
+    configured_backend = str(memory_cfg.get("backend", "auto")).lower()
+    mongo_configured = "MONGODB_CONNECT" in os.environ
+    mongo_env = os.getenv("MONGODB_CONNECT")
+    if configured_backend == "auto":
+        backend = "mongodb" if mongo_configured else "local"
+    else:
+        backend = configured_backend
 
     if backend == "local":
+        storage_dir = memory_cfg.get("storage_dir", "./data/memory")
         return LocalFactStore(storage_dir)
 
-    logger.warning("Unknown memory backend '%s', fallback to local.", backend)
-    return LocalFactStore(storage_dir)
+    if backend == "mongodb":
+        from hagent.agent.memory.mongo_store import MongoFactStore
+        from hagent.bridge.config import get_mongodb_config
+
+        mongo_cfg = get_mongodb_config()
+        connect = mongo_env if mongo_configured else mongo_cfg.get("connect")
+        if not connect or not str(connect).strip():
+            raise RuntimeError(
+                "MongoDB memory backend requires a non-empty MONGODB_CONNECT"
+            )
+        return MongoFactStore(
+            connect=str(connect),
+            db_name=str(mongo_cfg.get("db_name") or "hagent"),
+            collection_name=str(memory_cfg.get("collection") or "memory_facts"),
+        )
+
+    raise ValueError(f"Unsupported memory backend: {configured_backend!r}")
