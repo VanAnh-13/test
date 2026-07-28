@@ -1615,6 +1615,40 @@
         "tested_at": "2026-07-28T14:14:32+07:00",
         "notes": "MongoFactStore implements the FactStore interface with a unique (user_id,key) index, owner-scoped CRUD/search, bounded search, and upsert semantics. Auto mode uses local storage only when MONGODB_CONNECT is absent; an empty or failing configured Mongo path is fail-closed. TDD covered zero limit and empty configured environment edge cases. Independent Checker remained unavailable because the environment quota was exhausted; the documented AGENTS.md fallback self-review found no blocker and only whitelisted files changed. Baseline commit: 960d37b4481f."
       }
+    },
+    {
+      "id": "SSE-CORE-001",
+      "title": "Add typed stateless SSE streaming to the toolkit agent runtime",
+      "status": "done",
+      "acceptance_criteria": [
+        "Private POST /api/v1/chat/agent-run/stream accepts the chat contract, forwards owner-scoped history/context/model, and never writes conversation history.",
+        "SSE frames contain event, increasing id, JSON data, only documented event types, no DONE sentinel, and exactly one done or error terminal.",
+        "The done response is built from the final graph state rather than concatenated internal tokens and exposes sync-equivalent agent metadata.",
+        "Usage and model contextvars reset in finally on success, failure, and cancellation; CancelledError propagates after cleanup; targeted/full tests, review fallback, and whitelist checks pass."
+      ],
+      "allowed_files": [
+        "src/backend/hagent/agent/graph.py",
+        "src/backend/hagent/agent/streaming.py",
+        "src/backend/hagent/chat_router.py",
+        "src/backend/tests/test_agent_streaming.py",
+        "feature_list.json",
+        "claude-progress.md"
+      ],
+      "test_commands": [
+        "cd src/backend && PYTHONUTF8=1 .venv/Scripts/python.exe -m pytest tests/test_agent_streaming.py -q --timeout=300",
+        "cd src/backend && PYTHONUTF8=1 .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=300"
+      ],
+      "verification": {
+        "status": "passed",
+        "commands_run": [
+          "PYTHONUTF8=1 .venv/Scripts/python.exe -m pytest tests/test_agent_streaming.py -q --timeout=300 outside sandbox (exit 0; 9 passed)",
+          "PYTHONUTF8=1 .venv/Scripts/python.exe -m pytest tests/test_phase3_context.py tests/test_llm_config_strict.py tests/test_usage_wiring.py tests/test_bridge_agent_contract.py tests/test_chat_multiturn.py -q --timeout=300 outside sandbox (exit 0; 84 passed)",
+          "PYTHONUTF8=1 .venv/Scripts/python.exe -m pytest tests -m not-ollama -q --timeout=300 outside sandbox (exit 0; 675 passed, 7 deselected)",
+          "ruff check on task files for E,F,I excluding two pre-existing chat_router E501 lines; graph/streaming/test E501 passed; git diff --check passed"
+        ],
+        "tested_at": "2026-07-28T14:43:36+07:00",
+        "notes": "The private toolkit stream route is conversation-stateless, forwards sanitized history/context/model, and returns typed monotonic SSE without a sentinel. The sole terminal is a safe error or a nested sync-equivalent response reconstructed from root final graph state, not internal token concatenation. Middleware receives the internal response field before public message mapping. Usage/model context tokens reset in finally for success, failure, and cancellation, and cancellation propagates. Independent Checker remained unavailable because the environment quota was exhausted; the documented AGENTS.md fallback review found no blocker and only whitelisted files changed."
+      }
     }
   ]
 }

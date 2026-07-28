@@ -1281,3 +1281,40 @@ openclaw"; 3. "Không nói là DeerFlow, mà chỉ dựa trên công nghệ củ
 - Independent sub-agent review remained unavailable because the environment quota was exhausted.
 - The documented `AGENTS.md` fallback self-review checked the FactStore interface, every Mongo query for owner scoping, fail-closed selection, configured/runtime failure propagation, and the exact six-file whitelist; no blocker remained.
 - No live Mongo service was required by the approved test command; production connectivity is still surfaced on the first store operation and is never converted into local persistence.
+
+## 2026-07-28 - SSE-CORE-001 START
+
+### Scope
+
+- Opened exactly one WIP task after committing `MEM-MONGO-002` at `35cd831ac4d5061e0941752f4b9c1b5cbe0787a3`.
+- Maker scope is limited to toolkit graph streaming, SSE encoding, the private agent-run stream route, focused tests, and control files.
+- Bridge persistence, frontend behavior, dependencies, auth, compose, and package/lock files remain outside this task.
+
+### Acceptance seams
+
+- Frames use explicit `event`, monotonic `id`, JSON `data`, documented event names, and one terminal without `[DONE]`.
+- The terminal response is reconstructed from the root final graph state, never from a concatenation of internal model-token events.
+- Usage/model request context is reset in `finally`; cancellation must propagate only after cleanup.
+- `/api/v1/chat/agent-run/stream` is private and stateless with respect to conversation storage.
+
+## 2026-07-28 - SSE-CORE-001 COMPLETE
+
+### Delivered
+
+- Added private stateless `POST /api/v1/chat/agent-run/stream` with sanitized history, authoritative server context, explicit model forwarding, and no conversation writes.
+- Replaced data-only/Sentinel streaming with typed SSE frames carrying monotonic IDs and exactly one `done` or safe `error` terminal.
+- Reconstructed `done.response` from the root final graph state and preserved tool, planning, campaign, hierarchy, world-model, evaluation, execution, revision, and cost metadata.
+- Reset usage/model context tokens in `finally`; cancellation closes the agent iterator and propagates without persisting a partial terminal.
+
+### Verification
+
+- Targeted: `tests/test_agent_streaming.py` -> 9 passed.
+- Integration regression across memory, model config, usage, API contract, and multi-turn -> 84 passed.
+- Full backend: `tests -m "not ollama"` -> 675 passed, 7 deselected.
+- Focused Ruff checks and `git diff --check` passed; two unrelated pre-existing `chat_router.py` E501 lines remain outside this task's added lines.
+
+### Review and residual risk
+
+- Independent sub-agent review remained unavailable because the environment quota was exhausted.
+- The documented `AGENTS.md` fallback review checked cancellation/failure/success cleanup, serialization failure, duplicate terminal suppression, secret-safe errors, owner history forwarding, middleware response extraction, and the exact six-file whitelist; no blocker remained.
+- Tests use deterministic graph/runtime doubles and do not call a paid or live LLM endpoint.

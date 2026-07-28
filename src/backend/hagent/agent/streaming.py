@@ -1,19 +1,35 @@
-"""
-HAgent — SSE Streaming support.
-
-Provides Server-Sent Events streaming for the chat interface,
-enabling real-time token-by-token responses and tool execution updates.
-
-Reference: deerflow/docs/STREAMING.md
-"""
+"""Typed Server-Sent Events for the HAgent runtime."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any, AsyncIterator
 
 logger = logging.getLogger(__name__)
+
+_EVENT_TYPES = frozenset(
+    {
+        "meta",
+        "route",
+        "phase",
+        "plan",
+        "plan_event",
+        "surprise",
+        "token",
+        "tool_call",
+        "tool_result",
+        "done",
+        "error",
+    }
+)
+_TERMINAL_EVENTS = frozenset({"done", "error"})
+
+
+def _format_sse(event_name: str, event_id: int, payload: dict[str, Any]) -> str:
+    data = json.dumps(payload, ensure_ascii=False)
+    return f"event: {event_name}\nid: {event_id}\ndata: {data}\n\n"
 
 
 async def sse_stream(
@@ -21,48 +37,83 @@ async def sse_stream(
     *,
     user_id: str | None = None,
     user_token: str | None = None,
+    history: list[dict[str, str]] | None = None,
     world_model: dict[str, Any] | None = None,
     memory_context: str | None = None,
+    mongo_client: Any | None = None,
+    db_name: str | None = None,
+    model_name: str | None = None,
+    conversation_id: str | None = None,
 ) -> AsyncIterator[str]:
-    """
-    SSE stream wrapper cho HAgent agent.
-
-    Yields SSE-formatted strings (Phase 5 enriched):
-        data: {"type": "route", "agent": "plan_executor"}\n\n
-        data: {"type": "phase", "phase": "execute|revise"}\n\n
-        data: {"type": "plan", "plan_id": "...", "steps": [...]}\n\n
-        data: {"type": "plan_event", "event": {...}}\n\n
-        data: {"type": "surprise", "surprise": {...}}\n\n
-        data: {"type": "token", "content": "..."}\n\n
-        data: {"type": "tool_call", "tool": "...", "args": {...}}\n\n
-        data: {"type": "tool_result", "tool": "...", "output": "..."}\n\n
-        data: {"type": "done", "response": "...", "cost_metrics": {...}}\n\n
-
-    Usage in FastAPI:
-        from fastapi.responses import StreamingResponse
-        return StreamingResponse(
-            sse_stream(message, user_id=uid),
-            media_type="text/event-stream",
-        )
-    """
+    """Encode graph events as typed SSE frames with exactly one terminal."""
     from hagent.agent.graph import stream_agent
 
+    agent_events = stream_agent(
+        message,
+        user_id=user_id,
+        user_token=user_token,
+        history=history,
+        world_model=world_model,
+        memory_context=memory_context,
+        mongo_client=mongo_client,
+        db_name=db_name,
+        model_name=model_name,
+    )
+    event_id = 0
+    terminal_sent = False
+
     try:
-        async for event in stream_agent(
-            message,
-            user_id=user_id,
-            user_token=user_token,
-            world_model=world_model,
-            memory_context=memory_context,
-        ):
-            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        async for raw_event in agent_events:
+            if not isinstance(raw_event, dict):
+                raise TypeError("Agent stream event must be an object")
+            event_name = raw_event.get("type")
+            if event_name not in _EVENT_TYPES:
+                raise ValueError("Agent stream emitted an unsupported event type")
+
+            payload = dict(raw_event)
+            if event_name == "done":
+                response = payload.get("response")
+                if not isinstance(response, dict):
+                    raise TypeError("Agent done response must be an object")
+                response = dict(response)
+                if conversation_id:
+                    response.setdefault("conversation_id", conversation_id)
+                payload["response"] = response
+
+            next_event_id = event_id + 1
+            frame = _format_sse(str(event_name), next_event_id, payload)
+            event_id = next_event_id
+            terminal_sent = event_name in _TERMINAL_EVENTS
+            yield frame
+            if terminal_sent:
+                break
+
+        if not terminal_sent:
+            raise RuntimeError("Agent stream ended without a terminal event")
+    except asyncio.CancelledError:
+        raise
     except Exception as exc:
-        logger.exception("SSE streaming error")
-        error_event = {
-            "type": "error",
-            "error": str(exc),
-        }
-        yield f"data: {json.dumps(error_event, ensure_ascii=False)}\n\n"
+        logger.error("SSE streaming error: %s", type(exc).__name__)
+        if not terminal_sent:
+            event_id += 1
+            terminal_sent = True
+            yield _format_sse(
+                "error",
+                event_id,
+                {
+                    "type": "error",
+                    "error": {
+                        "code": "agent_stream_failed",
+                        "message": "Agent stream failed",
+                    },
+                },
+            )
     finally:
-        # Send stream-end sentinel
-        yield "data: [DONE]\n\n"
+        close = getattr(agent_events, "aclose", None)
+        if close is not None:
+            try:
+                await close()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.debug("Agent stream close failed: %s", type(exc).__name__)

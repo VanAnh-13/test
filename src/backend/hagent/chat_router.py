@@ -400,6 +400,63 @@ async def agent_run(
     return _to_chat_response(result, conversation_id)
 
 
+@router.post("/agent-run/stream")
+async def agent_run_stream(
+    req: ChatRequest,
+    request: Request,
+    db: AsyncDatabase = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """Private stateless SSE invoke; Bridge owns all conversation writes."""
+    if req.model:
+        from hagent.agent.llm_config import require_model_config
+
+        try:
+            require_model_config(req.model)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    user_id = str(current_user["_id"])
+    conversation_id = req.conversation_id or uuid.uuid4().hex
+    auth_header = request.headers.get("Authorization", "")
+    user_token = (
+        auth_header.replace("Bearer ", "") if auth_header.startswith("Bearer ") else ""
+    )
+
+    server_world_model = await _load_world_model(db, user_id)
+    forwarded_world_model = (
+        req.context.get("world_state") if isinstance(req.context, dict) else None
+    )
+    merged_world_model = dict(forwarded_world_model or {})
+    merged_world_model.update(server_world_model or {})
+    world_model = _apply_request_context(merged_world_model, req.context, user_id)
+
+    client = getattr(db, "client", None)
+    db_name = getattr(db, "name", None)
+    from hagent.agent.streaming import sse_stream
+
+    return StreamingResponse(
+        sse_stream(
+            req.message,
+            user_id=user_id,
+            user_token=user_token,
+            history=_history_from_context(req.context),
+            world_model=world_model,
+            mongo_client=client,
+            db_name=str(db_name) if db_name else None,
+            model_name=req.model,
+            conversation_id=conversation_id,
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+            "X-Conversation-Id": conversation_id,
+        },
+    )
+
+
 @router.post("/", response_model=ChatResponse)
 async def chat(
     req: ChatRequest,
@@ -456,13 +513,10 @@ async def chat_stream(
     """
     SSE streaming endpoint — trả về real-time token-by-token.
 
-    Response format: Server-Sent Events (text/event-stream)
-    Events:
-        data: {"type": "token", "content": "..."}
-        data: {"type": "tool_call", "tool": "...", "args": {...}}
-        data: {"type": "tool_result", "tool": "...", "output": "..."}
-        data: {"type": "done", "response": "..."}
-        data: [DONE]
+    Frames contain event, increasing id, and JSON data fields.
+    Event names follow the typed agent stream contract.
+    The stream ends with exactly one done or error event.
+    There is no sentinel frame.
     """
     user_id = current_user["_id"]
     conversation_id = req.conversation_id or uuid.uuid4().hex
@@ -488,6 +542,8 @@ async def chat_stream(
             user_id=str(user_id),
             user_token=user_token,
             world_model=world_model,
+            model_name=req.model,
+            conversation_id=conversation_id,
         ):
             yield chunk
             # Thu thập response để lưu DB
@@ -495,9 +551,14 @@ async def chat_stream(
                 import json
 
                 try:
-                    data = json.loads(chunk.replace("data: ", "").strip())
-                    full_response = data.get("response", "")
-                except (json.JSONDecodeError, ValueError):
+                    data_line = next(
+                        line for line in chunk.splitlines() if line.startswith("data:")
+                    )
+                    data = json.loads(data_line.removeprefix("data:").strip())
+                    response = data.get("response")
+                    if isinstance(response, dict):
+                        full_response = str(response.get("message") or "")
+                except (json.JSONDecodeError, ValueError, StopIteration):
                     pass
 
         # Lưu phản hồi hoàn chỉnh

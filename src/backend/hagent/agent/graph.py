@@ -19,10 +19,11 @@ import logging
 from typing import Any
 
 try:
-    from langchain_core.messages import ToolMessage
+    from langchain_core.messages import AIMessage, ToolMessage
     from langgraph.graph import END, StateGraph
     from langgraph.prebuilt import ToolNode
 except ImportError:  # pragma: no cover
+    AIMessage = object  # type: ignore[misc, assignment]
     ToolMessage = object  # type: ignore[misc, assignment]
     END = "__end__"
     StateGraph = None  # type: ignore[assignment]
@@ -614,11 +615,66 @@ def _safe_json_parse(text: str) -> Any:
 # ── Streaming runner ─────────────────────────────────────
 
 
+def _stream_response_from_state(
+    final_state: dict[str, Any],
+    *,
+    model_name: str | None,
+    route: str | None,
+    cost_metrics: dict[str, Any],
+) -> dict[str, Any]:
+    """Build the public agent result only from the root final graph state."""
+    messages = list(final_state.get("messages") or [])
+    last_ai_message = None
+    tool_outputs = []
+    for msg in reversed(messages):
+        if isinstance(msg, ToolMessage):
+            tool_outputs.append(
+                {
+                    "tool_name": msg.name,
+                    "payload": _safe_json_parse(msg.content),
+                }
+            )
+        elif isinstance(msg, AIMessage) and msg.content and last_ai_message is None:
+            if not (hasattr(msg, "tool_calls") and msg.tool_calls):
+                last_ai_message = msg
+
+    plan_status = final_state.get("plan_status")
+    selected_plan = final_state.get("selected_plan")
+    planning = None
+    if plan_status is not None or selected_plan is not None:
+        planning = {"status": plan_status, "selected_plan": selected_plan}
+
+    return {
+        "response": last_ai_message.content if last_ai_message else "",
+        "sources": [],
+        "suggestions": [],
+        "tool_outputs": list(reversed(tool_outputs)),
+        "provider": "hagent",
+        "model": model_name or "multi-agent",
+        "route": final_state.get("current_phase") or route or "direct",
+        "plan_status": plan_status,
+        "selected_plan": selected_plan,
+        "planning": planning,
+        "surprise": final_state.get("surprise"),
+        "cost_metrics": cost_metrics,
+        "execution_events": final_state.get("execution_events") or [],
+        "execution_log": final_state.get("execution_log") or [],
+        "revision_count": final_state.get("revision_count") or 0,
+        "world_model": final_state.get("world_model"),
+        "campaign": final_state.get("campaign"),
+        "campaign_status": final_state.get("campaign_status"),
+        "evaluation": final_state.get("evaluation"),
+        "hierarchy": final_state.get("hierarchy"),
+        "hierarchy_status": final_state.get("hierarchy_status"),
+    }
+
+
 async def stream_agent(
     message: str,
     *,
     user_id: str | None = None,
     user_token: str | None = None,
+    history: list[dict[str, str]] | None = None,
     world_model: dict[str, Any] | None = None,
     memory_context: str | None = None,
     mongo_client: Any | None = None,
@@ -627,211 +683,200 @@ async def stream_agent(
     wm_service: Any | None = None,
     model_name: str | None = None,
 ):
-    """Stream multi-agent graph events qua async generator (Phase 5 enriched)."""
-    from langchain_core.messages import HumanMessage
-
-    from hagent.agent.llm_config import require_model_config, set_current_model_name
+    """Stream typed graph events and finish with a final-state response."""
+    from hagent.agent.llm_config import (
+        require_model_config,
+        reset_current_model_name,
+        set_current_model_name,
+    )
     from hagent.agent.middlewares.usage_tracker import (
         create_usage_tracker,
+        reset_current_tracker,
         set_current_tracker,
     )
     from hagent.agent.registry import get_agent_registry
 
     if model_name:
         require_model_config(model_name)
-    set_current_model_name(model_name)
+    model_token = set_current_model_name(model_name)
+    usage_token = None
+    usage_tracker = None
 
-    # Tracker per-run như run_agent; contextvar chết cùng task của request
-    # nên không cần finally quanh generator (đứt giữa chừng không rò rỉ).
-    usage_tracker = create_usage_tracker()
-    set_current_tracker(usage_tracker)
-
-    graph = get_automl_graph()
-    registry = get_agent_registry()
-    valid_names = set(registry.agent_names()) | {
-        "plan_executor",
-        "reviser",
-        "campaign",
-        "hierarchy",
-        "coordinator",
-        "synthesize",
-    }
-
-    if wm_service is None or world_store is None:
-        try:
-            from hagent.world.runtime import build_wm_runtime
-
-            _wm, _store = build_wm_runtime(
-                mongo_client=mongo_client, db_name=db_name
-            )
-            if wm_service is None:
-                wm_service = _wm
-            if world_store is None:
-                world_store = _store
-        except Exception as exc:
-            logger.debug("WM runtime build skipped (stream): %s", exc)
-
-    initial_state: AutoMLState = {
-        "messages": [HumanMessage(content=message)],
-        "world_model": world_model,
-        "memory_context": memory_context,
-        "user_id": user_id,
-        "user_token": user_token,
-        "next_agent": None,
-        "current_phase": None,
-        "plan_step_index": 0,
-        "revision_count": 0,
-        "execution_log": [],
-        "execution_events": [],
-        "cost_metrics": {},
-    }
-    if wm_service is not None:
-        initial_state["_wm_service"] = wm_service  # type: ignore[typeddict-unknown-key]
-    if world_store is not None:
-        initial_state["_world_store"] = world_store  # type: ignore[typeddict-unknown-key]
-
-    import os
-    import time
-
-    if user_token:
-        os.environ["USER_TOKEN"] = user_token
-    if user_id:
-        os.environ["USER_ID"] = user_id
-
-    # Middleware so WM service is available
     try:
-        from hagent.agent.middlewares import create_default_chain
+        usage_tracker = create_usage_tracker()
+        usage_token = set_current_tracker(usage_tracker)
 
-        middleware = create_default_chain()
-        initial_state = await middleware.run_pre(initial_state)
-    except Exception:
-        middleware = None
+        graph = get_automl_graph()
+        registry = get_agent_registry()
+        valid_names = set(registry.agent_names()) | {
+            "plan_executor",
+            "reviser",
+            "campaign",
+            "hierarchy",
+            "coordinator",
+            "synthesize",
+        }
 
-    t0 = time.time()
-    final_content = ""
-    current_route = None
-    last_events_len = 0
-    final_state_snapshot: dict[str, Any] = {}
+        if wm_service is None or world_store is None:
+            try:
+                from hagent.world.runtime import build_wm_runtime
 
-    async for event in graph.astream_events(initial_state, version="v2"):
-        kind = event["event"]
-
-        if kind == "on_chain_start":
-            node_name = event.get("name", "")
-            if node_name in valid_names:
-                current_route = node_name
-                yield {"type": "route", "agent": node_name}
-                if node_name == "plan_executor":
-                    yield {"type": "phase", "phase": "execute"}
-                elif node_name == "reviser":
-                    yield {"type": "phase", "phase": "revise"}
-                elif node_name == "campaign":
-                    yield {"type": "phase", "phase": "campaign"}
-                elif node_name == "hierarchy":
-                    yield {"type": "phase", "phase": "hierarchy"}
-
-        elif kind == "on_chain_end":
-            # Emit structured execution_events deltas from node output
-            data = event.get("data") or {}
-            output = data.get("output")
-            if isinstance(output, dict):
-                final_state_snapshot.update(
-                    {
-                        k: output[k]
-                        for k in (
-                            "plan_status",
-                            "selected_plan",
-                            "surprise",
-                            "cost_metrics",
-                            "execution_events",
-                            "revision_count",
-                            "campaign",
-                            "campaign_status",
-                            "evaluation",
-                            "hierarchy",
-                            "hierarchy_status",
-                        )
-                        if k in output
-                    }
+                runtime_wm, runtime_store = build_wm_runtime(
+                    mongo_client=mongo_client, db_name=db_name
                 )
-                events = output.get("execution_events") or []
-                if isinstance(events, list) and len(events) > last_events_len:
-                    for ev in events[last_events_len:]:
-                        yield {"type": "plan_event", "event": ev}
-                        if isinstance(ev, dict) and ev.get("type") == "step_end":
-                            if ev.get("surprise"):
+                if wm_service is None:
+                    wm_service = runtime_wm
+                if world_store is None:
+                    world_store = runtime_store
+            except Exception as exc:
+                logger.debug("WM runtime build skipped (stream): %s", exc)
+
+        initial_state: AutoMLState = {
+            "messages": _build_initial_messages(message, history),
+            "world_model": world_model,
+            "memory_context": memory_context,
+            "user_id": user_id,
+            "user_token": user_token,
+            "next_agent": None,
+            "current_phase": None,
+            "plan_step_index": 0,
+            "revision_count": 0,
+            "execution_log": [],
+            "execution_events": [],
+            "cost_metrics": {},
+        }
+        if wm_service is not None:
+            initial_state["_wm_service"] = wm_service  # type: ignore[typeddict-unknown-key]
+        if world_store is not None:
+            initial_state["_world_store"] = world_store  # type: ignore[typeddict-unknown-key]
+
+        import os
+        import time
+
+        if user_token:
+            os.environ["USER_TOKEN"] = user_token
+        if user_id:
+            os.environ["USER_ID"] = user_id
+
+        middleware = None
+        try:
+            from hagent.agent.middlewares import create_default_chain
+
+            middleware = create_default_chain()
+            initial_state = await middleware.run_pre(initial_state)
+        except Exception as exc:
+            logger.debug("stream middleware pre-process skipped: %s", exc)
+            middleware = None
+
+        started_at = time.time()
+        current_route = None
+        last_events_len = 0
+        final_state_snapshot: dict[str, Any] = {}
+        root_final_state: dict[str, Any] = {}
+
+        async for event in graph.astream_events(initial_state, version="v2"):
+            kind = event["event"]
+
+            if kind == "on_chain_start":
+                node_name = event.get("name", "")
+                if node_name in valid_names:
+                    current_route = node_name
+                    yield {"type": "route", "agent": node_name}
+                    if node_name == "plan_executor":
+                        yield {"type": "phase", "phase": "execute"}
+                    elif node_name == "reviser":
+                        yield {"type": "phase", "phase": "revise"}
+                    elif node_name == "campaign":
+                        yield {"type": "phase", "phase": "campaign"}
+                    elif node_name == "hierarchy":
+                        yield {"type": "phase", "phase": "hierarchy"}
+
+            elif kind == "on_chain_end":
+                data = event.get("data") or {}
+                output = data.get("output")
+                if isinstance(output, dict):
+                    final_state_snapshot.update(output)
+                    if not event.get("parent_ids"):
+                        root_final_state = dict(output)
+
+                    events = output.get("execution_events") or []
+                    if isinstance(events, list) and len(events) > last_events_len:
+                        for execution_event in events[last_events_len:]:
+                            yield {"type": "plan_event", "event": execution_event}
+                            if (
+                                isinstance(execution_event, dict)
+                                and execution_event.get("type") == "step_end"
+                                and execution_event.get("surprise")
+                            ):
                                 yield {
                                     "type": "surprise",
-                                    "surprise": ev["surprise"],
-                                    "index": ev.get("index"),
-                                    "action": ev.get("action"),
+                                    "surprise": execution_event["surprise"],
+                                    "index": execution_event.get("index"),
+                                    "action": execution_event.get("action"),
                                 }
-                    last_events_len = len(events)
-                if output.get("selected_plan") and event.get("name") == "coordinator":
-                    sp = output["selected_plan"]
-                    yield {
-                        "type": "plan",
-                        "plan_id": sp.get("plan_id"),
-                        "title": sp.get("title"),
-                        "steps": [
-                            (s.get("action") or {}).get("type")
-                            if isinstance(s, dict)
-                            else None
-                            for s in (sp.get("steps") or [])
-                        ],
-                        "cost": sp.get("cost"),
-                    }
+                        last_events_len = len(events)
 
-        elif kind == "on_chat_model_stream":
-            chunk = event["data"].get("chunk")
-            if chunk and hasattr(chunk, "content") and chunk.content:
-                final_content += chunk.content
-                yield {"type": "token", "content": chunk.content}
+                    selected_plan = output.get("selected_plan")
+                    if (
+                        isinstance(selected_plan, dict)
+                        and event.get("name") == "coordinator"
+                    ):
+                        yield {
+                            "type": "plan",
+                            "plan_id": selected_plan.get("plan_id"),
+                            "title": selected_plan.get("title"),
+                            "steps": [
+                                (step.get("action") or {}).get("type")
+                                if isinstance(step, dict)
+                                else None
+                                for step in (selected_plan.get("steps") or [])
+                            ],
+                            "cost": selected_plan.get("cost"),
+                        }
 
-        elif kind == "on_tool_start":
-            yield {
-                "type": "tool_call",
-                "tool": event.get("name", ""),
-                "args": event.get("data", {}).get("input", {}),
-            }
+            elif kind == "on_chat_model_stream":
+                chunk = event.get("data", {}).get("chunk")
+                if chunk and hasattr(chunk, "content") and chunk.content:
+                    yield {"type": "token", "content": chunk.content}
 
-        elif kind == "on_tool_end":
-            yield {
-                "type": "tool_result",
-                "tool": event.get("name", ""),
-                "output": _safe_json_parse(
-                    event.get("data", {}).get("output", "")
-                ),
-            }
+            elif kind == "on_tool_start":
+                yield {
+                    "type": "tool_call",
+                    "tool": event.get("name", ""),
+                    "args": event.get("data", {}).get("input", {}),
+                }
 
-    cost = dict(final_state_snapshot.get("cost_metrics") or {})
-    cost["elapsed_seconds"] = round(time.time() - t0, 3)
-    if usage_tracker is not None:
-        cost.update(usage_tracker.summary())
+            elif kind == "on_tool_end":
+                raw_output = event.get("data", {}).get("output", "")
+                if hasattr(raw_output, "content"):
+                    raw_output = raw_output.content
+                yield {
+                    "type": "tool_result",
+                    "tool": event.get("name", ""),
+                    "output": _safe_json_parse(raw_output),
+                }
 
-    # Persist world model after stream if store attached
-    if middleware is not None and world_store is not None and user_id:
-        try:
-            post_result = {
-                "tool_outputs": [],
-                "selected_plan": final_state_snapshot.get("selected_plan"),
-                "surprise": final_state_snapshot.get("surprise"),
-                "world_model": initial_state.get("world_model"),
-            }
-            await middleware.run_post(initial_state, post_result)
-        except Exception as exc:
-            logger.debug("stream WM post_process failed: %s", exc)
+        final_state = dict(final_state_snapshot)
+        final_state.update(root_final_state)
+        cost = dict(final_state.get("cost_metrics") or {})
+        cost["elapsed_seconds"] = round(time.time() - started_at, 3)
+        if usage_tracker is not None:
+            cost.update(usage_tracker.summary())
 
-    yield {
-        "type": "done",
-        "response": final_content,
-        "route": current_route or "direct",
-        "plan_status": final_state_snapshot.get("plan_status"),
-        "cost_metrics": cost,
-        "revision_count": final_state_snapshot.get("revision_count") or 0,
-        "surprise": final_state_snapshot.get("surprise"),
-        "selected_plan": final_state_snapshot.get("selected_plan"),
-        "campaign_status": final_state_snapshot.get("campaign_status"),
-        "hierarchy_status": final_state_snapshot.get("hierarchy_status"),
-        "execution_events": final_state_snapshot.get("execution_events") or [],
-    }
+        result = _stream_response_from_state(
+            final_state,
+            model_name=model_name,
+            route=current_route,
+            cost_metrics=cost,
+        )
+        if middleware is not None:
+            result = await middleware.run_post(initial_state, result)
+
+        public_result = dict(result)
+        response_text = public_result.pop("response", public_result.get("message", ""))
+        public_result["message"] = response_text
+        yield {"type": "done", "response": public_result}
+    finally:
+        if usage_token is not None:
+            reset_current_tracker(usage_token)
+        reset_current_model_name(model_token)
