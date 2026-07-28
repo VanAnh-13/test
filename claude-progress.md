@@ -1171,3 +1171,40 @@ openclaw"; 3. "Không nói là DeerFlow, mà chỉ dựa trên công nghệ củ
 - Two independent read-only Checker launches were attempted after code freeze, but the environment stopped both at startup because the sub-agent usage quota was exhausted.
 - Following the explicit `AGENTS.md` fallback, root performed a separate acceptance, trust-boundary, error-semantics, lint-delta, test-sufficiency, and whitelist review and found no blocker. This limitation is recorded rather than represented as an independent review.
 - Multi-turn history remains intentionally deferred to `CHAT-MULTITURN-001`; this task only stabilizes the transport and response contract.
+
+## 2026-07-28 - CHAT-MULTITURN-001 START
+
+### Scope
+
+- Opened exactly one WIP task after committing `API-CONTRACT-001` at `104fa4bd1def`.
+- Maker scope is limited to Bridge app, toolkit chat router, agent graph, the dedicated multi-turn test, and control files.
+- Bridge remains the sole conversation-history source; auth, persistence modules, root app, package/lockfile, compose, and SSE behavior are outside this task.
+
+### Acceptance seams
+
+- Load at most 20 prior owner-scoped messages and permit only `user` or `assistant` roles.
+- Forward history through `context.history` without credentials or spoofable principal fields.
+- Convert history to ordered human/AI graph messages and append the current user message exactly once.
+- Prove owner isolation, genuine second-turn continuity, ordering, and no duplication before the full suite.
+
+## 2026-07-28 - CHAT-MULTITURN-001 DONE
+
+### Implemented scope
+
+- Bridge now snapshots at most 20 persisted messages before writing the current turn, using the existing owner-scoped `(conversation_id, user_id)` query.
+- History is reduced to ordered string messages with role `user` or `assistant`; client-supplied history and principal fields are not accepted by the public Bridge context.
+- Both text and upload calls forward the trusted history as `context.history` to the private toolkit route.
+- Toolkit sanitizes the history again, and the graph maps it to ordered `HumanMessage`/`AIMessage` objects before appending exactly one current `HumanMessage`.
+
+### Verification
+
+- TDD red state was observed with four expected failures before implementation; final targeted suite: `4 passed`.
+- API contract regression suite: `27 passed`.
+- Full backend non-Ollama suite: `647 passed, 7 deselected in 56.72s`.
+- Focused Ruff `E402,F,I`, Python compile, `git diff --check`, and JSON validation all exited 0.
+- Tests cover genuine second-turn continuity, same-conversation owner isolation, 20-message bounding, role/content filtering, graph message ordering, and current-message non-duplication.
+
+### Checker and handoff
+
+- Independent sub-agent review remained unavailable because the environment quota was exhausted immediately before this task.
+- The explicit `AGENTS.md` fallback self-review checked owner scope, trust boundaries, message ordering, regression risk, and the six-file whitelist and found no blocker.

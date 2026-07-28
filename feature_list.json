@@ -1513,6 +1513,41 @@
         "tested_at": "2026-07-28T13:28:03+07:00",
         "notes": "Contract behavior is covered by 27 tests. The initial sandboxed full-suite attempt was invalidated by Windows temp/named-pipe permission errors; the approved outside-sandbox rerun passed. Two independent Checker launches were attempted but both were stopped by the environment's agent usage quota; the AGENTS.md fallback self-review found no blocker, no new lint class versus baseline, and only whitelisted files changed."
       }
+    },
+    {
+      "id": "CHAT-MULTITURN-001",
+      "title": "Forward owner-scoped bounded conversation history into the agent graph",
+      "status": "done",
+      "acceptance_criteria": [
+        "Bridge loads at most 20 prior messages scoped by conversation_id and user_id, allows only user and assistant roles, and forwards them in context.history.",
+        "The graph converts history into ordered HumanMessage and AIMessage objects and appends the current user message exactly once.",
+        "Tests prove two users sharing a conversation_id cannot see each other's history, the second turn receives the first turn, and no current message is duplicated.",
+        "Targeted multi-turn tests, full non-Ollama suite, Checker review or documented AGENTS.md fallback, and whitelist validation pass."
+      ],
+      "allowed_files": [
+        "src/backend/hagent/bridge/app.py",
+        "src/backend/hagent/chat_router.py",
+        "src/backend/hagent/agent/graph.py",
+        "src/backend/tests/test_chat_multiturn.py",
+        "feature_list.json",
+        "claude-progress.md"
+      ],
+      "test_commands": [
+        "cd src/backend && PYTHONUTF8=1 .venv/Scripts/python.exe -m pytest tests/test_chat_multiturn.py -q --timeout=300",
+        "cd src/backend && PYTHONUTF8=1 .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=300"
+      ],
+      "verification": {
+        "status": "passed",
+        "commands_run": [
+          "PYTHONUTF8=1 .venv/Scripts/python.exe -m pytest tests/test_chat_multiturn.py -q --timeout=300 (exit 0; 4 passed)",
+          "PYTHONUTF8=1 .venv/Scripts/python.exe -m pytest tests/test_bridge_agent_contract.py -q --timeout=300 (exit 0; 27 passed)",
+          "PYTHONUTF8=1 .venv/Scripts/python.exe -m pytest tests -m not-ollama -q --timeout=300 outside sandbox (exit 0; 647 passed, 7 deselected)",
+          "ruff check --select E402,F,I on all four task code/test files (exit 0)",
+          "git diff --check and python -m json.tool feature_list.json (exit 0)"
+        ],
+        "tested_at": "2026-07-28T13:41:47+07:00",
+        "notes": "Bridge snapshots the last 20 owner-scoped persisted messages before saving the current turn, filters to string user/assistant messages, and sends context.history. Toolkit sanitizes that private context and graph constructs ordered Human/AI messages plus one current HumanMessage. Sub-agent Checker remained unavailable because the environment quota was already exhausted; the documented AGENTS.md fallback review found no blocker and only whitelisted files changed."
+      }
     }
   ]
 }

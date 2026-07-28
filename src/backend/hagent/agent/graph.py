@@ -449,11 +449,32 @@ def reset_graph():
 # ── Convenience runner ───────────────────────────────────
 
 
+def _build_initial_messages(
+    message: str,
+    history: list[dict[str, str]] | None = None,
+) -> list:
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    messages = []
+    for item in list(history or [])[-20:]:
+        if not isinstance(item, dict):
+            continue
+        role = item.get("role")
+        content = item.get("content")
+        if role not in {"user", "assistant"} or not isinstance(content, str):
+            continue
+        message_type = HumanMessage if role == "user" else AIMessage
+        messages.append(message_type(content=content))
+    messages.append(HumanMessage(content=message))
+    return messages
+
+
 async def run_agent(
     message: str,
     *,
     user_id: str | None = None,
     user_token: str | None = None,
+    history: list[dict[str, str]] | None = None,
     world_model: dict[str, Any] | None = None,
     memory_context: str | None = None,
     mongo_client: Any | None = None,
@@ -463,7 +484,6 @@ async def run_agent(
     model_name: str | None = None,
 ) -> dict[str, Any]:
     """Chạy multi-agent graph với middleware pipeline."""
-    from langchain_core.messages import HumanMessage
     from hagent.agent.llm_config import require_model_config, set_current_model_name
     from hagent.agent.middlewares import create_default_chain
     from hagent.agent.middlewares.usage_tracker import (
@@ -502,7 +522,7 @@ async def run_agent(
             logger.debug("WM runtime build skipped: %s", exc)
 
     initial_state: AutoMLState = {
-        "messages": [HumanMessage(content=message)],
+        "messages": _build_initial_messages(message, history),
         "world_model": world_model,
         "memory_context": memory_context,
         "user_id": user_id,

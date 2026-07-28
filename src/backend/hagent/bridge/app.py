@@ -255,19 +255,13 @@ async def _call_agent_runtime(
 
 async def _call_hagent_gateway(
     message: str,
-    history: list[dict] | None = None,
     user_token: str | None = None,
     user_id: str | None = None,
     session_id: str | None = None,
     context_extra: dict | None = None,
     model_name: str | None = None,
 ) -> dict:
-    """Gọi HAgent runtime (LangGraph trên toolkit) — runtime duy nhất.
-
-    (`history` giữ trong chữ ký cho tương thích call site; runtime tự quản
-    hội thoại theo session nên không cần truyền lại.)
-    """
-    del history  # runtime quản lý hội thoại theo session_id
+    """Gọi HAgent runtime (LangGraph trên toolkit) — runtime duy nhất."""
     return await _call_agent_runtime(
         message,
         user_token=user_token,
@@ -474,9 +468,25 @@ _PUBLIC_CHAT_CONTEXT_FIELDS = (
 )
 
 
+def _normalize_history(messages: list | None) -> list[dict[str, str]]:
+    normalized: list[dict[str, str]] = []
+    for item in list(messages or [])[-20:]:
+        if isinstance(item, dict):
+            role = item.get("role")
+            content = item.get("content")
+        else:
+            role = getattr(item, "role", None)
+            content = getattr(item, "content", None)
+        if role not in {"user", "assistant"} or not isinstance(content, str):
+            continue
+        normalized.append({"role": role, "content": content})
+    return normalized
+
+
 def _runtime_context(
     client_context: dict | None,
     world_state: WorldState | None,
+    history: list | None = None,
 ) -> dict:
     context = {
         key: client_context[key]
@@ -486,6 +496,7 @@ def _runtime_context(
         and client_context[key] is not None
     }
     context["world_state"] = _world_state_context(world_state)
+    context["history"] = _normalize_history(history)
     return context
 
 
@@ -598,7 +609,12 @@ async def chat(
     await world_state_store.ensure(user.user_id)
     world_state_snapshot = await world_state_store.get(user.user_id)
 
-    # Lưu tin nhắn người dùng
+    # Lấy lịch sử đã persist trước turn hiện tại, đã scope theo owner.
+    history = await conv_store.get_message_history(
+        conversation_id, user.user_id, limit=20
+    )
+
+    # Lưu tin nhắn người dùng sau khi snapshot lịch sử được chụp.
     await conv_store.add_message(
         conversation_id=conversation_id,
         user_id=user.user_id,
@@ -606,20 +622,13 @@ async def chat(
         content=req.message,
     )
 
-    # Lấy lịch sử hội thoại
-    history = await conv_store.get_message_history(
-        conversation_id, user.user_id, limit=20
-    )
-    history_dicts = [{"role": m.role, "content": m.content} for m in history[:-1]]
-
     # Gọi HAgent runtime với world_state trong context
     result = await _call_hagent_gateway(
         message=req.message,
-        history=history_dicts if history_dicts else None,
         user_token=user.raw_token,
         user_id=user.user_id,
         session_id=conversation_id,
-        context_extra=_runtime_context(req.context, world_state_snapshot),
+        context_extra=_runtime_context(req.context, world_state_snapshot, history),
         model_name=req.model,
     )
 
@@ -694,19 +703,17 @@ async def chat_with_file(
     except Exception as e:
         file_info = f"\n[Lỗi upload file: {e}]"
 
+    history = await conv_store.get_message_history(conv_id, user.user_id, limit=20)
+
     full_message = f"{message}{file_info}"
     await conv_store.add_message(conv_id, user.user_id, "user", full_message)
 
-    history = await conv_store.get_message_history(conv_id, user.user_id, limit=20)
-    history_dicts = [{"role": m.role, "content": m.content} for m in history[:-1]]
-
     result = await _call_hagent_gateway(
         message=full_message,
-        history=history_dicts if history_dicts else None,
         user_token=user.raw_token,
         user_id=user.user_id,
         session_id=conv_id,
-        context_extra=_runtime_context(None, world_state_snapshot),
+        context_extra=_runtime_context(None, world_state_snapshot, history),
         model_name=model,
     )
 

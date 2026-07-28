@@ -114,6 +114,22 @@ _CONTEXT_FIELDS = (
 )
 
 
+def _history_from_context(context: dict | None) -> list[dict[str, str]]:
+    if not isinstance(context, dict) or not isinstance(context.get("history"), list):
+        return []
+    history = context["history"]
+    normalized: list[dict[str, str]] = []
+    for item in history[-20:]:
+        if not isinstance(item, dict):
+            continue
+        role = item.get("role")
+        content = item.get("content")
+        if role not in {"user", "assistant"} or not isinstance(content, str):
+            continue
+        normalized.append({"role": role, "content": content})
+    return normalized
+
+
 def _apply_request_context(
     world_model: dict | None,
     context: dict | None,
@@ -183,6 +199,7 @@ async def _call_agent(
     *,
     user_token: str | None = None,
     user_id: str | None = None,
+    history: list[dict[str, str]] | None = None,
     world_model: dict | None = None,
     mongo_client=None,
     db_name: str | None = None,
@@ -207,6 +224,7 @@ async def _call_agent(
             message,
             user_id=user_id,
             user_token=user_token,
+            history=history,
             world_model=world_model,
             mongo_client=mongo_client,
             db_name=db_name,
@@ -335,6 +353,7 @@ async def agent_run(
         message=req.message,
         user_token=user_token,
         user_id=str(user_id),
+        history=_history_from_context(req.context),
         world_model=world_model,
         mongo_client=client,
         db_name=str(db_name) if db_name else None,
