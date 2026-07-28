@@ -120,18 +120,79 @@ class MemoryMiddleware(Middleware):
     async def post_process(
         self, state: dict[str, Any], result: dict[str, Any],
     ) -> dict[str, Any]:
-        from hagent.agent.memory.extractor import extract_from_tool_message
+        import json
+
+        from hagent.agent.memory.extractor import (
+            extract_from_response,
+            extract_from_tool_output,
+        )
+        from hagent.bridge.config import load_config
 
         store = state.get("_fact_store")
         user_id = state.get("user_id")
         if not store or not user_id:
             return result
 
-        messages = result.get("messages", [])
-        for msg in messages:
-            facts = extract_from_tool_message(msg, source="graph_output")
-            for fact in facts:
-                await store.save(user_id, fact)
+        try:
+            memory_cfg = load_config().get("memory", {})
+            extraction_cfg = memory_cfg.get("extraction", {})
+        except Exception:
+            extraction_cfg = {}
+        from_tools = bool(extraction_cfg.get("from_tools", True))
+        from_responses = bool(extraction_cfg.get("from_responses", True))
+
+        facts = []
+        if from_tools:
+            for tool_output in result.get("tool_outputs") or []:
+                if not isinstance(tool_output, dict):
+                    continue
+                if (
+                    tool_output.get("error")
+                    or tool_output.get("success") is False
+                    or tool_output.get("ok") is False
+                ):
+                    continue
+                tool_name = tool_output.get("tool_name") or tool_output.get("name")
+                payload = tool_output.get("payload")
+                if payload is None:
+                    payload = tool_output.get("content")
+                if isinstance(payload, str):
+                    try:
+                        payload = json.loads(payload)
+                    except (json.JSONDecodeError, TypeError):
+                        continue
+                if not tool_name or not isinstance(payload, dict):
+                    continue
+                if (
+                    payload.get("error")
+                    or payload.get("success") is False
+                    or payload.get("ok") is False
+                ):
+                    continue
+                facts.extend(
+                    extract_from_tool_output(
+                        str(tool_name),
+                        payload,
+                        source=f"tool:{tool_name}",
+                    )
+                )
+
+        response_text = result.get("response")
+        result_failed = (
+            bool(result.get("error"))
+            or result.get("success") is False
+            or str(result.get("provider") or "").lower() == "error"
+            or str(result.get("status") or "").lower() in {"error", "failed"}
+        )
+        if from_responses and isinstance(response_text, str) and not result_failed:
+            normalized_response = response_text.lstrip().lower()
+            if not normalized_response.startswith(("⚠", "❌", "error:", "lỗi")):
+                facts.extend(
+                    extract_from_response(response_text, source="agent_response")
+                )
+
+        for fact in facts:
+            await store.save(str(user_id), fact)
 
         return result
 

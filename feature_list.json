@@ -1548,6 +1548,39 @@
         "tested_at": "2026-07-28T13:41:47+07:00",
         "notes": "Bridge snapshots the last 20 owner-scoped persisted messages before saving the current turn, filters to string user/assistant messages, and sends context.history. Toolkit sanitizes that private context and graph constructs ordered Human/AI messages plus one current HumanMessage. Sub-agent Checker remained unavailable because the environment quota was already exhausted; the documented AGENTS.md fallback review found no blocker and only whitelisted files changed."
       }
+    },
+    {
+      "id": "MEM-CORE-001",
+      "title": "Extract durable facts from real agent tool outputs and responses",
+      "status": "done",
+      "acceptance_criteria": [
+        "The post middleware reads result.tool_outputs and result.response directly and independently honors memory.extraction.from_tools and from_responses.",
+        "Response-derived fact keys use deterministic SHA-256 rather than Python hash().",
+        "Extraction ignores failed tool outputs, error responses, and unconfirmed user-authored content.",
+        "Targeted phase-3 context tests, full non-Ollama suite, Checker review or documented AGENTS.md fallback, and whitelist validation pass."
+      ],
+      "allowed_files": [
+        "src/backend/hagent/agent/middlewares/__init__.py",
+        "src/backend/hagent/agent/memory/extractor.py",
+        "src/backend/tests/test_phase3_context.py",
+        "feature_list.json",
+        "claude-progress.md"
+      ],
+      "test_commands": [
+        "cd src/backend && PYTHONUTF8=1 .venv/Scripts/python.exe -m pytest tests/test_phase3_context.py -q --timeout=300",
+        "cd src/backend && PYTHONUTF8=1 .venv/Scripts/python.exe -m pytest tests -m \"not ollama\" -q --timeout=300"
+      ],
+      "verification": {
+        "status": "passed",
+        "commands_run": [
+          "PYTHONUTF8=1 .venv/Scripts/python.exe -m pytest tests/test_phase3_context.py -q --timeout=300 outside sandbox (exit 0; 42 passed)",
+          "PYTHONUTF8=1 .venv/Scripts/python.exe -m pytest tests -m not-ollama -q --timeout=300 outside sandbox (exit 0; 655 passed, 7 deselected)",
+          "ruff check --select E402,F,I on the three task code/test files (exit 0)",
+          "git diff --check and python -m json.tool feature_list.json (exit 0)"
+        ],
+        "tested_at": "2026-07-28T13:52:21+07:00",
+        "notes": "MemoryMiddleware now extracts only from real result.tool_outputs and result.response, respects both config gates independently, rejects failed/error material, and never scans result.messages. Response suggestions are not inferred as user preferences, and response fact keys use the full deterministic SHA-256 hex digest. Independent Checker remained unavailable because the environment quota was exhausted; the documented AGENTS.md fallback review found no blocker and only whitelisted files changed."
+      }
     }
   ]
 }

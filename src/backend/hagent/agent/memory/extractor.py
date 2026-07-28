@@ -11,6 +11,7 @@ SOLID:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -108,13 +109,12 @@ def extract_from_response(
 ) -> list[Fact]:
     """
     Rút trích facts từ AI response text.
-    Dùng pattern matching cho preferences và decisions.
+    Chỉ ghi nhận observation trong phản hồi, không suy diễn user preference.
     """
     facts: list[Fact] = []
 
-    # Pattern: user preferences detected in response
+    # Response observations; suggestions are not confirmed user preferences.
     preference_patterns = [
-        (r"(?:đề xuất|recommend|suggest)\s+(\w+)", "preference"),
         (r"model tốt nhất.*?(?:là|is)\s+(\w+)", "model"),
         (r"accuracy.*?(\d+\.?\d*%?)", "model"),
     ]
@@ -122,13 +122,19 @@ def extract_from_response(
     for pattern, category in preference_patterns:
         match = re.search(pattern, response_text, re.IGNORECASE)
         if match:
-            facts.append(Fact(
-                key=f"response_{category}_{hash(match.group(0)) % 10000}",
-                content=match.group(0),
-                category=category,
-                confidence=0.7,
-                source=source,
-            ))
+            matched_text = match.group(0)
+            digest = hashlib.sha256(
+                matched_text.encode("utf-8")
+            ).hexdigest()
+            facts.append(
+                Fact(
+                    key=f"response_{category}_{digest}",
+                    content=matched_text,
+                    category=category,
+                    confidence=0.7,
+                    source=source,
+                )
+            )
 
     return facts
 

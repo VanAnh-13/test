@@ -1208,3 +1208,40 @@ openclaw"; 3. "Không nói là DeerFlow, mà chỉ dựa trên công nghệ củ
 
 - Independent sub-agent review remained unavailable because the environment quota was exhausted immediately before this task.
 - The explicit `AGENTS.md` fallback self-review checked owner scope, trust boundaries, message ordering, regression risk, and the six-file whitelist and found no blocker.
+
+## 2026-07-28 - MEM-CORE-001 START
+
+### Scope
+
+- Opened exactly one WIP task after committing `CHAT-MULTITURN-001` at `90ac883abf2c`.
+- Maker scope is limited to the middleware chain, fact extractor, existing phase-3 context test, and control files.
+- Persistence backend changes are deferred to `MEM-MONGO-002`; no Mongo, YAML, auth, package, or API file is in scope.
+
+### Acceptance seams
+
+- Post middleware consumes the real `result.tool_outputs` and `result.response` values.
+- `from_tools` and `from_responses` gate their sources independently.
+- Error material and unconfirmed user text never become facts.
+- Response keys are deterministic SHA-256 values across Python processes.
+
+## 2026-07-28 - MEM-CORE-001 DONE
+
+### Implemented scope
+
+- `MemoryMiddleware.post_process` now reads the real `result.tool_outputs` and `result.response` seams instead of the absent legacy `result.messages` seam.
+- Tool and response extraction are independently gated by `memory.extraction.from_tools` and `from_responses`.
+- Failed tool envelopes/payloads and failed/error responses are rejected before extraction; assistant suggestions are no longer inferred as user preferences.
+- Response-derived fact keys use the full deterministic SHA-256 hexadecimal digest instead of randomized Python `hash()`.
+
+### Verification
+
+- TDD red state was observed with six expected failures before implementation; final targeted phase-3 suite: `42 passed`.
+- Full backend non-Ollama suite: `655 passed, 7 deselected in 58.13s`.
+- Focused Ruff `E402,F,I`, Python compile, `git diff --check`, and JSON validation exited 0.
+- Tests cover both extraction flags in all combinations, direct tool/response inputs, rejection of legacy messages and errors, SHA-256 determinism, and no assistant-suggestion preference inference.
+
+### Checker and handoff
+
+- Independent sub-agent review remained unavailable because the environment quota was exhausted.
+- The explicit `AGENTS.md` fallback self-review checked config semantics, failure filtering, provenance/source boundaries, deterministic keys, regression risk, and the five-file whitelist and found no blocker.
+- Mongo persistence remains deferred to the next task, `MEM-MONGO-002`.

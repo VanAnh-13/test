@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import sys
 import tempfile
 import time
@@ -328,7 +327,11 @@ class TestMiddleware:
         assert "messages" in state
 
     def test_middleware_chain(self):
-        from hagent.agent.middlewares import MiddlewareChain, TimingMiddleware, InputSanitizer
+        from hagent.agent.middlewares import (
+            InputSanitizer,
+            MiddlewareChain,
+            TimingMiddleware,
+        )
         chain = MiddlewareChain()
         chain.add(TimingMiddleware())
         chain.add(InputSanitizer())
@@ -358,3 +361,135 @@ class TestMiddleware:
         names = [mw.name for mw in chain._middlewares]
         assert "timing" in names
         assert "input_sanitizer" in names
+
+# ══════════════════════════════════════════════════════════
+# 6. Real result memory extraction
+# ══════════════════════════════════════════════════════════
+
+
+class TestMemoryResultExtraction:
+    class RecordingStore:
+        def __init__(self):
+            self.saved = []
+
+        async def save(self, user_id, fact):
+            self.saved.append((user_id, fact))
+
+    @staticmethod
+    def _run_middleware(monkeypatch, extraction, result):
+        from hagent.agent.middlewares import MemoryMiddleware
+        from hagent.bridge import config
+
+        monkeypatch.setattr(
+            config,
+            "load_config",
+            lambda: {"memory": {"extraction": extraction}},
+        )
+        store = TestMemoryResultExtraction.RecordingStore()
+        state = {"_fact_store": store, "user_id": "owner"}
+        returned = run_async(MemoryMiddleware().post_process(state, result))
+        assert returned is result
+        return store.saved
+
+    @pytest.mark.parametrize(
+        ("from_tools", "from_responses", "expected_prefixes"),
+        [
+            (True, False, ["known_datasets"]),
+            (False, True, ["response_model_"]),
+            (True, True, ["known_datasets", "response_model_"]),
+            (False, False, []),
+        ],
+    )
+    def test_result_sources_are_independently_configurable(
+        self,
+        monkeypatch,
+        from_tools,
+        from_responses,
+        expected_prefixes,
+    ):
+        saved = self._run_middleware(
+            monkeypatch,
+            {
+                "from_tools": from_tools,
+                "from_responses": from_responses,
+            },
+            {
+                "tool_outputs": [
+                    {
+                        "tool_name": "list_datasets",
+                        "payload": {"datasets": [{"id": "d1", "name": "iris"}]},
+                    }
+                ],
+                "response": "Model tốt nhất là RandomForest",
+            },
+        )
+
+        keys = [fact.key for _, fact in saved]
+        assert len(keys) == len(expected_prefixes)
+        for key, prefix in zip(keys, expected_prefixes, strict=True):
+            assert key.startswith(prefix)
+        assert {user_id for user_id, _ in saved} <= {"owner"}
+
+    def test_legacy_result_messages_are_not_an_extraction_source(self, monkeypatch):
+        from langchain_core.messages import ToolMessage
+
+        saved = self._run_middleware(
+            monkeypatch,
+            {"from_tools": True, "from_responses": True},
+            {
+                "messages": [
+                    ToolMessage(
+                        content=json.dumps(
+                            {"datasets": [{"id": "d1", "name": "unconfirmed"}]}
+                        ),
+                        name="list_datasets",
+                        tool_call_id="call-1",
+                    )
+                ]
+            },
+        )
+
+        assert saved == []
+
+    def test_failed_tools_and_error_responses_are_ignored(self, monkeypatch):
+        saved = self._run_middleware(
+            monkeypatch,
+            {"from_tools": True, "from_responses": True},
+            {
+                "tool_outputs": [
+                    {
+                        "tool_name": "list_datasets",
+                        "payload": {
+                            "error": "upstream timeout",
+                            "datasets": [{"id": "d1", "name": "must-not-save"}],
+                        },
+                    },
+                    {
+                        "tool_name": "get_dataset_info",
+                        "payload": {"success": False, "id": "must-not-save"},
+                    },
+                ],
+                "response": "Model tốt nhất là BrokenModel",
+                "provider": "error",
+                "error": "graph failed",
+            },
+        )
+
+        assert saved == []
+
+    def test_response_key_is_stable_sha256(self):
+        import hashlib
+
+        from hagent.agent.memory.extractor import extract_from_response
+
+        matched_text = "Model tốt nhất là RandomForest"
+        facts = extract_from_response(matched_text, source="agent_response")
+        assert len(facts) == 1
+        expected = hashlib.sha256(matched_text.encode("utf-8")).hexdigest()
+        assert facts[0].key == f"response_model_{expected}"
+
+    def test_agent_suggestion_is_not_saved_as_user_preference(self):
+        from hagent.agent.memory.extractor import extract_from_response
+
+        facts = extract_from_response("I recommend RandomForest", source="agent_response")
+        assert all(fact.category != "preference" for fact in facts)
