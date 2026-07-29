@@ -8,23 +8,26 @@ import {
   ChevronDown,
   Send,
   Zap,
+  Square,
   Paperclip,
   FileText,
 } from "lucide-react";
 import {
   sendChatMessage,
+  sendChatMessageStream,
   sendChatWithFile,
   clearConversation,
   checkHAgentHealth,
+  getChatProviders,
   getConversations,
   getConversationHistory,
+  isStreamUnsupportedError,
   type ChatResponse,
+  type ChatStreamEvent,
   type WorldModelSummary,
   type SelectedPlanSummary,
 } from "@/api/chatClient";
 import { useSession } from "next-auth/react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import styles from "./ChatWidget.module.css";
 
 // ─── Types ──────────────────────────────────────────
@@ -35,12 +38,20 @@ interface Message {
   time: string;
   fileName?: string;
   meta?: {
+    model?: string;
     plan_status?: string | null;
     surprise?: ChatResponse["surprise"];
     campaign_status?: string | null;
     hierarchy_status?: string | null;
   };
 }
+
+interface ModelOption {
+  value: string;
+  label: string;
+}
+
+type ModelRegistryState = "idle" | "loading" | "ready" | "error";
 
 interface WorldPanelState {
   world_model?: WorldModelSummary | null;
@@ -79,6 +90,48 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
+}
+
+function streamActivityForEvent(event: ChatStreamEvent): string {
+  const agent =
+    typeof event.data.agent === "string" ? event.data.agent : "agent";
+  const phase =
+    typeof event.data.phase === "string" ? event.data.phase : "processing";
+  const tool =
+    typeof event.data.tool === "string" ? event.data.tool : "tool";
+
+  switch (event.event) {
+    case "route":
+      return `Routing to ${agent}`;
+    case "phase":
+      return `Phase: ${phase}`;
+    case "plan":
+      return "Plan created";
+    case "plan_event":
+      return "Executing plan";
+    case "surprise":
+      return "Evaluating result";
+    case "tool_call":
+      return `Running tool: ${tool}`;
+    case "tool_result":
+      return `Tool completed: ${tool}`;
+    case "token":
+      return "Generating response";
+    case "done":
+      return "Complete";
+    case "error":
+      return "Response stream failed";
+    default:
+      return "Processing";
+  }
+}
+
 function mapHistoryMessages(rawMessages: any[]): Message[] {
   return (rawMessages || []).map((m: any, index: number) => {
     const parsedTime = m?.timestamp ? new Date(m.timestamp) : null;
@@ -101,7 +154,7 @@ function mapHistoryMessages(rawMessages: any[]): Message[] {
 }
 
 function extractErrorMessage(error: any): string {
-  const status = error?.response?.status;
+  const status = error?.response?.status ?? error?.status;
   const detail = error?.response?.data?.detail;
 
   if (typeof detail === "string" && detail.length > 0) {
@@ -143,10 +196,16 @@ export default function ChatWidget() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [isClearing, setIsClearing] = useState(false);
+  const [streamActivity, setStreamActivity] = useState<string | null>(null);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [showBadge, setShowBadge] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [modelOptions, setModelOptions] = useState<ModelOption[]>([]);
+  const [selectedModel, setSelectedModel] = useState<string | null>(null);
+  const [modelRegistryState, setModelRegistryState] = useState<ModelRegistryState>("idle");
   const [hagentStatus, setHagentStatus] = useState<{
     bridgeReachable: boolean;
     gatewayConnected: boolean;
@@ -158,6 +217,15 @@ export default function ChatWidget() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const activeRequestRef = useRef<AbortController | null>(null);
+  const activeAssistantMessageIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    return () => {
+      activeRequestRef.current?.abort();
+      activeRequestRef.current = null;
+    };
+  }, []);
 
   // Show notification badge after 3 seconds
   useEffect(() => {
@@ -170,36 +238,91 @@ export default function ChatWidget() {
 
   // Kiểm tra trạng thái HAgent khi mở chat và thử tải lại hội thoại cũ
   useEffect(() => {
-    if (isOpen && hagentStatus === null) {
-      checkHAgentHealth()
-        .then((health) =>
+    let cancelled = false;
+
+    if (isOpen && hagentStatus === null && !isClearing) {
+      void checkHAgentHealth()
+        .then((health) => {
+          if (cancelled) return;
           setHagentStatus({
             bridgeReachable: true,
             gatewayConnected: health.connected,
             hautomlConnected: health.hautoml_connected,
-          })
-        )
-        .catch(() =>
+          });
+        })
+        .catch(() => {
+          if (cancelled) return;
           setHagentStatus({
             bridgeReachable: false,
             gatewayConnected: false,
             hautomlConnected: false,
-          })
-        );
+          });
+        });
     }
-  }, [isOpen, hagentStatus]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, hagentStatus, isClearing]);
+
+  useEffect(() => {
+    if (!isOpen || modelRegistryState !== "idle") return;
+
+    setModelRegistryState("loading");
+    const token = (session?.user as any)?.access_token;
+    void getChatProviders(token)
+      .then((registry) => {
+        const seen = new Set<string>();
+        const options = registry.providers.flatMap((provider) => {
+          if (!provider.available) return [];
+          return provider.models.flatMap((model) => {
+            if (!model || seen.has(model)) return [];
+            seen.add(model);
+            return [{ value: model, label: `${model} / ${provider.name}` }];
+          });
+        });
+        if (options.length === 0) {
+          throw new Error("No available chat models");
+        }
+        setModelOptions(options);
+        setSelectedModel((current) => {
+          if (current && options.some((option) => option.value === current)) {
+            return current;
+          }
+          return (
+            options.find((option) => option.value === registry.default_model)
+              ?.value ?? options[0].value
+          );
+        });
+        setModelRegistryState("ready");
+      })
+      .catch(() => {
+        setModelOptions([]);
+        setSelectedModel(null);
+        setModelRegistryState("error");
+      });
+  }, [isOpen, modelRegistryState, session]);
 
   // Tải lịch sử cuộc hội thoại gần nhất khi mở chat
   useEffect(() => {
-    if (isOpen && !conversationId && hagentStatus !== null) {
+    let cancelled = false;
+
+    if (
+      isOpen &&
+      !conversationId &&
+      hagentStatus !== null &&
+      !isClearing
+    ) {
       const loadHistory = async () => {
         try {
           const token = (session?.user as any)?.access_token;
           const list = await getConversations(token);
+          if (cancelled) return;
           if (list?.conversations?.length > 0) {
             const latestId = list.conversations[0].conversation_id;
             const historyData = await getConversationHistory(latestId, token);
-            if (historyData && historyData.messages?.length > 0) {
+            if (cancelled) return;
+            if (!cancelled && historyData && historyData.messages?.length > 0) {
               setConversationId(historyData.conversation_id);
               setMessages(mapHistoryMessages(historyData.messages));
             }
@@ -210,14 +333,25 @@ export default function ChatWidget() {
       };
       // Chỉ tải khi danh sách tin nhắn hiện tại đang trống
       if (messages.length === 0) {
-         loadHistory();
+        void loadHistory();
       }
     }
-  }, [isOpen, conversationId, hagentStatus, messages.length, session]);
+    return () => {
+      cancelled = true;
+    };
+
+  }, [
+    isOpen,
+    conversationId,
+    hagentStatus,
+    isClearing,
+    messages.length,
+    session,
+  ]);
 
   // Đồng bộ tin nhắn mới từ server theo chu kỳ để hiển thị thông báo hậu huấn luyện.
   useEffect(() => {
-    if (!isOpen || !conversationId) return;
+    if (!isOpen || !conversationId || isLoading || isClearing) return;
 
     let cancelled = false;
 
@@ -256,7 +390,7 @@ export default function ChatWidget() {
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [isOpen, conversationId, session]);
+  }, [isOpen, conversationId, isClearing, isLoading, session]);
 
   // Handle textarea auto-resize
   useEffect(() => {
@@ -279,12 +413,36 @@ export default function ChatWidget() {
     }
   }, [isOpen]);
 
-  const toggleChat = useCallback(() => {
-    setIsOpen((prev) => {
-      if (!prev) setShowBadge(false);
-      return !prev;
-    });
+  const cancelActiveRequest = useCallback((activity: string | null = null) => {
+    const controller = activeRequestRef.current;
+    activeRequestRef.current = null;
+    controller?.abort();
+
+    const assistantId = activeAssistantMessageIdRef.current;
+    activeAssistantMessageIdRef.current = null;
+    if (assistantId) {
+      setMessages((previous) =>
+        previous.filter((message) => message.id !== assistantId),
+      );
+    }
+    setIsLoading(false);
+    setIsStreaming(false);
+    setStreamActivity(activity);
   }, []);
+
+  const handleStop = useCallback(() => {
+    cancelActiveRequest("Response stopped");
+  }, [cancelActiveRequest]);
+
+  const toggleChat = useCallback(() => {
+    if (isOpen) {
+      cancelActiveRequest();
+      setIsOpen(false);
+      return;
+    }
+    setShowBadge(false);
+    setIsOpen(true);
+  }, [cancelActiveRequest, isOpen]);
 
   // File selection handler
   const handleFileSelect = useCallback(
@@ -312,11 +470,135 @@ export default function ChatWidget() {
     }
   }, []);
 
+  const updateAssistantMessage = useCallback(
+    (
+      id: string,
+      content: string,
+      options: { append?: boolean; meta?: Message["meta"] } = {},
+    ) => {
+      setMessages((previous) => {
+        const existingIndex = previous.findIndex((message) => message.id === id);
+        if (existingIndex < 0) {
+          return [
+            ...previous,
+            {
+              id,
+              role: "assistant",
+              content,
+              time: getCurrentTime(),
+              meta: options.meta,
+            },
+          ];
+        }
+        return previous.map((message, index) =>
+          index === existingIndex
+            ? {
+                ...message,
+                content: options.append
+                  ? `${message.content}${content}`
+                  : content,
+                meta: options.meta ?? message.meta,
+              }
+            : message,
+        );
+      });
+    },
+    [],
+  );
+
+  const applyResponseMetadata = useCallback((response: ChatResponse) => {
+    if (
+      response.world_model ||
+      response.selected_plan ||
+      response.surprise ||
+      response.plan_status ||
+      response.campaign_status ||
+      response.hierarchy_status ||
+      response.evaluation
+    ) {
+      setWorldPanel({
+        world_model: response.world_model,
+        selected_plan: response.selected_plan,
+        plan_status: response.plan_status,
+        surprise: response.surprise,
+        campaign_status: response.campaign_status,
+        hierarchy_status: response.hierarchy_status,
+        evaluation: response.evaluation,
+      });
+      setWmOpen(true);
+    }
+    if (response.suggestions?.length) {
+      setSuggestions(response.suggestions);
+    }
+  }, []);
+
+  const applyStreamMetadata = useCallback((event: ChatStreamEvent) => {
+    if (event.event === "phase" && typeof event.data.phase === "string") {
+      setWorldPanel((previous) => ({
+        ...(previous ?? {}),
+        world_model: {
+          ...(previous?.world_model ?? {}),
+          phase: event.data.phase as string,
+        },
+      }));
+      setWmOpen(true);
+      return;
+    }
+
+    if (event.event === "plan") {
+      const steps = Array.isArray(event.data.steps)
+        ? event.data.steps.filter(
+            (step): step is string => typeof step === "string",
+          )
+        : [];
+      setWorldPanel((previous) => ({
+        ...(previous ?? {}),
+        plan_status: "streaming",
+        selected_plan: {
+          plan_id:
+            typeof event.data.plan_id === "string"
+              ? event.data.plan_id
+              : undefined,
+          title:
+            typeof event.data.title === "string"
+              ? event.data.title
+              : undefined,
+          steps,
+          cost:
+            typeof event.data.cost === "number" || isRecord(event.data.cost)
+              ? event.data.cost
+              : undefined,
+        },
+      }));
+      setWmOpen(true);
+      return;
+    }
+
+    if (event.event === "surprise" && isRecord(event.data.surprise)) {
+      setWorldPanel((previous) => ({
+        ...(previous ?? {}),
+        surprise: event.data.surprise as ChatResponse["surprise"],
+      }));
+      setWmOpen(true);
+    }
+  }, []);
   const dispatchMessage = useCallback(
     async (text: string, fileToSend: File | null) => {
       const trimmed = text.trim();
-      if ((!trimmed && !fileToSend) || isLoading) return;
+      if (
+        (!trimmed && !fileToSend) ||
+        isLoading ||
+        isClearing ||
+        !selectedModel ||
+        activeRequestRef.current
+      ) {
+        return;
+      }
 
+      const controller = new AbortController();
+      const assistantMessageId = fileToSend ? null : generateId();
+      activeRequestRef.current = controller;
+      activeAssistantMessageIdRef.current = assistantMessageId;
       const userMsg: Message = {
         id: generateId(),
         role: "user",
@@ -327,74 +609,127 @@ export default function ChatWidget() {
 
       setMessages((prev) => [...prev, userMsg]);
       setIsLoading(true);
+      setIsStreaming(!fileToSend);
+      setStreamActivity(
+        fileToSend ? "Uploading file" : "Connecting to HAgent",
+      );
       setSuggestions([]);
 
       try {
         const token = (session?.user as any)?.access_token;
-        const response: ChatResponse = fileToSend
-          ? await sendChatWithFile(trimmed, fileToSend, conversationId, token)
-          : await sendChatMessage(
-              { message: trimmed, conversation_id: conversationId },
+        const request = {
+          message: trimmed,
+          conversation_id: conversationId,
+          model: selectedModel,
+        };
+        let response: ChatResponse;
+
+        if (fileToSend) {
+          response = await sendChatWithFile(
+            trimmed,
+            fileToSend,
+            conversationId,
+            token,
+            selectedModel,
+            controller.signal,
+          );
+        } else {
+          try {
+            response = await sendChatMessageStream(request, {
               token,
+              signal: controller.signal,
+              onConversationId: (nextConversationId) => {
+                if (activeRequestRef.current === controller) {
+                  setConversationId(nextConversationId);
+                }
+              },
+              onEvent: (event) => {
+                if (activeRequestRef.current !== controller) return;
+                setStreamActivity(streamActivityForEvent(event));
+                applyStreamMetadata(event);
+                if (
+                  event.event === "token" &&
+                  typeof event.data.content === "string" &&
+                  assistantMessageId
+                ) {
+                  updateAssistantMessage(
+                    assistantMessageId,
+                    event.data.content,
+                    { append: true },
+                  );
+                }
+              },
+            });
+          } catch (error) {
+            if (!isStreamUnsupportedError(error)) throw error;
+            setStreamActivity("Streaming unavailable; using sync response");
+            response = await sendChatMessage(
+              request,
+              token,
+              controller.signal,
             );
+          }
+        }
+
+        if (activeRequestRef.current !== controller) {
+          return;
+        }
 
         setConversationId(response.conversation_id);
-
-        const botMsg: Message = {
-          id: generateId(),
-          role: "assistant",
-          content: response.message,
-          time: getCurrentTime(),
+        const finalAssistantId = assistantMessageId ?? generateId();
+        updateAssistantMessage(finalAssistantId, response.message, {
           meta: {
+            model: response.model || selectedModel,
             plan_status: response.plan_status,
             surprise: response.surprise,
             campaign_status: response.campaign_status,
             hierarchy_status: response.hierarchy_status,
           },
-        };
-        setMessages((prev) => [...prev, botMsg]);
-
-        if (
-          response.world_model ||
-          response.selected_plan ||
-          response.surprise ||
-          response.plan_status ||
-          response.campaign_status ||
-          response.hierarchy_status
-        ) {
-          setWorldPanel({
-            world_model: response.world_model,
-            selected_plan: response.selected_plan,
-            plan_status: response.plan_status,
-            surprise: response.surprise,
-            campaign_status: response.campaign_status,
-            hierarchy_status: response.hierarchy_status,
-            evaluation: response.evaluation,
-          });
-          setWmOpen(true);
+        });
+        activeAssistantMessageIdRef.current = null;
+        applyResponseMetadata(response);
+      } catch (error: unknown) {
+        if (activeRequestRef.current !== controller || isAbortError(error)) {
+          return;
         }
-
-        if (response.suggestions?.length) {
-          setSuggestions(response.suggestions);
-        }
-      } catch (error: any) {
-        const errorMsg: Message = {
-          id: generateId(),
-          role: "assistant",
-          content: `❌ ${extractErrorMessage(error)}`,
-          time: getCurrentTime(),
-        };
-        setMessages((prev) => [...prev, errorMsg]);
+        const errorAssistantId = assistantMessageId ?? generateId();
+        updateAssistantMessage(
+          errorAssistantId,
+          `Error: ${extractErrorMessage(error)}`,
+        );
+        activeAssistantMessageIdRef.current = null;
       } finally {
-        setIsLoading(false);
+        if (activeRequestRef.current === controller) {
+          activeRequestRef.current = null;
+          activeAssistantMessageIdRef.current = null;
+          setIsLoading(false);
+          setIsStreaming(false);
+          setStreamActivity(null);
+        }
       }
     },
-    [isLoading, conversationId, session],
+    [
+      applyResponseMetadata,
+      applyStreamMetadata,
+      conversationId,
+      isLoading,
+      isClearing,
+      selectedModel,
+      session,
+      updateAssistantMessage,
+    ],
   );
 
   const handleSend = useCallback(async () => {
     const text = input.trim();
-    if ((!text && !selectedFile) || isLoading) return;
+    if (
+      (!text && !selectedFile) ||
+      isLoading ||
+      isClearing ||
+      !selectedModel
+    ) {
+      return;
+    }
 
     const fileToSend = selectedFile;
     setInput("");
@@ -402,7 +737,14 @@ export default function ChatWidget() {
     if (fileInputRef.current) fileInputRef.current.value = "";
 
     await dispatchMessage(text, fileToSend);
-  }, [input, selectedFile, isLoading, dispatchMessage]);
+  }, [
+    dispatchMessage,
+    input,
+    isClearing,
+    isLoading,
+    selectedFile,
+    selectedModel,
+  ]);
 
   const handleQuickSend = useCallback(
     (text: string) => {
@@ -412,22 +754,34 @@ export default function ChatWidget() {
   );
 
   const handleClear = useCallback(async () => {
-    if (conversationId) {
-      try {
-        const token = (session as any)?.user?.access_token;
-        await clearConversation(conversationId, token);
-      } catch (err) {
-        console.warn("[ChatWidget] clearConversation failed:", err);
-      }
-    }
+    if (isClearing) return;
+    const conversationToClear = conversationId;
+    cancelActiveRequest();
+
+    setIsClearing(true);
     setMessages([]);
     setSuggestions([]);
     setConversationId(null);
+    setInput("");
     setSelectedFile(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
     setHagentStatus(null);
     setWorldPanel(null);
     setWmOpen(false);
-  }, [conversationId, session]);
+
+    try {
+      if (conversationToClear) {
+        const token = (session as any)?.user?.access_token;
+        await clearConversation(conversationToClear, token);
+      }
+    } catch {
+      // The local reset remains authoritative while the bridge is unavailable.
+    } finally {
+      setIsClearing(false);
+    }
+  }, [cancelActiveRequest, conversationId, isClearing, session]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -494,6 +848,8 @@ export default function ChatWidget() {
               className={styles.headerBtn}
               onClick={handleClear}
               title="Xóa lịch sử"
+              aria-label="Clear conversation"
+              disabled={isClearing}
             >
               <Trash2 size={16} />
             </button>
@@ -501,10 +857,47 @@ export default function ChatWidget() {
               className={styles.headerBtn}
               onClick={toggleChat}
               title="Thu nhỏ"
+              aria-label="Minimize chat"
             >
               <ChevronDown size={16} />
             </button>
           </div>
+        </div>
+        <div className={styles.modelBar}>
+          <label htmlFor="hagent-chat-model">Model</label>
+          <select
+            id="hagent-chat-model"
+            className={styles.modelSelect}
+            value={selectedModel ?? ""}
+            onChange={(event) => setSelectedModel(event.target.value)}
+            disabled={
+              modelRegistryState !== "ready" || isLoading || isClearing
+            }
+            aria-describedby="hagent-model-status"
+          >
+            <option value="" disabled>
+              {modelRegistryState === "loading"
+                ? "Loading models..."
+                : "Select a model"}
+            </option>
+            {modelOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          <span id="hagent-model-status" className={styles.modelStatus}>
+            {modelRegistryState === "error" ? "Model registry unavailable" : ""}
+          </span>
+          {modelRegistryState === "error" && (
+            <button
+              type="button"
+              className={styles.modelRetry}
+              onClick={() => setModelRegistryState("idle")}
+            >
+              Retry
+            </button>
+          )}
         </div>
 
         {/* World Model panel */}
@@ -599,7 +992,7 @@ export default function ChatWidget() {
         )}
 
         {/* Messages */}
-        <div className={styles.messages}>
+        <div className={styles.messages} aria-busy={isLoading}>
           {showWelcome && (
             <div className={styles.welcome}>
               <div className={styles.welcomeIcon}>
@@ -643,15 +1036,17 @@ export default function ChatWidget() {
                   </div>
                 )}
                 <div className={`${styles.msgBubble} ${styles.markdownBody}`}>
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                    {msg.content}
-                  </ReactMarkdown>
+                  {msg.content}
                 </div>
                 {msg.meta &&
-                  (msg.meta.surprise?.level ||
+                  (msg.meta.model ||
+                    msg.meta.surprise?.level ||
                     msg.meta.plan_status ||
                     msg.meta.campaign_status) && (
                     <div className={styles.msgMeta}>
+                      {msg.meta.model && (
+                        <span className={styles.wmChip}>{msg.meta.model}</span>
+                      )}
                       {msg.meta.plan_status && (
                         <span className={styles.wmChip}>
                           plan:{msg.meta.plan_status}
@@ -680,7 +1075,7 @@ export default function ChatWidget() {
             </div>
           ))}
 
-          {isLoading && (
+          {isLoading && !isStreaming && (
             <div className={styles.typing}>
               <div className={styles.msgAvatar}>AI</div>
               <div className={styles.typingDots}>
@@ -693,6 +1088,27 @@ export default function ChatWidget() {
 
           <div ref={messagesEndRef} />
         </div>
+        {streamActivity && (
+          <div
+            className={styles.streamStatus}
+            role="status"
+            aria-live="polite"
+            data-streaming={isLoading ? "true" : "false"}
+          >
+            {isLoading && <span className={styles.streamPulse} aria-hidden="true" />}
+            <span className={styles.streamStatusText}>{streamActivity}</span>
+            {isLoading && (
+              <button
+                type="button"
+                className={styles.stopButton}
+                onClick={handleStop}
+              >
+                <Square size={12} aria-hidden="true" />
+                Stop
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Suggestion chips */}
         {suggestions.length > 0 && (
@@ -721,6 +1137,7 @@ export default function ChatWidget() {
               className={styles.filePreviewClose}
               onClick={clearFile}
               title="Xóa file"
+              aria-label="Remove selected file"
             >
               <X size={14} />
             </button>
@@ -741,7 +1158,8 @@ export default function ChatWidget() {
             className={styles.attachBtn}
             onClick={() => fileInputRef.current?.click()}
             title="Đính kèm file (CSV, Excel)"
-            disabled={isLoading}
+            aria-label="Attach a CSV or Excel file"
+            disabled={isLoading || isClearing}
           >
             <Paperclip size={18} />
           </button>
@@ -749,6 +1167,7 @@ export default function ChatWidget() {
             ref={inputRef}
             className={styles.input}
             placeholder="Hỏi tôi bất cứ điều gì..."
+            aria-label="Chat message"
             rows={1}
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -757,7 +1176,12 @@ export default function ChatWidget() {
           <button
             className={styles.sendBtn}
             onClick={handleSend}
-            disabled={(!input.trim() && !selectedFile) || isLoading}
+            disabled={
+              (!input.trim() && !selectedFile) ||
+              isLoading ||
+              isClearing ||
+              !selectedModel
+            }
             aria-label="Gửi tin nhắn"
           >
             <Send size={18} />

@@ -662,6 +662,7 @@
 .markdownBody {
   font-family: inherit;
   line-height: 1.5;
+  white-space: pre-wrap;
 }
 
 .markdownBody p {
@@ -841,4 +842,141 @@
   flex-wrap: wrap;
   gap: 4px;
   margin-top: 4px;
+}
+
+/* Model registry and streaming controls */
+.modelBar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #e2e8f0;
+  background: #ffffff;
+  flex-shrink: 0;
+}
+
+.modelBar label {
+  color: #64748b;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.modelSelect {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  padding: 0 28px 0 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: #334155;
+  font: inherit;
+  font-size: 0.75rem;
+}
+
+.modelSelect:focus-visible,
+.modelRetry:focus-visible,
+.stopButton:focus-visible {
+  outline: 2px solid #4f46e5;
+  outline-offset: 2px;
+}
+
+.modelSelect:disabled {
+  color: #94a3b8;
+  cursor: not-allowed;
+}
+
+.modelStatus {
+  overflow: hidden;
+  max-width: 110px;
+  color: #b91c1c;
+  font-size: 0.68rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modelStatus:empty {
+  display: none;
+}
+
+.modelRetry {
+  padding: 5px 8px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #4338ca;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+
+.modelRetry:hover {
+  background: #eef2ff;
+  border-color: #a5b4fc;
+}
+
+.streamStatus {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 7px 14px;
+  border-top: 1px solid #e2e8f0;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 0.75rem;
+  flex-shrink: 0;
+}
+
+.streamStatus[data-streaming="false"] {
+  background: #f1f5f9;
+}
+
+.streamPulse {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #4f46e5;
+  animation: pulseDot 1.2s infinite;
+  flex-shrink: 0;
+}
+
+.streamStatusText {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stopButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border: 1px solid #fca5a5;
+  border-radius: 6px;
+  background: #fff;
+  color: #b91c1c;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+
+.stopButton:hover {
+  background: #fef2f2;
+}
+
+@media (max-width: 480px) {
+  .modelStatus {
+    display: none;
+  }
+
+  .modelBar {
+    padding-inline: 10px;
+  }
 }

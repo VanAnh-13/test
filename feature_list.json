@@ -1684,6 +1684,44 @@
         "tested_at": "2026-07-28T15:02:25+07:00",
         "notes": "Bridge owns the public stream lifecycle: it snapshots owner-scoped history, persists the user once, forwards the selected model and typed monotonic events, and returns X-Conversation-Id. A final assistant message is appended with an owner-scoped atomic idempotency filter before done; duplicate terminals are ignored, and malformed/upstream/persistence failures emit one safe error without done. Cancellation closes upstream and stores no partial assistant content. Independent Checker remained unavailable because the environment quota was exhausted; the documented AGENTS.md fallback review found no blocker and only exact whitelisted files changed."
       }
+    },
+    {
+      "id": "UI-STREAM-MODEL-001",
+      "title": "Stream chat and model selection in the frontend",
+      "status": "blocked",
+      "acceptance_criteria": [
+        "Native fetch parses typed SSE for text chat; progressive tokens, tool state, terminal metadata, and conversation IDs update the UI.",
+        "Model selector loads the Bridge registry and the selected model is sent for both streamed text and synchronous uploads.",
+        "Stop, clear, close, and unmount abort active work; automatic sync fallback occurs only for 404/415 before the first SSE frame and never after ambiguous network or framed failures.",
+        "No dependency or lockfile changes; npm ci, lint, build, browser smoke, review fallback, and exact whitelist validation pass."
+      ],
+      "allowed_files": [
+        "src/frontend/src/api/chatClient.ts",
+        "src/frontend/src/components/chatWidget/ChatWidget.tsx",
+        "src/frontend/src/components/chatWidget/ChatWidget.module.css",
+        "feature_list.json",
+        "claude-progress.md"
+      ],
+      "test_commands": [
+        "cd src/frontend && npm ci",
+        "cd src/frontend && npm run lint",
+        "cd src/frontend && npm run build",
+        "browser smoke: model selection, multi-turn, progressive SSE, abort, and pre-frame 404/415 sync fallback"
+      ],
+      "verification": {
+        "status": "blocked",
+        "commands_run": [
+          "npm ci (exit 0; 540 packages installed; audit reported 14 vulnerabilities in the locked dependency graph)",
+          "npx next lint --file src/api/chatClient.ts --file src/components/chatWidget/ChatWidget.tsx (exit 0; no warnings or errors after final Checker fixes)",
+          "browser smoke with a local unpaid Bridge mock: registry and selected-model forwarding, progressive token/tool/world-state UI, second-turn conversation reuse, Stop cancellation without partial assistant, one pre-frame 404 stream plus one sync fallback, and no sync retry after 502; no runtime console errors",
+          "npm run lint (exit 1; repository baseline failures are exclusively outside the exact task whitelist)",
+          "npm run build (exit 1; production bundle compiled successfully in 7.0s, then failed on the same out-of-whitelist repository lint baseline)",
+          "independent read-only Checker found stream-cleanup and Clear/history races; fixes were applied and final re-review returned CODE PASS with no in-scope blocker",
+          "git diff --check and exact five-file whitelist validation passed; package.json and package-lock.json are unchanged"
+        ],
+        "tested_at": "2026-07-29T12:09:50+07:00",
+        "notes": "Implementation and focused verification pass, but the task cannot be done because mandatory full npm lint and build gates exit 1 on pre-existing errors in unrelated frontend files outside the approved whitelist. Browser smoke used only a deterministic local mock and no paid API or secret. Baseline commit: 10abea349b8e9bf38efde2d434df4c2b8c191f9d."
+      }
     }
   ]
 }

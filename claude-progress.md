@@ -1354,3 +1354,48 @@ openclaw"; 3. "Không nói là DeerFlow, mà chỉ dựa trên công nghệ củ
 - Independent sub-agent review remained unavailable because the environment quota was exhausted.
 - The documented `AGENTS.md` fallback review checked owner isolation, write ordering, atomic idempotency, model/history forwarding, typed IDs, duplicate/missing terminals, malformed/upstream/persistence errors, cancellation cleanup, secret-safe errors, and the exact six-file whitelist; no blocker remained.
 - Tests use deterministic upstream/Mongo doubles and do not call a paid or live LLM endpoint.
+
+## 2026-07-28 - UI-STREAM-MODEL-001 START
+
+### Scope
+
+- Opened exactly one WIP task after committing `SSE-BRIDGE-001` at `10abea349b8e9bf38efde2d434df4c2b8c191f9d`.
+- Maker scope is limited to the existing chat API client, ChatWidget, its CSS module, and control files.
+- Package/lock files, backend, auth, compose, middleware, and unrelated frontend components remain outside this task.
+
+### Acceptance seams
+
+- Text chat uses native fetch SSE; uploads remain synchronous and both paths carry the selected model.
+- The UI shows progressive text, tool activity, and final world-model metadata with accessible live status.
+- Stop, clear, close, and unmount abort the active request without automatic replay.
+- Sync fallback is allowed only for HTTP 404/415 before the first stream frame.
+
+## 2026-07-29 - UI-STREAM-MODEL-001 BLOCKED
+
+### Delivered
+
+- Added a native typed-SSE client with strict event/id/data validation, final-response reconstruction, selected-model forwarding, and fail-closed fallback limited to pre-frame HTTP 404/415.
+- Added the Bridge-backed model selector, progressive token/tool/plan/world-model UI, Stop control, request cancellation on clear/close/unmount, and selected-model forwarding for synchronous uploads.
+- Closed rejected HTTP bodies before fallback and cancel every acquired stream on malformed/framed/callback/abort/missing-terminal exits.
+- Prevented Clear races by resetting local state before remote I/O, locking dispatch while clearing, and suppressing stale health/history writes with effect cleanup flags.
+- Package and lock files remain unchanged; no live or paid API and no secret were used.
+
+### Verification
+
+- `npm ci` exited 0 and installed the locked graph; npm reported 14 dependency-audit findings (2 moderate, 11 high, 1 critical), which were not auto-fixed because dependency changes are outside scope.
+- Focused lint after all Checker fixes: `npx next lint --file src/api/chatClient.ts --file src/components/chatWidget/ChatWidget.tsx` exited 0 with no warnings or errors.
+- Browser smoke against an in-memory local Bridge mock verified model selection/forwarding, progressive tokens, tool activity, world-model metadata, second-turn conversation reuse, Stop cancellation without a partial assistant, exactly one sync fallback after a pre-frame 404, and no sync retry after a 502. The tab reported no runtime errors.
+- The browser smoke preceded the final race-only cleanup; after that cleanup the focused lint passed and `next build` compiled the production bundle successfully before entering the repository-wide lint gate.
+- `npm run lint` exited 1 only on pre-existing errors in unrelated files outside this task whitelist.
+- `npm run build` exited 1 after successful production compilation because it runs the same failing repository-wide lint/type gate.
+- `git diff --check`, exact five-file whitelist validation, and package/lock no-diff checks passed.
+
+### Checker and disposition
+
+- Independent read-only Checker initially blocked stream cleanup and Clear/history races; Maker fixed each finding.
+- Final Checker re-review returned `CODE PASS` with no remaining in-scope blocker.
+- Task is `blocked`, not `done`: the mandatory full lint and build commands do not exit 0, and fixing those unrelated baseline files requires a separately approved task and whitelist.
+
+### Residual risk
+
+- Existing markdown rendering dependencies are absent from the locked package graph, so assistant text uses safe plain React text with preserved whitespace rather than introducing an unapproved dependency.
