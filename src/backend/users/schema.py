@@ -1,6 +1,7 @@
 # Third party libraries
 from pydantic import BaseModel, EmailStr, Field
 
+
 class UserRegisterRequest(BaseModel):
     username: str = Field(..., min_length=3)
     email: str = Field(pattern=r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$")
@@ -8,7 +9,7 @@ class UserRegisterRequest(BaseModel):
     date: str
     number: str = Field(..., min_length=10)
     fullName: str
-    password: str
+    password: str = Field(..., min_length=8, max_length=128)
 
     model_config = {
         "populate_by_name": True,
@@ -22,7 +23,7 @@ class UserRegisterRequest(BaseModel):
                     "date": "01/01/2026",
                     "number": "486909281",
                     "fullName": "Sherlock Holmes",
-                    "password": "abc@123"
+                    "password": "abc@1234"
                 }
             ]
         }
@@ -31,7 +32,7 @@ class UserRegisterRequest(BaseModel):
 
 class UserLoginRequest(BaseModel):
     username: str
-    password: str
+    password: str = Field(..., min_length=1, max_length=128)
 
 
 class UserResponse(BaseModel):
@@ -87,9 +88,15 @@ class VerifyEmailRequest(BaseModel):
 
 class ResetPasswordRequest(BaseModel):
     email: EmailStr
-    current_password: str
-    new_password: str = Field(..., min_length=8)
-    confirm_password: str = Field(..., min_length=8)
+    current_password: str = Field(..., min_length=1, max_length=128)
+    new_password: str = Field(..., min_length=8, max_length=128)
+    confirm_password: str = Field(..., min_length=8, max_length=128)
+
+
+class PasswordResetRequest(BaseModel):
+    reset_token: str = Field(..., min_length=1, max_length=4096)
+    new_password: str = Field(..., min_length=8, max_length=128)
+    confirm_password: str = Field(..., min_length=8, max_length=128)
 
 
 class VerifyOtp(BaseModel):

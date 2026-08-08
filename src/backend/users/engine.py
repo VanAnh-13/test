@@ -1,14 +1,21 @@
-import time
+import base64
 import datetime
+import io
+import os
 import secrets
-from email.mime.text import MIMEText
 import smtplib
-from pydantic import BaseModel
+import time
+from email.mime.text import MIMEText
 from typing import Optional
-from pymongo.asynchronous.database import AsyncDatabase
+
 from dotenv import load_dotenv
 from fastapi import HTTPException, status
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+from pymongo.asynchronous.database import AsyncDatabase
+
 from users.utils.email_service import email_service
+from users.utils.security import HashHelper
 
 # Load file .env
 load_dotenv()
@@ -110,17 +117,37 @@ async def handle_send_otp(email, db: AsyncDatabase):
     }
 
 
+def verify_stored_password(plain_password: str, stored_password: str | None) -> tuple[bool, bool]:
+    """Xác thực hash hiện tại hoặc plaintext cũ; cờ thứ hai yêu cầu nâng cấp hash."""
+    if not isinstance(stored_password, str) or not stored_password:
+        return False, False
+    try:
+        return HashHelper.verify_password(plain_password, stored_password), False
+    except (TypeError, ValueError):
+        if stored_password.startswith("$argon2"):
+            return False, False
+        matched = secrets.compare_digest(plain_password, stored_password)
+        return matched, matched
+
+
 async def handle_change_password(user, current_password: str, new_password: str, db: AsyncDatabase):
     if user.get('password'):
-        if current_password != user.get('password'):
+        is_valid, _ = verify_stored_password(current_password, user.get('password'))
+        if not is_valid:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Incorrect current password"
             )
 
+        password_hash = HashHelper.get_password_hash(new_password)
         await db.tbl_User.update_one(
             {"_id": user['_id']},
-            {"$set": {'password': new_password}}
+            {"$set": {'password': password_hash}}
+        )
+        await db.linked_accounts.update_one(
+            {"user_id": user['_id'], "provider": "local"},
+            {"$set": {"password": password_hash}},
+            upsert=True,
         )
         return {"message": "Change password successfully"}
     else:
@@ -132,7 +159,8 @@ async def handle_change_password(user, current_password: str, new_password: str,
                 detail="Account not found in linked accounts"
             )
         
-        if current_password != linked_acc.get('password'):
+        is_valid, _ = verify_stored_password(current_password, linked_acc.get('password'))
+        if not is_valid:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Incorrect current password"
@@ -140,13 +168,11 @@ async def handle_change_password(user, current_password: str, new_password: str,
 
         await db.linked_accounts.update_one(
             {"_id": linked_acc['_id']},
-            {"$set": {'password': new_password}}
+            {"$set": {'password': HashHelper.get_password_hash(new_password)}}
         )
         return {"message": "Change password successfully"}
 
     
-import base64, io
-from fastapi.responses import StreamingResponse
 async def handle_update_avatar(username, avatar, db: AsyncDatabase):
     users_collection = db.tbl_User
     user = await users_collection.find_one({"username": username})
@@ -176,7 +202,7 @@ async def handle_get_avatar(username, db: AsyncDatabase):
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"User not found"
+            detail="User not found"
         )
     
     avatar_base64 = user.get('avatar')
@@ -238,11 +264,36 @@ async def handle_update_user(username: str, new_user: UpdateUser, db: AsyncDatab
 async def handle_contact(fullname: str, email: str, message: str, db: AsyncDatabase):
     contacts_collection = db.tbl_contacts
 
-    smtp_server = "smtp.gmail.com"
-    port = 587
-    sender_email = "devweb3010@gmail.com"  # Thay bằng email thật
-    sender_password = "xkda ehrw nedr djqo"  # Thay bằng mật khẩu thật hoặc dùng App Password
-    receiver_email = "mykhanh03102003@gmail.com" # Thay email admin
+    smtp_server = os.getenv("CONTACT_SMTP_HOST", "").strip()
+    smtp_port = os.getenv("CONTACT_SMTP_PORT", "").strip()
+    sender_email = os.getenv("CONTACT_SMTP_USERNAME", "").strip()
+    sender_password = os.getenv("CONTACT_SMTP_PASSWORD", "")
+    receiver_email = os.getenv("CONTACT_RECEIVER_EMAIL", "").strip()
+    required_config = (
+        smtp_server,
+        smtp_port,
+        sender_email,
+        sender_password,
+        receiver_email,
+    )
+    if not all(required_config):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Contact email service is not configured",
+        )
+    try:
+        port = int(smtp_port)
+        timeout = float(os.getenv("CONTACT_SMTP_TIMEOUT_SECONDS", "10"))
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Contact email service is not configured",
+        ) from exc
+    if not 1 <= port <= 65535 or timeout <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Contact email service is not configured",
+        )
 
     msg = MIMEText(f"Từ: {fullname}\nEmail: {email}\n\nNội dung:\n{message}")
     msg["Subject"] = "Trợ giúp người dùng"
@@ -250,28 +301,25 @@ async def handle_contact(fullname: str, email: str, message: str, db: AsyncDatab
     msg["To"] = receiver_email
 
     try:
-        # Gửi email
-        with smtplib.SMTP(smtp_server, port) as server:
+        with smtplib.SMTP(smtp_server, port, timeout=timeout) as server:
             server.starttls()
             server.login(sender_email, sender_password)
             server.sendmail(sender_email, receiver_email, msg.as_string())
-
-        # Lưu vào collection liên hệ
-        contact_data = {
-            "fullname": fullname,
-            "email": email,
-            "message": message,
-            "created_at": time.time()
-        }
-        await contacts_collection.insert_one(contact_data)
-
-        return {
-            "status": "success",
-            "message": "Liên hệ đã được gửi và lưu thành công."
-        }
-
-    except Exception as e:
+    except (OSError, smtplib.SMTPException) as exc:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Lỗi khi gửi email hoặc lưu liên hệ: {str(e)}"
-        )
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Contact email service is unavailable",
+        ) from exc
+
+    contact_data = {
+        "fullname": fullname,
+        "email": email,
+        "message": message,
+        "created_at": time.time()
+    }
+    await contacts_collection.insert_one(contact_data)
+
+    return {
+        "status": "success",
+        "message": "Liên hệ đã được gửi và lưu thành công."
+    }

@@ -14,6 +14,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
+import { verifyPasswordResetOtp } from "@/app/serverActions/auth";
 import {
   InputOTP,
   InputOTPGroup,
@@ -31,7 +32,7 @@ export default function VerifyOTPForm() {
 
   const [timeLeft, setTimeLeft] = useState(60);
 
-  // Gọi API verify
+  // Server action giữ token reset ngoài JavaScript phía client.
   const handleVerify = async () => {
     if (timeLeft <= 0) {
       alert("Mã OTP đã hết hạn, vui lòng gửi lại");
@@ -46,33 +47,13 @@ export default function VerifyOTPForm() {
     try {
       setLoading(true);
 
-      const res = await fetch(
-        `${process.env.NEXT_PUBLIC_BASE_API}/auth/verify-otp`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ email, otp }),
-        },
-      );
-
-      if (!res.ok) {
-        throw new Error("Xác thực thất bại");
+      const result = await verifyPasswordResetOtp(email, otp);
+      if (!result.ok) {
+        throw new Error(result.error);
       }
 
-      const data: any = await res.json(); // FIX thiếu await
-      console.log(data);
-
-      const epOld = {
-        oldPassword: data.password,
-        email: email,
-      };
-
-      localStorage.setItem("verify-info", JSON.stringify(epOld));
-
       router.push("/change-pw");
-    } catch (error) {
+    } catch {
       alert("Mã OTP không đúng hoặc đã hết hạn");
     } finally {
       setLoading(false);
@@ -95,7 +76,7 @@ export default function VerifyOTPForm() {
       setTimeLeft(60); // reset timer
       setOtp(""); // clear otp (optional)
       alert("Đã gửi lại mã OTP");
-    } catch (err) {
+    } catch {
       alert("Không thể gửi lại OTP");
     }
   };
@@ -124,7 +105,7 @@ export default function VerifyOTPForm() {
         <Field>
           <div className="flex items-center justify-between">
             <FieldLabel>Mã xác thực</FieldLabel>
-            <Button variant="outline" size="xs" onClick={handleResend}>
+            <Button variant="outline" size="sm" onClick={handleResend}>
               <RefreshCwIcon className="mr-1 h-4 w-4" />
               Gửi lại
             </Button>
@@ -151,7 +132,7 @@ export default function VerifyOTPForm() {
           </InputOTP>
 
           <FieldDescription>
-            Không nhận được mã? Kiểm tra spam hoặc bấm "Gửi lại".
+            Không nhận được mã? Kiểm tra spam hoặc bấm &quot;Gửi lại&quot;.
           </FieldDescription>
 
           <FieldDescription>

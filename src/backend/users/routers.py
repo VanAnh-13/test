@@ -1,29 +1,35 @@
-# Standard libraries
+import hashlib
 import os
+import secrets
 from datetime import datetime, timezone
-from bson import ObjectId
-import asyncio
 
-
-# Third party libraries
-from fastapi import APIRouter, HTTPException, Depends, status, Response, BackgroundTasks
-from pymongo.asynchronous.database import AsyncDatabase
-from dotenv import load_dotenv
-from fastapi.security import OAuth2PasswordBearer
 from authlib.integrations.starlette_client import OAuth
-from starlette.requests import Request
+from bson import ObjectId
+from dotenv import load_dotenv
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response, status
 from fastapi.responses import RedirectResponse
+from fastapi.security import OAuth2PasswordBearer
 from pydantic import EmailStr
+from pymongo import ReturnDocument
+from pymongo.asynchronous.database import AsyncDatabase
+from starlette.requests import Request
 
-
-# Local modules
-from users.utils.authentication import jwt_service
-from users.utils.security import HashHelper
-from users.utils.email_service import email_service
-from users.schema import UserLoginRequest, UserRegisterRequest, UserResponse, Token, RefreshRequest, ResendEmailRequest, VerifyEmailRequest, ResetPasswordRequest, VerifyOtp
 from database.database import get_db
-from users.engine import handle_send_otp
-
+from users.engine import handle_send_otp, verify_stored_password
+from users.schema import (
+    PasswordResetRequest,
+    RefreshRequest,
+    ResendEmailRequest,
+    Token,
+    UserLoginRequest,
+    UserRegisterRequest,
+    UserResponse,
+    VerifyEmailRequest,
+    VerifyOtp,
+)
+from users.utils.authentication import jwt_service
+from users.utils.email_service import email_service
+from users.utils.security import HashHelper
 
 # Load .env file
 load_dotenv()
@@ -73,7 +79,7 @@ async def register(user_data: UserRegisterRequest, background_tasks: BackgroundT
         "user_id": user_id,
         "provider": "local",
         "provider_id": user_data.email,
-        "password": user_data.password, # HashHelper.get_password_hash(user_data.password)
+        "password": HashHelper.get_password_hash(user_data.password),
         "created_at": datetime.now(timezone.utc).timestamp()
     }
 
@@ -134,23 +140,54 @@ async def login(user_login: UserLoginRequest, response: Response, db: AsyncDatab
                 detail="Account is not verified. Please check your email to verify your account."
             )
 
-    if user.get('password') and user_login.password != user['password']:
-        raise HTTPException(
+    if user.get('password'):
+        is_valid, needs_upgrade = verify_stored_password(
+            user_login.password, user.get('password')
+        )
+        if not is_valid:
+            raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Incorrect login information",
                 headers={"WWW-Authenticate": "Bearer"}
             )
-    elif not user.get('password'):
+        canonical_password_hash = user['password']
+        if needs_upgrade:
+            canonical_password_hash = HashHelper.get_password_hash(user_login.password)
+            await db.tbl_User.update_one(
+                {'_id': user['_id']},
+                {'$set': {'password': canonical_password_hash}}
+            )
+        await db.linked_accounts.update_one(
+            {'user_id': user['_id'], 'provider': 'local'},
+            {
+                '$set': {'password': canonical_password_hash},
+                '$setOnInsert': {
+                    'provider_id': user['email'],
+                    'created_at': datetime.now(timezone.utc).timestamp(),
+                },
+            },
+            upsert=True,
+        )
+    else:
         account = await db.linked_accounts.find_one({
             'user_id': user['_id'],
             'provider': 'local'
         })
 
-        if not account or not (user_login.password == account['password']): # HashHelper.verify_password(user_login.password, account['password'])
+        is_valid, needs_upgrade = verify_stored_password(
+            user_login.password,
+            account.get('password') if account else None,
+        )
+        if not is_valid:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Incorrect login information",
                 headers={"WWW-Authenticate": "Bearer"}
+            )
+        if needs_upgrade:
+            await db.linked_accounts.update_one(
+                {'_id': account['_id']},
+                {'$set': {'password': HashHelper.get_password_hash(user_login.password)}}
             )
         
     access_token = jwt_service.create_access_token({
@@ -399,7 +436,7 @@ async def verify_user_email(request: VerifyEmailRequest, db: AsyncDatabase = Dep
 
 
 @router.post("/auth/token/verifications")
-async def request_new_verification(
+async def request_email_verification_token(
     request: ResendEmailRequest,
     background_tasks: BackgroundTasks,
     db: AsyncDatabase = Depends(get_db)
@@ -428,7 +465,7 @@ async def request_new_verification(
 
 
 @router.post("/auth/otp/verifications")
-async def request_new_verification(
+async def request_new_otp(
     request: ResendEmailRequest,
     background_tasks: BackgroundTasks,
     db: AsyncDatabase = Depends(get_db)
@@ -486,103 +523,109 @@ async def forgot_password(
 
 
 @router.post("/auth/verify-otp", status_code=status.HTTP_200_OK)
-async def reset_password(
+async def verify_reset_otp(
     payload: VerifyOtp, 
     db: AsyncDatabase = Depends(get_db)
 ):
-    user = await db.tbl_User.find_one({"email": payload.email})
-    
+    now = datetime.now(timezone.utc).timestamp()
+    nonce = secrets.token_urlsafe(32)
+    nonce_hash = hashlib.sha256(nonce.encode("utf-8")).hexdigest()
+    expires_in = jwt_service.password_reset_expires_in
+    user = await db.tbl_User.find_one_and_update(
+        {
+            "email": payload.email,
+            "otp": payload.otp,
+            "createAtOTP": {"$gte": now},
+        },
+        {
+            "$set": {
+                "password_reset_nonce_hash": nonce_hash,
+                "password_reset_nonce_expires_at": now + expires_in,
+            },
+            "$unset": {"otp": "", "createAtOTP": ""},
+        },
+        return_document=ReturnDocument.AFTER,
+    )
     if not user:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Passwords do not match. Please try again."
+            detail="Invalid or expired OTP code.",
         )
 
-    stored_otp = user.get("otp")
-    otp_expiry = user.get("createAtOTP")
-
-    if not stored_otp or stored_otp != payload.otp:
-        raise HTTPException(status_code=400, detail="Invalid OTP code.")
-    
-    now = datetime.now(timezone.utc).timestamp()
-    if now - otp_expiry > 60:
-        raise HTTPException(status_code=400, detail="OTP code has expired.")
-
-    await db.tbl_User.update_one(
-        {"_id": user["_id"]},
-        {"$unset": {"otp": "", "createAtOTP": ""}}
-    )
-
-    password = None
-
-    if user.get('password'):
-        password = user['password']
-    else:
-        account = await db.linked_accounts.find_one({
-            'user_id': user['_id'],
-            'provider': 'local'
-        })
-        password = account['password']
-
     return {
-        "password": password
+        "reset_token": jwt_service.create_password_reset_token({
+            "sub": str(user["_id"]),
+            "email": user["email"],
+            "nonce": nonce,
+        }),
+        "expires_in": expires_in,
     }
 
 
 @router.post("/reset-password", status_code=status.HTTP_200_OK)
 async def reset_password(
-    payload: ResetPasswordRequest, 
+    payload: PasswordResetRequest,
     db: AsyncDatabase = Depends(get_db)
 ):
     if payload.new_password != payload.confirm_password:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail="Passwords do not match. Please try again"
         )
 
-    user = await db.tbl_User.find_one({"email": payload.email})
-
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Not found account"
-        )
-    
-    is_authenticated = False
-    
-    if user.get('password'):
-        if payload.password == user['password']:
-            is_authenticated = True
-
-    if not is_authenticated:
-        account = await db.linked_accounts.find_one({
-            'user_id': user['_id'],
-            'provider': 'local'
-        })
-        if account and payload.password == account.get('password'):
-            is_authenticated = True
-
-    if not is_authenticated:
+    token_payload = jwt_service.verify_password_reset_token(payload.reset_token)
+    if not token_payload:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Password not correct"
+            detail="Password reset authorization is invalid or expired",
         )
-    
-    update_user_task = db.tbl_User.update_one(
-        {"_id": user["_id"]},
-        {"$set": {"password": payload.new_password}}
-    )
+    user_id = token_payload.get("sub")
+    email = token_payload.get("email")
+    nonce = token_payload.get("nonce")
+    if not all(isinstance(value, str) and value for value in (user_id, email, nonce)):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Password reset authorization is invalid or expired",
+        )
+    try:
+        object_id = ObjectId(user_id)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Password reset authorization is invalid or expired",
+        ) from exc
 
-    update_account_task = db.linked_accounts.update_one(
+    nonce_hash = hashlib.sha256(nonce.encode("utf-8")).hexdigest()
+    password_hash = HashHelper.get_password_hash(payload.new_password)
+    user = await db.tbl_User.find_one_and_update(
         {
-            "user_id": user["_id"], 
-            "provider": "local"
+            "_id": object_id,
+            "email": email,
+            "password_reset_nonce_hash": nonce_hash,
+            "password_reset_nonce_expires_at": {
+                "$gte": datetime.now(timezone.utc).timestamp()
+            },
         },
-        {"$set": {"password": payload.new_password}},
-        upsert=True 
+        {
+            "$set": {"password": password_hash},
+            "$unset": {
+                "password_reset_nonce_hash": "",
+                "password_reset_nonce_expires_at": "",
+            },
+        },
+        return_document=ReturnDocument.AFTER,
     )
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Password reset authorization is invalid or expired",
+        )
 
-    await asyncio.gather(update_user_task, update_account_task)
+    await db.linked_accounts.update_one(
+        {"user_id": object_id, "provider": "local"},
+        {"$set": {"password": password_hash}},
+        upsert=True,
+    )
 
     return {
         "status": "success",

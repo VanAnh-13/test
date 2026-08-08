@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useTransition } from "react";
+import React, { useTransition } from "react";
 import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
@@ -19,17 +19,19 @@ import { Button } from "@/components/ui/button";
 import { changePassword } from "@/app/serverActions/auth";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import styles from "./ChangepwForm.module.scss";
 
 // Schema validate
-const changePwschema = z.object({
-  email: z.string().min(1, { message: "Email không được để trống" }),
-  password: z.string().min(1, { message: "Password không được để trống" }),
-  new1_password: z.string().min(1, { message: "Password không được để trống" }),
-  new2_password: z.string().min(1, { message: "Password không được để trống" }),
-});
+const changePasswordSchema = z
+  .object({
+    new1_password: z.string().min(8, { message: "Mật khẩu cần ít nhất 8 ký tự" }),
+    new2_password: z.string().min(8, { message: "Mật khẩu cần ít nhất 8 ký tự" }),
+  })
+  .refine((data) => data.new1_password === data.new2_password, {
+    message: "Mật khẩu xác nhận không khớp",
+    path: ["new2_password"],
+  });
 
-type FormValues = z.infer<typeof changePwschema>;
+type FormValues = z.infer<typeof changePasswordSchema>;
 
 const ChangepwForm = () => {
   const router = useRouter();
@@ -37,10 +39,8 @@ const ChangepwForm = () => {
   const [isPending, startTransition] = useTransition();
 
   const form = useForm<FormValues>({
-    resolver: zodResolver(changePwschema),
+    resolver: zodResolver(changePasswordSchema),
     defaultValues: {
-      email: "",
-      password: "",
       new1_password: "",
       new2_password: "",
     },
@@ -48,16 +48,11 @@ const ChangepwForm = () => {
 
   // Submit
   const onSubmit = (data: FormValues) => {
-    console.log(data);
     startTransition(async () => {
       const res = await changePassword(
-        data.email,
-        data.password,
         data.new1_password,
         data.new2_password,
       );
-
-      console.log(res);
 
       if (res.ok) {
         toast({
@@ -80,15 +75,6 @@ const ChangepwForm = () => {
       }
     });
   };
-
-  useEffect(() => {
-    const data = localStorage.getItem("verify-info");
-    if (data) {
-      const parsed = JSON.parse(data);
-      form.setValue("email", parsed.email);
-      form.setValue("password", parsed.oldPassword);
-    }
-  }, [form]);
 
   return (
     <div className="w-full flex justify-center items-start px-4 sm:px-6 lg:px-8 py-6">
@@ -116,38 +102,6 @@ const ChangepwForm = () => {
             onSubmit={form.handleSubmit(onSubmit)}
             className="w-full flex flex-col gap-4"
           >
-            <FormField
-              control={form.control}
-              name="email"
-              render={({ field }) => (
-                <FormItem>
-                  <Label className="text-center text-sl font-bold">Email</Label>
-                  <FormControl>
-                    <Input placeholder="Nhập email..." type="text" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={form.control}
-              name="password"
-              render={({ field }) => (
-                <FormItem>
-                  <Label className="text-center text-sl font-bold">
-                    Mật khẩu cũ
-                  </Label>
-                  <FormControl>
-                    <Input
-                      placeholder="Nhập mật khẩu cũ..."
-                      type="password"
-                      {...field}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
             <FormField
               control={form.control}
               name="new1_password"
