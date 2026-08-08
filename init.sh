@@ -77,13 +77,22 @@ def validate_exact_path(path, context):
         errors.append(f"{context}: đường dẫn phải là chuỗi không rỗng")
         return
     normalized = path.replace("\\", "/")
-    if pathlib.PurePosixPath(normalized).is_absolute():
+    relative_path = pathlib.PurePosixPath(normalized)
+    windows_path = pathlib.PureWindowsPath(normalized)
+    if (
+        relative_path.is_absolute()
+        or windows_path.is_absolute()
+        or bool(windows_path.drive)
+    ):
         errors.append(f"{context}: không được dùng đường dẫn tuyệt đối: {path}")
-    if ".." in pathlib.PurePosixPath(normalized).parts:
+        return
+    if ".." in relative_path.parts:
         errors.append(f"{context}: không được chứa '..': {path}")
-    if wildcard_re.search(normalized):
+        return
+    candidate = feature_path.parent.joinpath(*relative_path.parts)
+    if wildcard_re.search(normalized) and not candidate.is_file():
         errors.append(f"{context}: whitelist không được chứa wildcard: {path}")
-    if normalized.endswith("/"):
+    if normalized.endswith("/") or candidate.is_dir():
         errors.append(f"{context}: whitelist phải trỏ tới file, không phải thư mục: {path}")
 
 if isinstance(control_files, list):
