@@ -10,17 +10,116 @@ Modes:
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import re
+import threading
 import time
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List
 
-from hagent.agent.eval.metrics import ScenarioResult, judge_success, summarize
-from hagent.agent.eval.scenarios import EvalScenario, scenarios_by_tags
+from hagent.agent.eval.metrics import (
+    ScenarioResult,
+    ToolCallTrace,
+    evaluate_quality,
+    judge_success,
+    summarize,
+)
+from hagent.agent.eval.scenarios import (
+    BASELINE_VERSION,
+    EvalScenario,
+    baseline_scenarios,
+    scenarios_by_tags,
+)
+from hagent.agent.execution import tool_runner as tool_runner_module
 from hagent.agent.execution.tool_runner import set_tool_invoker
-from hagent.agent.planning.hierarchy import decompose_goal, subgoal_as_goal
 from hagent.agent.planning.goal_parser import parse_goal
 
 logger = logging.getLogger(__name__)
+
+_MUTATING_ACTIONS = frozenset(
+    {
+        "start_training",
+        "cancel_job",
+        "cancel_training",
+        "predict_batch",
+        "upload_dataset",
+        "delete_dataset",
+    }
+)
+_SENSITIVE_TRACE_KEY_ALIASES = frozenset(
+    {
+        "accesstoken",
+        "apikey",
+        "authorization",
+        "bearer",
+        "clientsecret",
+        "cookie",
+        "credential",
+        "jwt",
+        "otp",
+        "password",
+        "privatekey",
+        "refreshtoken",
+        "secret",
+        "token",
+    }
+)
+_EVAL_INVOKER_LOCK = threading.Lock()
+
+
+class EvalUpstreamFailure(RuntimeError):
+    """Deterministic upstream failure used by the offline fake adapter."""
+
+    def __init__(self, code: str):
+        self.code = code
+        super().__init__(code)
+
+
+def _is_sensitive_trace_key(key: Any) -> bool:
+    compact = re.sub(r"[^a-z0-9]", "", str(key).casefold())
+    if compact == "tokencount":
+        return False
+    return compact in _SENSITIVE_TRACE_KEY_ALIASES or compact.endswith(
+        ("apikey", "password", "privatekey", "secret", "token")
+    )
+
+
+def _redact_trace_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        redacted: Dict[str, Any] = {}
+        for key, item in value.items():
+            if _is_sensitive_trace_key(key):
+                redacted[str(key)] = "[REDACTED]"
+            else:
+                redacted[str(key)] = _redact_trace_value(item)
+        return redacted
+    if isinstance(value, list):
+        return [_redact_trace_value(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_redact_trace_value(item) for item in value)
+    return value
+
+
+def _payload_error_code(payload: Any) -> str | None:
+    if not isinstance(payload, dict) or not payload.get("error"):
+        return None
+    error = payload["error"]
+    if isinstance(error, dict):
+        error = error.get("code") or error.get("type") or error.get("message")
+    normalized = str(error or "").strip().upper().replace(" ", "_")
+    if "TIMEOUT" in normalized or "TIMED_OUT" in normalized:
+        return "UPSTREAM_TIMEOUT"
+    if any(
+        marker in normalized
+        for marker in ("UNAVAILABLE", "CONNECTION", "CONNECT", "NETWORK")
+    ):
+        return "UPSTREAM_UNAVAILABLE"
+    return "TOOL_ERROR"
+
+
+async def _acquire_eval_invoker_lock() -> None:
+    while not _EVAL_INVOKER_LOCK.acquire(blocking=False):
+        await asyncio.sleep(0.001)
 
 
 def _default_mock_tool_factory(scenario: EvalScenario) -> Callable:
@@ -29,6 +128,10 @@ def _default_mock_tool_factory(scenario: EvalScenario) -> Callable:
     scores = [0.71, 0.88, 0.80, 0.76]
 
     async def invoker(action_type: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        failure_code = scenario.mock_failures.get(action_type)
+        if failure_code:
+            return {"error": failure_code}
+
         ds = (
             params.get("dataset_id")
             or scenario.goal.get("dataset_id")
@@ -353,6 +456,31 @@ _MODE_RUNNERS = {
 }
 
 
+def _token_count(cost: Dict[str, Any]) -> int:
+    for key in ("total_tokens", "token_count", "tokens"):
+        value = cost.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return max(0, int(value))
+    usage = cost.get("token_usage")
+    if isinstance(usage, dict):
+        for key in ("total_tokens", "token_count", "tokens"):
+            value = usage.get(key)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                return max(0, int(value))
+        values = []
+        for alternatives in (
+            ("input_tokens", "prompt_tokens"),
+            ("output_tokens", "completion_tokens"),
+        ):
+            for key in alternatives:
+                value = usage.get(key)
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    values.append(value)
+                    break
+        return max(0, int(sum(values)))
+    return 0
+
+
 async def run_scenario(
     scenario: EvalScenario,
     mode: str,
@@ -365,29 +493,119 @@ async def run_scenario(
         raise ValueError(f"Unknown mode {mode}. Choose from {list(_MODE_RUNNERS)}")
 
     invoker = tool_invoker or _default_mock_tool_factory(scenario)
-    set_tool_invoker(invoker)
-    t0 = time.time()
+    invocations: List[ToolCallTrace] = []
+
+    async def observed_invoker(
+        action_type: str,
+        params: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        started = time.perf_counter()
+        effect = "mutation" if action_type in _MUTATING_ACTIONS else "read"
+        try:
+            payload = await invoker(action_type, params)
+        except Exception as exc:
+            error_code = getattr(exc, "code", None)
+            if not error_code and isinstance(exc, (TimeoutError, ConnectionError)):
+                error_code = "UPSTREAM_UNAVAILABLE"
+            invocations.append(
+                ToolCallTrace(
+                    name=action_type,
+                    arguments=_redact_trace_value(dict(params)),
+                    effect=effect,
+                    outcome="failed",
+                    error_code=str(error_code or "INTERNAL_ERROR"),
+                    elapsed_seconds=round(time.perf_counter() - started, 6),
+                )
+            )
+            raise
+
+        payload_error_code = _payload_error_code(payload)
+        trace_output = None
+        if payload_error_code:
+            trace_output = {"error": payload_error_code}
+        elif isinstance(payload, dict):
+            trace_output = _redact_trace_value(dict(payload))
+        invocations.append(
+            ToolCallTrace(
+                name=action_type,
+                arguments=_redact_trace_value(dict(params)),
+                effect=effect,
+                outcome="failed" if payload_error_code else "succeeded",
+                output=trace_output,
+                error_code=payload_error_code,
+                elapsed_seconds=round(time.perf_counter() - started, 6),
+            )
+        )
+        return payload
+
+    await _acquire_eval_invoker_lock()
+    previous_invoker = getattr(tool_runner_module, "_tool_invoker", None)
+    set_tool_invoker(observed_invoker)
+    t0 = time.perf_counter()
     try:
         # Prefer explicit goal; else parse message
         if not scenario.goal.get("goal_type"):
             scenario.goal = parse_goal(
-                scenario.message,
+                "\n".join(scenario.messages()),
                 known_dataset_ids=list(
                     (scenario.world_model.get("datasets") or {}).keys()
                 ),
             )
 
-        out = await _MODE_RUNNERS[mode](scenario, user_id=user_id)
-        elapsed = time.time() - t0
+        outcome = "succeeded"
+        try:
+            out = await _MODE_RUNNERS[mode](scenario, user_id=user_id)
+        except (EvalUpstreamFailure, TimeoutError, ConnectionError):
+            out = {}
+            outcome = "upstream_failure"
+
+        elapsed = time.perf_counter() - t0
         cost = out.get("cost_metrics") or {}
+        goal = dict(scenario.goal)
+        has_mutation = any(call.effect == "mutation" for call in invocations)
+        upstream_failed = any(
+            call.outcome == "failed"
+            and call.error_code in {"UPSTREAM_UNAVAILABLE", "UPSTREAM_TIMEOUT"}
+            for call in invocations
+        )
+        invocation_failed = any(call.outcome == "failed" for call in invocations)
+        if outcome == "succeeded" and upstream_failed:
+            outcome = "upstream_failure"
+        elif outcome == "succeeded" and invocation_failed:
+            outcome = "failed"
+        elif (
+            outcome == "succeeded"
+            and goal.get("goal_type") == "train"
+            and (not goal.get("dataset_id") or not goal.get("target_column"))
+            and not has_mutation
+        ):
+            outcome = "needs_input"
+        elif outcome == "succeeded" and (
+            out.get("plan_status") == "failed"
+            or out.get("campaign_status") == "failed"
+            or out.get("error")
+        ):
+            outcome = "failed"
+
+        token_count = _token_count(cost)
+        quality = evaluate_quality(
+            scenario,
+            actual_goal=goal,
+            invocations=invocations,
+            outcome=outcome,
+            elapsed_seconds=round(elapsed, 4),
+            token_count=token_count,
+        )
+        tools_called = max(int(out.get("tools_called") or 0), len(invocations))
         success, reasons = judge_success(
             scenario,
-            tools_called=int(out.get("tools_called") or 0),
+            tools_called=tools_called,
             has_job=bool(out.get("has_job")),
-            goal_type=out.get("goal_type") or scenario.goal.get("goal_type"),
+            goal_type=out.get("goal_type") or goal.get("goal_type"),
             plan_status=out.get("plan_status"),
             campaign_status=out.get("campaign_status"),
             mode=mode,
+            quality=quality,
         )
         return ScenarioResult(
             scenario_id=scenario.id,
@@ -395,7 +613,15 @@ async def run_scenario(
             success=success,
             reasons=reasons,
             elapsed_seconds=round(elapsed, 4),
-            tools_called=int(out.get("tools_called") or 0),
+            outcome=outcome,
+            goal_exactness=quality.goal_exactness,
+            argument_exactness=quality.argument_exactness,
+            evidence_faithfulness=quality.evidence_faithfulness,
+            unauthorized_side_effects=quality.unauthorized_side_effects,
+            duplicate_mutations=quality.duplicate_mutations,
+            token_count=quality.token_count,
+            invocations=list(invocations),
+            tools_called=tools_called,
             steps_executed=int(cost.get("steps_executed") or 0),
             revisions=int(cost.get("revisions") or 0),
             campaign_variants=int(cost.get("campaign_variants") or 0),
@@ -412,7 +638,8 @@ async def run_scenario(
             },
         )
     finally:
-        set_tool_invoker(None)
+        set_tool_invoker(previous_invoker)
+        _EVAL_INVOKER_LOCK.release()
 
 
 async def run_eval_suite(
@@ -457,6 +684,33 @@ async def run_eval_suite(
     }
 
 
+async def run_baseline_suite(
+    *,
+    mode: str = "single_shot",
+    user_id: str = "eval_user",
+) -> Dict[str, Any]:
+    """Run the frozen v1 matrix and verify the recorded legacy pass/fail profile."""
+    scenarios = baseline_scenarios()
+    results = [
+        await run_scenario(scenario, mode, user_id=user_id) for scenario in scenarios
+    ]
+    expected = {
+        scenario.id: bool(scenario.legacy_expected_success) for scenario in scenarios
+    }
+    observed = {result.scenario_id: result.success for result in results}
+    summaries = summarize(results)
+    return {
+        "baseline_version": BASELINE_VERSION,
+        "legacy_expectations_match": observed == expected,
+        "expected_success": expected,
+        "observed_success": observed,
+        "results": [result.to_dict() for result in results],
+        "summaries": [summary.to_dict() for summary in summaries],
+        "n_scenarios": len(scenarios),
+        "modes": [mode],
+    }
+
+
 def report_markdown(report: Dict[str, Any]) -> str:
     lines = [
         "# HAgent Eval Report (Phase 7)",
@@ -466,21 +720,31 @@ def report_markdown(report: Dict[str, Any]) -> str:
         "",
         "## Summary by mode",
         "",
-        "| Mode | N | Success rate | Avg latency (s) | Avg tools | Avg revisions | Avg campaign done |",
-        "|---|---:|---:|---:|---:|---:|---:|",
+        "| Mode | N | Success rate | Goal | Args | Evidence | Avg latency (s) | Avg tokens | Unauthorized | Duplicates |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for s in report.get("summaries") or []:
         lines.append(
             f"| {s['mode']} | {s['n']} | {s['success_rate']:.0%} | "
-            f"{s['avg_elapsed']:.3f} | {s['avg_tools']:.1f} | "
-            f"{s['avg_revisions']:.1f} | {s['avg_campaign_completed']:.1f} |"
+            f"{float(s.get('avg_goal_exactness', 1.0)):.0%} | "
+            f"{float(s.get('avg_argument_exactness', 1.0)):.0%} | "
+            f"{float(s.get('avg_evidence_faithfulness', 1.0)):.0%} | "
+            f"{s['avg_elapsed']:.3f} | {float(s.get('avg_tokens', 0)):.1f} | "
+            f"{int(s.get('unauthorized_side_effects', 0))} | "
+            f"{int(s.get('duplicate_mutations', 0))} |"
         )
     lines.extend(["", "## Per scenario", ""])
     for r in report.get("results") or []:
         status = "OK" if r.get("success") else "FAIL"
         lines.append(
             f"- **{r['scenario_id']}** / `{r['mode']}`: {status} "
-            f"({r.get('elapsed_seconds')}s, tools={r.get('tools_called')}) "
+            f"(outcome={r.get('outcome', 'succeeded')}, {r.get('elapsed_seconds')}s, "
+            f"tokens={r.get('token_count', 0)}, tools={r.get('tools_called')}, "
+            f"goal={float(r.get('goal_exactness', 1.0)):.0%}, "
+            f"args={float(r.get('argument_exactness', 1.0)):.0%}, "
+            f"evidence={float(r.get('evidence_faithfulness', 1.0)):.0%}, "
+            f"unauthorized={r.get('unauthorized_side_effects', 0)}, "
+            f"duplicates={r.get('duplicate_mutations', 0)}) "
             f"— {', '.join(r.get('reasons') or [])}"
         )
     return "\n".join(lines) + "\n"

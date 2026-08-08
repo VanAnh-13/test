@@ -10,6 +10,17 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, List, Optional
 
+BASELINE_VERSION = "hagent-eval-v1"
+
+
+@dataclass(frozen=True)
+class ToolExpectation:
+    """Expected semantic tool call and the output fields that prove it happened."""
+
+    name: str
+    arguments: Dict[str, Any] = field(default_factory=dict)
+    evidence_keys: List[str] = field(default_factory=list)
+
 
 @dataclass
 class EvalScenario:
@@ -26,9 +37,23 @@ class EvalScenario:
     expect_has_job: bool = True
     expect_metric: Optional[str] = None
     tags: List[str] = field(default_factory=list)
+    baseline_version: str | None = None
+    turns: List[str] = field(default_factory=list)
+    expect_goal: Dict[str, Any] = field(default_factory=dict)
+    expect_tool_calls: List[ToolExpectation] = field(default_factory=list)
+    expect_outcome: str = "succeeded"
+    allow_mutations: bool = True
+    max_latency_seconds: float | None = None
+    max_tokens: int | None = None
+    mock_failures: Dict[str, str] = field(default_factory=dict)
+    legacy_expected_success: bool | None = None
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
+
+    def messages(self) -> List[str]:
+        """Return the ordered user turns represented by this scenario."""
+        return list(self.turns) if self.turns else [self.message]
 
 
 def default_scenarios() -> List[EvalScenario]:
@@ -196,6 +221,149 @@ def default_scenarios() -> List[EvalScenario]:
             expect_min_tools=0,
             expect_has_job=False,
             tags=["list"],
+        ),
+    ]
+
+
+def baseline_scenarios() -> List[EvalScenario]:
+    """Frozen behavior-rich cases for legacy/new runtime comparisons."""
+    glass_world = {
+        "user_id": "eval_user",
+        "datasets": {
+            "ds_glass": {
+                "id": "ds_glass",
+                "name": "glass",
+                "features": ["RI", "Na", "Mg", "Type"],
+                "target": "Type",
+            }
+        },
+        "jobs": {},
+        "active_dataset_id": "ds_glass",
+    }
+    train_goal = {
+        "goal_type": "train",
+        "dataset_id": "ds_glass",
+        "target_column": "Type",
+        "problem_type": "classification",
+        "metric": "f1",
+        "constraints": {"time_limit": 300},
+    }
+    def train_expectations(scenario_id: str) -> List[ToolExpectation]:
+        return [
+            ToolExpectation(
+                name="start_training",
+                arguments={
+                    "user_id": "eval_user",
+                    "dataset_id": "ds_glass",
+                    "target_column": "Type",
+                    "problem_type": "classification",
+                    "metric": "f1",
+                    "time_limit": 300,
+                    "list_feature": ["RI", "Na", "Mg", "Type"],
+                },
+                evidence_keys=["job_id", "status"],
+            ),
+            ToolExpectation(
+                name="get_job_info",
+                arguments={"job_id": f"eval-job-{scenario_id}-1"},
+                evidence_keys=["job_id", "status", "best_score"],
+            ),
+        ]
+
+    return [
+        EvalScenario(
+            id="vi_train_complete",
+            name="Vietnamese complete training request",
+            message=(
+                "Huấn luyện classification trên dataset ds_glass, target Type, "
+                "metric f1 trong 5 phút"
+            ),
+            goal={},
+            world_model=glass_world,
+            expect_goal=dict(train_goal),
+            expect_tool_calls=train_expectations("vi_train_complete"),
+            expect_metric="f1",
+            baseline_version=BASELINE_VERSION,
+            legacy_expected_success=True,
+            tags=["baseline", "vi", "train"],
+        ),
+        EvalScenario(
+            id="en_analyze_dataset",
+            name="English dataset analysis",
+            message="Analyze dataset ds_glass and show its features",
+            goal={},
+            world_model=glass_world,
+            expect_goal={"goal_type": "analyze", "dataset_id": "ds_glass"},
+            expect_tool_calls=[
+                ToolExpectation(
+                    name="get_dataset_info",
+                    arguments={"dataset_id": "ds_glass"},
+                    evidence_keys=["dataset_id", "features"],
+                )
+            ],
+            expect_goal_type="analyze",
+            expect_has_job=False,
+            allow_mutations=False,
+            baseline_version=BASELINE_VERSION,
+            legacy_expected_success=True,
+            tags=["baseline", "en", "analyze"],
+        ),
+        EvalScenario(
+            id="vi_train_multiturn",
+            name="Vietnamese multi-turn target completion",
+            message="Target là Type, dùng metric f1 và chạy trong 5 phút",
+            turns=[
+                "Hãy huấn luyện classification trên dataset ds_glass",
+                "Target là Type, dùng metric f1 và chạy trong 5 phút",
+            ],
+            goal={},
+            world_model=glass_world,
+            expect_goal=dict(train_goal),
+            expect_tool_calls=train_expectations("vi_train_multiturn"),
+            baseline_version=BASELINE_VERSION,
+            legacy_expected_success=False,
+            tags=["baseline", "vi", "multi_turn", "train"],
+        ),
+        EvalScenario(
+            id="en_train_missing_target",
+            name="English request missing target",
+            message="Train a classification model on dataset ds_glass",
+            goal={},
+            world_model=glass_world,
+            expect_goal={
+                "goal_type": "train",
+                "dataset_id": "ds_glass",
+                "problem_type": "classification",
+            },
+            expect_min_tools=0,
+            expect_has_job=False,
+            expect_outcome="needs_input",
+            allow_mutations=False,
+            baseline_version=BASELINE_VERSION,
+            legacy_expected_success=True,
+            tags=["baseline", "en", "missing_info", "train"],
+        ),
+        EvalScenario(
+            id="vi_analyze_upstream_failure",
+            name="Vietnamese deterministic upstream failure",
+            message="Phân tích dataset ds_glass và mô tả các feature",
+            goal={},
+            world_model=glass_world,
+            expect_goal={"goal_type": "analyze", "dataset_id": "ds_glass"},
+            expect_tool_calls=[
+                ToolExpectation(
+                    name="get_dataset_info",
+                    arguments={"dataset_id": "ds_glass"},
+                )
+            ],
+            expect_goal_type="analyze",
+            expect_has_job=False,
+            expect_outcome="upstream_failure",
+            allow_mutations=False,
+            mock_failures={"get_dataset_info": "UPSTREAM_UNAVAILABLE"},
+            baseline_version=BASELINE_VERSION,
+            legacy_expected_success=True,
+            tags=["baseline", "vi", "upstream_failure", "analyze"],
         ),
     ]
 
