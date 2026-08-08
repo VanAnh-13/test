@@ -40,6 +40,42 @@ from hagent.agent.state import AutoMLState
 logger = logging.getLogger(__name__)
 
 
+async def _inject_request_scope_into_tool_call(request, execute):
+    """Chỉ inject danh tính request khi gọi tool, không truyền qua global."""
+    state = request.state if isinstance(request.state, dict) else {}
+    tool = request.tool
+    tool_schema = getattr(tool, "args", {}) if tool is not None else {}
+    call = dict(request.tool_call)
+    args = dict(call.get("args") or {})
+
+    user_token = state.get("user_token")
+    if "token" in tool_schema:
+        if user_token:
+            args["token"] = user_token
+        else:
+            return ToolMessage(
+                content=json.dumps(
+                    {
+                        "error": {
+                            "code": "AUTH_SCOPE_REQUIRED",
+                            "message": "Authenticated request scope is required",
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                name=str(call.get("name") or ""),
+                tool_call_id=str(call.get("id") or ""),
+                status="error",
+            )
+
+    user_id = state.get("user_id")
+    if user_id and "user_id" in tool_schema:
+        args["user_id"] = user_id
+
+    scoped_call = {**call, "args": args}
+    return await execute(request.override(tool_call=scoped_call))
+
+
 def _planning_execute_enabled() -> bool:
     try:
         from hagent.bridge.config import get_planning_config
@@ -324,7 +360,10 @@ def build_automl_graph() -> StateGraph:
         all_tools = ALL_TOOLS
 
     # Tool nodes
-    tool_node_all = ToolNode(all_tools)
+    tool_node_all = ToolNode(
+        all_tools,
+        awrap_tool_call=_inject_request_scope_into_tool_call,
+    )
 
     graph = StateGraph(AutoMLState)
 
@@ -484,125 +523,42 @@ async def run_agent(
     wm_service: Any | None = None,
     model_name: str | None = None,
 ) -> dict[str, Any]:
-    """Chạy multi-agent graph với middleware pipeline."""
-    from hagent.agent.llm_config import require_model_config, set_current_model_name
-    from hagent.agent.middlewares import create_default_chain
-    from hagent.agent.middlewares.usage_tracker import (
-        create_usage_tracker,
-        reset_current_tracker,
-        set_current_tracker,
+    """Facade kết quả tương thích trên một đường event AgentRuntime duy nhất."""
+    if model_name:
+        from hagent.agent.llm_config import require_model_config
+
+        require_model_config(model_name)
+
+    from hagent.agent.runtime import (
+        build_start_turn,
+        collect_runtime_result,
+        get_agent_runtime,
     )
 
-    # Per-request model: validate NGAY (tên sai phải nổ trước khi chạy graph,
-    # caller API đổi thành 400) rồi set contextvar cho cả coordinator/subagents
-    if model_name:
-        require_model_config(model_name)
-    set_current_model_name(model_name)
-
-    graph = get_automl_graph()
-    middleware = create_default_chain()
-
-    # Tracker token/chi phí cho RUN này — mọi create_chat_model bên trong
-    # (coordinator, subagents) tự nhặt qua contextvar
-    usage_tracker = create_usage_tracker()
-    usage_token = set_current_tracker(usage_tracker)
-
-    # Durable WM runtime (Mongo when available)
-    if wm_service is None or world_store is None:
-        try:
-            from hagent.world.runtime import build_wm_runtime
-
-            _wm, _store = build_wm_runtime(
-                mongo_client=mongo_client, db_name=db_name
-            )
-            if wm_service is None:
-                wm_service = _wm
-            if world_store is None:
-                world_store = _store
-        except Exception as exc:
-            logger.debug("WM runtime build skipped: %s", exc)
-
-    initial_state: AutoMLState = {
-        "messages": _build_initial_messages(message, history),
-        "world_model": world_model,
-        "memory_context": memory_context,
-        "user_id": user_id,
-        "user_token": user_token,
-        "next_agent": None,
-        "current_phase": None,
-        "plan_step_index": 0,
-        "revision_count": 0,
-        "execution_log": [],
-        "execution_events": [],
-        "cost_metrics": {},
-    }
-    if wm_service is not None:
-        initial_state["_wm_service"] = wm_service  # type: ignore[typeddict-unknown-key]
-    if world_store is not None:
-        initial_state["_world_store"] = world_store  # type: ignore[typeddict-unknown-key]
-
-    import os
-    import time
-
-    if user_token:
-        os.environ["USER_TOKEN"] = user_token
-    if user_id:
-        os.environ["USER_ID"] = user_id
-
-    # Middleware pre-process
-    t0 = time.time()
-    initial_state = await middleware.run_pre(initial_state)
-
-    final_state = await graph.ainvoke(initial_state)
-
-    messages = final_state["messages"]
-    last_ai_message = None
-    tool_outputs = []
-
-    for msg in reversed(messages):
-        if isinstance(msg, ToolMessage):
-            tool_outputs.append({
-                "tool_name": msg.name,
-                "payload": _safe_json_parse(msg.content),
-            })
-        elif hasattr(msg, "content") and msg.content and not last_ai_message:
-            if not (hasattr(msg, "tool_calls") and msg.tool_calls):
-                last_ai_message = msg
-
-    response_text = last_ai_message.content if last_ai_message else "Không có phản hồi."
-
-    cost = dict(final_state.get("cost_metrics") or {})
-    cost["elapsed_seconds"] = round(time.time() - t0, 3)
-    if usage_tracker is not None:
-        cost.update(usage_tracker.summary())
-
-    result = {
-        "response": response_text,
-        "tool_outputs": list(reversed(tool_outputs)),
-        "sources": [],
-        "provider": "hagent",
-        "model": model_name or "multi-agent",
-        "route": final_state.get("current_phase", "direct"),
-        "plan_status": final_state.get("plan_status"),
-        "selected_plan": final_state.get("selected_plan"),
-        "surprise": final_state.get("surprise"),
-        "cost_metrics": cost,
-        "execution_events": final_state.get("execution_events") or [],
-        "execution_log": final_state.get("execution_log") or [],
-        "revision_count": final_state.get("revision_count") or 0,
-        "world_model": final_state.get("world_model"),
-        "campaign": final_state.get("campaign"),
-        "campaign_status": final_state.get("campaign_status"),
-        "evaluation": final_state.get("evaluation"),
-        "hierarchy": final_state.get("hierarchy"),
-        "hierarchy_status": final_state.get("hierarchy_status"),
-    }
-
-    # Middleware post-process
-    result = await middleware.run_post(initial_state, result)
-
-    reset_current_tracker(usage_token)
-    return result
+    command, scope = build_start_turn(
+        message,
+        user_id=user_id,
+        user_token=user_token,
+        history=history,
+        world_model=world_model,
+        memory_context=memory_context,
+        mongo_client=mongo_client,
+        db_name=db_name,
+        world_store=world_store,
+        wm_service=wm_service,
+        model_name=model_name,
+    )
+    result = await collect_runtime_result(
+        get_agent_runtime(),
+        command,
+        scope=scope,
+    )
+    legacy_result = dict(result)
+    legacy_result["response"] = legacy_result.pop(
+        "message",
+        legacy_result.get("response", ""),
+    )
+    return legacy_result
 
 
 def _safe_json_parse(text: str) -> Any:
@@ -669,7 +625,7 @@ def _stream_response_from_state(
     }
 
 
-async def stream_agent(
+async def _stream_legacy_graph_events(
     message: str,
     *,
     user_id: str | None = None,
@@ -683,7 +639,7 @@ async def stream_agent(
     wm_service: Any | None = None,
     model_name: str | None = None,
 ):
-    """Stream typed graph events and finish with a final-state response."""
+    """Chạy graph cũ và chỉ phát các transport event của nó một lần."""
     from hagent.agent.llm_config import (
         require_model_config,
         reset_current_model_name,
@@ -750,13 +706,7 @@ async def stream_agent(
         if world_store is not None:
             initial_state["_world_store"] = world_store  # type: ignore[typeddict-unknown-key]
 
-        import os
         import time
-
-        if user_token:
-            os.environ["USER_TOKEN"] = user_token
-        if user_id:
-            os.environ["USER_ID"] = user_id
 
         middleware = None
         try:
@@ -880,3 +830,45 @@ async def stream_agent(
         if usage_token is not None:
             reset_current_tracker(usage_token)
         reset_current_model_name(model_token)
+
+
+async def stream_agent(
+    message: str,
+    *,
+    user_id: str | None = None,
+    user_token: str | None = None,
+    history: list[dict[str, str]] | None = None,
+    world_model: dict[str, Any] | None = None,
+    memory_context: str | None = None,
+    mongo_client: Any | None = None,
+    db_name: str | None = None,
+    world_store: Any | None = None,
+    wm_service: Any | None = None,
+    model_name: str | None = None,
+):
+    """Facade stream tương thích trên một đường event AgentRuntime duy nhất."""
+    from hagent.agent.runtime import (
+        build_start_turn,
+        get_agent_runtime,
+        stream_legacy_events,
+    )
+
+    command, scope = build_start_turn(
+        message,
+        user_id=user_id,
+        user_token=user_token,
+        history=history,
+        world_model=world_model,
+        memory_context=memory_context,
+        mongo_client=mongo_client,
+        db_name=db_name,
+        world_store=world_store,
+        wm_service=wm_service,
+        model_name=model_name,
+    )
+    async for event in stream_legacy_events(
+        get_agent_runtime(),
+        command,
+        scope=scope,
+    ):
+        yield event

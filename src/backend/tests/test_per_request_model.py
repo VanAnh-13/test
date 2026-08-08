@@ -74,9 +74,14 @@ class TestRunAgentModelName:
         invoked = {"n": 0}
 
         class _StubGraph:
-            async def ainvoke(self, state):
+            async def astream_events(self, state, version="v2"):
                 invoked["n"] += 1
-                return state
+                yield {
+                    "event": "on_chain_end",
+                    "name": "LangGraph",
+                    "parent_ids": [],
+                    "data": {"output": state},
+                }
 
         monkeypatch.setattr(graph_mod, "get_automl_graph", lambda: _StubGraph())
         with pytest.raises(ValueError):
@@ -89,13 +94,18 @@ class TestRunAgentModelName:
         seen = {}
 
         class _StubGraph:
-            async def ainvoke(self, state):
+            async def astream_events(self, state, version="v2"):
                 seen["model"] = get_current_model_name()
                 state = dict(state)
                 state["messages"] = list(state.get("messages") or []) + [
                     AIMessage(content="ok")
                 ]
-                return state
+                yield {
+                    "event": "on_chain_end",
+                    "name": "LangGraph",
+                    "parent_ids": [],
+                    "data": {"output": state},
+                }
 
         monkeypatch.setattr(graph_mod, "get_automl_graph", lambda: _StubGraph())
         result = run(
@@ -108,12 +118,17 @@ class TestRunAgentModelName:
         import hagent.agent.graph as graph_mod
 
         class _StubGraph:
-            async def ainvoke(self, state):
+            async def astream_events(self, state, version="v2"):
                 state = dict(state)
                 state["messages"] = list(state.get("messages") or []) + [
                     AIMessage(content="ok")
                 ]
-                return state
+                yield {
+                    "event": "on_chain_end",
+                    "name": "LangGraph",
+                    "parent_ids": [],
+                    "data": {"output": state},
+                }
 
         monkeypatch.setattr(graph_mod, "get_automl_graph", lambda: _StubGraph())
         result = run(graph_mod.run_agent("hi", user_id="t12"))

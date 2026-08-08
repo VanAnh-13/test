@@ -45,10 +45,14 @@ async def sse_stream(
     model_name: str | None = None,
     conversation_id: str | None = None,
 ) -> AsyncIterator[str]:
-    """Encode graph events as typed SSE frames with exactly one terminal."""
-    from hagent.agent.graph import stream_agent
+    """Mã hóa event AgentRuntime thành SSE frame cũ có kiểu."""
+    from hagent.agent.runtime import (
+        build_start_turn,
+        get_agent_runtime,
+        stream_legacy_events,
+    )
 
-    agent_events = stream_agent(
+    command, scope = build_start_turn(
         message,
         user_id=user_id,
         user_token=user_token,
@@ -58,6 +62,12 @@ async def sse_stream(
         mongo_client=mongo_client,
         db_name=db_name,
         model_name=model_name,
+        trace_id=conversation_id,
+    )
+    agent_events = stream_legacy_events(
+        get_agent_runtime(),
+        command,
+        scope=scope,
     )
     event_id = 0
     terminal_sent = False
@@ -79,6 +89,14 @@ async def sse_stream(
                 if conversation_id:
                     response.setdefault("conversation_id", conversation_id)
                 payload["response"] = response
+            elif event_name == "error":
+                payload = {
+                    "type": "error",
+                    "error": {
+                        "code": "agent_stream_failed",
+                        "message": "Agent stream failed",
+                    },
+                }
 
             next_event_id = event_id + 1
             frame = _format_sse(str(event_name), next_event_id, payload)

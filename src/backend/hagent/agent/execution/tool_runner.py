@@ -1,7 +1,6 @@
-"""
-Invoke registered tools by action type + params.
+"""Gọi tool đã đăng ký bằng action type và params.
 
-Decouples plan executor from LangChain ToolNode wiring.
+Module này tách plan executor khỏi wiring ToolNode của LangChain.
 """
 
 from __future__ import annotations
@@ -9,16 +8,53 @@ from __future__ import annotations
 import inspect
 import json
 import logging
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict
 
 logger = logging.getLogger(__name__)
 
-# Optional inject for tests
+# Hook tùy chọn dành cho kiểm thử
 _tool_invoker: Callable[[str, Dict[str, Any]], Any] | None = None
+
+_USER_ID_SCOPED_ACTIONS = frozenset(
+    {
+        "get_world_state",
+        "list_datasets",
+        "list_jobs",
+        "start_training",
+    }
+)
+_CREDENTIAL_SCOPED_ACTIONS = frozenset(
+    {
+        "cancel_job",
+        "get_dataset_info",
+        "get_features",
+        "get_job_info",
+        "get_world_state",
+        "list_datasets",
+        "list_jobs",
+        "predict_batch",
+        "preview_data",
+        "start_training",
+    }
+)
+
+
+def _auth_scope_error() -> Dict[str, Any]:
+    return {
+        "error": {
+            "code": "AUTH_SCOPE_REQUIRED",
+            "message": "Thiếu credential xác thực của request",
+        }
+    }
+
+
+def _tool_accepts_parameter(tool: Any, parameter: str) -> bool:
+    args = getattr(tool, "args", None)
+    return isinstance(args, dict) and parameter in args
 
 
 def set_tool_invoker(fn: Callable[[str, Dict[str, Any]], Any] | None) -> None:
-    """Test hook — inject mock invoker (sync or async)."""
+    """Inject mock invoker đồng bộ hoặc bất đồng bộ dành cho kiểm thử."""
     global _tool_invoker
     _tool_invoker = fn
 
@@ -38,17 +74,39 @@ def _parse_tool_output(raw: Any) -> Any:
     return {"raw": raw}
 
 
+def _normalize_tool_output(raw: Any) -> Dict[str, Any]:
+    payload = _parse_tool_output(raw)
+    error = payload.get("error") if isinstance(payload, dict) else None
+    if error is None:
+        return payload
+
+    raw_code = error.get("code") if isinstance(error, dict) else None
+    code = (
+        raw_code
+        if isinstance(raw_code, str)
+        and 1 <= len(raw_code) <= 64
+        and all(char.isalnum() or char in "_.-" for char in raw_code)
+        else "TOOL_REPORTED_ERROR"
+    )
+    return {
+        "error": {
+            "code": code,
+            "message": "Tool trả về lỗi khi thực thi",
+        }
+    }
+
+
 async def invoke_tool(action_type: str, params: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Run tool by name. Returns parsed dict payload.
-    Never raises — errors become {"error": "..."}.
+    """Chạy tool theo tên và trả payload dict đã parse.
+
+    Hàm không phát sinh exception ra ngoài; lỗi được chuyển thành payload ``error``.
     """
     try:
         if _tool_invoker is not None:
             result = _tool_invoker(action_type, params)
             if inspect.isawaitable(result):
                 result = await result
-            return _parse_tool_output(result)
+            return _normalize_tool_output(result)
 
         from hagent.agent.registry import get_tool_map
 
@@ -57,7 +115,12 @@ async def invoke_tool(action_type: str, params: Dict[str, Any]) -> Dict[str, Any
         if tool is None:
             return {"error": f"Unknown tool: {action_type}"}
 
-        # LangChain tools: ainvoke with dict input
+        if _tool_accepts_parameter(tool, "token") and not (
+            isinstance(params.get("token"), str) and params["token"].strip()
+        ):
+            return _auth_scope_error()
+
+        # Tool LangChain nhận dict input qua ainvoke.
         if hasattr(tool, "ainvoke"):
             result = await tool.ainvoke(params)
         elif hasattr(tool, "invoke"):
@@ -69,10 +132,19 @@ async def invoke_tool(action_type: str, params: Dict[str, Any]) -> Dict[str, Any
         else:
             return {"error": f"Tool {action_type} is not invokable"}
 
-        return _parse_tool_output(result)
+        return _normalize_tool_output(result)
     except Exception as exc:
-        logger.exception("Tool invoke failed: %s", action_type)
-        return {"error": str(exc)}
+        logger.error(
+            "Gọi tool thất bại action=%s type=%s",
+            action_type,
+            type(exc).__name__,
+        )
+        return {
+            "error": {
+                "code": "TOOL_INVOCATION_FAILED",
+                "message": "Không thể thực thi tool",
+            }
+        }
 
 
 def enrich_params(
@@ -84,21 +156,18 @@ def enrich_params(
     goal: Dict[str, Any] | None,
     world_model: Dict[str, Any] | None,
 ) -> Dict[str, Any]:
-    """Fill user_id/token/dataset_id from state context."""
+    """Bổ sung user_id, token và dataset_id từ context đáng tin cậy của state."""
     out = dict(params or {})
     goal = goal or {}
     wm = world_model or {}
 
-    if user_id and "user_id" not in out:
-        if action_type in (
-            "list_datasets",
-            "list_jobs",
-            "start_training",
-            "get_world_state",
-        ):
+    if action_type in _USER_ID_SCOPED_ACTIONS:
+        out.pop("user_id", None)
+        if user_id:
             out["user_id"] = user_id
 
-    if user_token and "token" not in out:
+    out.pop("token", None)
+    if action_type in _CREDENTIAL_SCOPED_ACTIONS and user_token:
         out["token"] = user_token
 
     ds = out.get("dataset_id") or goal.get("dataset_id") or wm.get("active_dataset_id")
@@ -131,7 +200,7 @@ def enrich_params(
                 out["models"] = constraints["models"]
             if "list_feature" not in out and constraints.get("list_feature"):
                 out["list_feature"] = constraints["list_feature"]
-        # Pull features from world model when analyze leaf already loaded them
+        # Lấy features từ world model nếu analyze leaf đã tải trước đó.
         if "list_feature" not in out and ds:
             wm_ds = (wm.get("datasets") or {}).get(str(ds)) or {}
             feats = wm_ds.get("features") or wm_ds.get("list_feature")

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -10,6 +11,7 @@ from fastapi import HTTPException
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from hagent.agent import graph as graph_module
+from hagent.agent import runtime as runtime_module
 
 
 async def _collect(iterator):
@@ -100,6 +102,8 @@ async def test_stream_agent_done_uses_root_final_state_and_resets_context(monkey
     monkeypatch.setattr(graph_module, "get_automl_graph", lambda: stub_graph)
     monkeypatch.setattr(registry_module, "get_agent_registry", lambda: _Registry())
     monkeypatch.setattr(middlewares, "create_default_chain", lambda: middleware)
+    monkeypatch.setenv("USER_TOKEN", "outer-token")
+    monkeypatch.setenv("USER_ID", "outer-user")
 
     outer_tracker = usage_tracker.UsageTracker()
     outer_usage_token = usage_tracker.set_current_tracker(outer_tracker)
@@ -120,6 +124,8 @@ async def test_stream_agent_done_uses_root_final_state_and_resets_context(monkey
         )
         assert usage_tracker.get_current_tracker() is outer_tracker
         assert llm_config.get_current_model_name() == "outer-model"
+        assert os.environ["USER_TOKEN"] == "outer-token"
+        assert os.environ["USER_ID"] == "outer-user"
     finally:
         usage_tracker.reset_current_tracker(outer_usage_token)
         llm_config.reset_current_model_name(outer_model_token)
@@ -172,16 +178,25 @@ async def test_stream_agent_failure_resets_request_context(monkeypatch):
     outer_usage_token = usage_tracker.set_current_tracker(outer_tracker)
     outer_model_token = llm_config.set_current_model_name("outer-model")
     try:
-        with pytest.raises(RuntimeError, match="graph failed"):
-            await _collect(
-                graph_module.stream_agent(
-                    "fail",
-                    user_id="owner",
-                    world_store=object(),
-                    wm_service=object(),
-                    model_name="ci-mock",
-                )
+        events = await _collect(
+            graph_module.stream_agent(
+                "fail",
+                user_id="owner",
+                world_store=object(),
+                wm_service=object(),
+                model_name="ci-mock",
             )
+        )
+        assert events == [
+            {
+                "type": "error",
+                "error": {
+                    "code": "legacy_runtime_error",
+                    "message": "Agent runtime failed",
+                },
+            }
+        ]
+        assert "graph failed" not in str(events)
         assert usage_tracker.get_current_tracker() is outer_tracker
         assert llm_config.get_current_model_name() == "outer-model"
     finally:
@@ -243,13 +258,14 @@ async def test_stream_agent_cancellation_propagates_after_context_cleanup(monkey
 
 @pytest.mark.asyncio
 async def test_sse_stream_emits_typed_monotonic_frames_and_one_terminal(monkeypatch):
-    async def fake_stream_agent(*args, **kwargs):
+    async def fake_event_source(*args, **kwargs):
         yield {"type": "route", "agent": "coordinator"}
         yield {"type": "token", "content": "hello"}
         yield {"type": "done", "response": {"message": "final"}}
         yield {"type": "done", "response": {"message": "duplicate"}}
 
-    monkeypatch.setattr(graph_module, "stream_agent", fake_stream_agent)
+    runtime = runtime_module.LegacyGraphRuntime(event_source=fake_event_source)
+    monkeypatch.setattr(runtime_module, "get_agent_runtime", lambda: runtime)
     from hagent.agent.streaming import sse_stream
 
     frames = await _collect(sse_stream("hello", conversation_id="conversation-1"))
@@ -265,26 +281,34 @@ async def test_sse_stream_emits_typed_monotonic_frames_and_one_terminal(monkeypa
 
 @pytest.mark.asyncio
 async def test_sse_stream_converts_failure_to_safe_error_terminal(monkeypatch):
-    async def failing_stream_agent(*args, **kwargs):
+    async def failing_event_source(*args, **kwargs):
         raise RuntimeError("credential-value-must-not-leak")
         if False:
             yield {}
 
-    monkeypatch.setattr(graph_module, "stream_agent", failing_stream_agent)
+    runtime = runtime_module.LegacyGraphRuntime(event_source=failing_event_source)
+    monkeypatch.setattr(runtime_module, "get_agent_runtime", lambda: runtime)
     from hagent.agent.streaming import sse_stream
 
     frames = await _collect(sse_stream("hello"))
     assert len(frames) == 1
     event, event_id, data = _parse_frame(frames[0])
     assert (event, event_id, data["type"]) == ("error", 1, "error")
+    assert data["error"] == {
+        "code": "agent_stream_failed",
+        "message": "Agent stream failed",
+    }
     assert "credential-value-must-not-leak" not in frames[0]
 
 @pytest.mark.asyncio
 async def test_sse_stream_serialization_failure_still_emits_error_terminal(monkeypatch):
-    async def unserializable_stream_agent(*args, **kwargs):
+    async def unserializable_event_source(*args, **kwargs):
         yield {"type": "done", "response": {"message": object()}}
 
-    monkeypatch.setattr(graph_module, "stream_agent", unserializable_stream_agent)
+    runtime = runtime_module.LegacyGraphRuntime(
+        event_source=unserializable_event_source
+    )
+    monkeypatch.setattr(runtime_module, "get_agent_runtime", lambda: runtime)
     from hagent.agent.streaming import sse_stream
 
     frames = await _collect(sse_stream("hello"))
@@ -297,7 +321,7 @@ async def test_sse_stream_propagates_cancellation_and_closes_agent(monkeypatch):
     started = asyncio.Event()
     closed = asyncio.Event()
 
-    async def blocking_stream_agent(*args, **kwargs):
+    async def blocking_event_source(*args, **kwargs):
         try:
             started.set()
             await asyncio.Future()
@@ -306,7 +330,8 @@ async def test_sse_stream_propagates_cancellation_and_closes_agent(monkeypatch):
         finally:
             closed.set()
 
-    monkeypatch.setattr(graph_module, "stream_agent", blocking_stream_agent)
+    runtime = runtime_module.LegacyGraphRuntime(event_source=blocking_event_source)
+    monkeypatch.setattr(runtime_module, "get_agent_runtime", lambda: runtime)
     from hagent.agent.streaming import sse_stream
 
     task = asyncio.create_task(_collect(sse_stream("hello")))

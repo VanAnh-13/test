@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import asyncio
 
-import pytest
 from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, LLMResult
 
@@ -118,7 +117,7 @@ class TestRunAgentMergesUsage:
         import hagent.agent.graph as graph_mod
 
         class _StubGraph:
-            async def ainvoke(self, state):
+            async def astream_events(self, state, version="v2"):
                 # Node giả: thực hiện một "LLM call" ghi vào tracker hiện tại
                 cur = get_current_tracker()
                 if cur is not None:
@@ -127,7 +126,12 @@ class TestRunAgentMergesUsage:
                 state["messages"] = list(state.get("messages") or []) + [
                     AIMessage(content="xong")
                 ]
-                return state
+                yield {
+                    "event": "on_chain_end",
+                    "name": "LangGraph",
+                    "parent_ids": [],
+                    "data": {"output": state},
+                }
 
         monkeypatch.setattr(graph_mod, "get_automl_graph", lambda: _StubGraph())
         result = run(graph_mod.run_agent("chạy thử", user_id="t2"))

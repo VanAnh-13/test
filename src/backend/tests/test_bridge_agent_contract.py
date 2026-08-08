@@ -751,31 +751,35 @@ async def test_toolkit_world_model_always_uses_authenticated_user_id(
 
 @pytest.mark.asyncio
 async def test_toolkit_agent_mapping_keeps_complete_metadata(monkeypatch):
-    from hagent.agent import graph
+    from hagent.agent import runtime as runtime_module
 
-    async def _run_agent(*args, **kwargs):
-        return {
-            "response": "ok",
-            "provider": "hagent",
-            "model": "ci-mock",
-            "route": "plan_executor",
-            "tool_outputs": [{"tool_name": "list_datasets", "payload": {}}],
-            "plan_status": "done",
-            "selected_plan": {"plan_id": "p1"},
-            "surprise": {"severity": "low"},
-            "campaign": {"status": "done"},
-            "campaign_status": "done",
-            "hierarchy": {"status": "done"},
-            "hierarchy_status": "done",
-            "world_model": {"phase": "trained"},
-            "evaluation": {"score": 0.8},
-            "execution_events": [{"type": "done"}],
-            "execution_log": [{"step": 1}],
-            "revision_count": 3,
-            "cost_metrics": {"total_calls": 1},
+    async def _event_source(*args, **kwargs):
+        yield {
+            "type": "done",
+            "response": {
+                "response": "ok",
+                "provider": "hagent",
+                "model": "ci-mock",
+                "route": "plan_executor",
+                "tool_outputs": [{"tool_name": "list_datasets", "payload": {}}],
+                "plan_status": "done",
+                "selected_plan": {"plan_id": "p1"},
+                "surprise": {"severity": "low"},
+                "campaign": {"status": "done"},
+                "campaign_status": "done",
+                "hierarchy": {"status": "done"},
+                "hierarchy_status": "done",
+                "world_model": {"phase": "trained"},
+                "evaluation": {"score": 0.8},
+                "execution_events": [{"type": "done"}],
+                "execution_log": [{"step": 1}],
+                "revision_count": 3,
+                "cost_metrics": {"total_calls": 1},
+            },
         }
 
-    monkeypatch.setattr(graph, "run_agent", _run_agent)
+    runtime = runtime_module.LegacyGraphRuntime(event_source=_event_source)
+    monkeypatch.setattr(runtime_module, "get_agent_runtime", lambda: runtime)
     result = await chat_router._call_agent("hello", model_name="ci-mock")
 
     assert result["route"] == "plan_executor"
@@ -858,17 +862,51 @@ async def test_toolkit_agent_failure_is_not_fake_success(
     error,
     expected_status,
 ):
-    from hagent.agent import graph
+    from hagent.agent import runtime as runtime_module
 
-    async def _run_agent(*args, **kwargs):
+    async def _event_source(*args, **kwargs):
         raise error
+        if False:
+            yield {}
 
-    monkeypatch.setattr(graph, "run_agent", _run_agent)
+    runtime = runtime_module.LegacyGraphRuntime(event_source=_event_source)
+    monkeypatch.setattr(runtime_module, "get_agent_runtime", lambda: runtime)
 
     with pytest.raises(HTTPException) as exc:
         await chat_router._call_agent("hello")
 
     assert exc.value.status_code == expected_status
+
+
+@pytest.mark.asyncio
+async def test_toolkit_agent_failure_does_not_expose_internal_exception(
+    monkeypatch,
+    caplog,
+):
+    from hagent.agent import runtime as runtime_module
+
+    sensitive_detail = "provider token secret-value at C:\\internal\\runtime.py"
+
+    def _raise_internal_error():
+        raise RuntimeError(sensitive_detail)
+
+    monkeypatch.setattr(runtime_module, "get_agent_runtime", _raise_internal_error)
+    monkeypatch.setattr(
+        chat_router,
+        "get_error_messages",
+        lambda: {"generic": "HAgent đang gặp lỗi khi xử lý yêu cầu."},
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await chat_router._call_agent("hello")
+
+    assert exc.value.status_code == 500
+    assert exc.value.detail == "HAgent đang gặp lỗi khi xử lý yêu cầu."
+    assert sensitive_detail not in str(exc.value.detail)
+    assert "code=RUNTIME_UNEXPECTED" in caplog.text
+    assert "type=RuntimeError" in caplog.text
+    assert "run_id=" in caplog.text
+    assert sensitive_detail not in caplog.text
 
 
 def test_response_schemas_expose_complete_contract():

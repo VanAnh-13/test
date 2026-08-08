@@ -226,10 +226,15 @@ async def _call_agent(
     # Tên model sai (kể cả chuỗi rỗng) → 400, KHÔNG âm thầm dùng default.
     _validate_model_name(model_name)
 
+    command = None
     try:
-        from hagent.agent.graph import run_agent
+        from hagent.agent.runtime import (
+            build_start_turn,
+            collect_runtime_result,
+            get_agent_runtime,
+        )
 
-        result = await run_agent(
+        command, scope = build_start_turn(
             message,
             user_id=user_id,
             user_token=user_token,
@@ -239,13 +244,18 @@ async def _call_agent(
             db_name=db_name,
             model_name=model_name,
         )
+        result = await collect_runtime_result(
+            get_agent_runtime(),
+            command,
+            scope=scope,
+        )
         plan_status = result.get("plan_status")
         selected_plan = result.get("selected_plan")
         planning = result.get("planning")
         if planning is None and (plan_status is not None or selected_plan is not None):
             planning = {"status": plan_status, "selected_plan": selected_plan}
         return {
-            "message": result.get("response", ""),
+            "message": result.get("message", result.get("response", "")),
             "sources": result.get("sources", []),
             "suggestions": [],
             "tool_outputs": result.get("tool_outputs", []),
@@ -271,27 +281,45 @@ async def _call_agent(
     except HTTPException:
         raise
     except TimeoutError as exc:
-        logger.exception("Agent runtime timeout")
+        logger.warning("Agent runtime timeout")
         raise HTTPException(status_code=504, detail="Agent runtime timed out") from exc
     except Exception as exc:
-        logger.exception("Agent runtime error")
+        raw_runtime_code = getattr(exc, "code", "")
+        runtime_code = (
+            raw_runtime_code
+            if isinstance(raw_runtime_code, str)
+            and 1 <= len(raw_runtime_code) <= 64
+            and all(char.isalnum() or char in "_.-" for char in raw_runtime_code)
+            else "RUNTIME_UNEXPECTED"
+        )
+        logger.error(
+            "Agent runtime lỗi code=%s type=%s run_id=%s model=%s",
+            runtime_code,
+            type(exc).__name__,
+            command.run_id if command is not None else "unavailable",
+            model_name or "default",
+        )
+        if runtime_code in {"DEADLINE_EXCEEDED", "LEGACY_RUNTIME_TIMEOUT"}:
+            raise HTTPException(
+                status_code=504,
+                detail="Agent runtime timed out",
+            ) from exc
         # Phân loại lỗi từ config
         err_str = str(exc).lower()
         if "api key" in err_str or "authentication" in err_str or "401" in err_str:
-            msg = error_messages.get("llm_auth", str(exc))
+            message_key = "llm_auth"
         elif "rate limit" in err_str or "429" in err_str:
-            msg = error_messages.get("llm_rate_limit", str(exc))
+            message_key = "llm_rate_limit"
         elif "timeout" in err_str:
-            msg = error_messages.get("timeout", str(exc))
+            message_key = "timeout"
         else:
-            msg = error_messages.get("generic", str(exc))
+            message_key = "generic"
 
-        # Surface a short exception tail for CI/log correlation (keep user message clean)
-        detail = str(exc).strip().replace("\n", " ")
-        if detail and detail not in msg:
-            if len(detail) > 240:
-                detail = detail[:240] + "…"
-            msg = f"{msg} ({type(exc).__name__}: {detail})"
+        msg = (
+            error_messages.get(message_key)
+            or error_messages.get("generic")
+            or "HAgent đang gặp lỗi khi xử lý yêu cầu."
+        )
 
         raise HTTPException(status_code=500, detail=msg) from exc
 
