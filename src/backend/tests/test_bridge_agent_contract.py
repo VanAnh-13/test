@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
 from starlette.datastructures import UploadFile
 
 from hagent import chat_router
@@ -85,6 +86,15 @@ def _patch_runtime_client(monkeypatch, *, response=None, error=None, capture=Non
         ],
         raising=False,
     )
+
+
+def test_chat_request_schemas_match_canonical_contract_and_forbid_extras():
+    expected = {"message", "conversation_id", "context", "model"}
+
+    for schema in (ChatRequest, chat_router.ChatRequest):
+        assert set(schema.model_fields) == expected
+        with pytest.raises(ValidationError):
+            schema(message="hello", provider="legacy-provider")
 
 
 @pytest.mark.asyncio
@@ -172,6 +182,9 @@ async def test_runtime_preserves_upstream_4xx(monkeypatch, status_code):
         _StubResponse(200, ["not", "an", "object"]),
         _StubResponse(200, {}),
         _StubResponse(200, {"message": None}),
+        _StubResponse(200, {"message": "ok", "route": False}),
+        _StubResponse(200, {"message": "ok", "tool_outputs": "invalid"}),
+        _StubResponse(200, {"message": "ok", "cost_metrics": []}),
     ],
 )
 async def test_runtime_maps_bad_upstream_response_to_502(monkeypatch, response):
@@ -213,7 +226,8 @@ async def test_runtime_maps_transport_errors(monkeypatch, error, expected_status
 
 
 @pytest.mark.asyncio
-async def test_runtime_rejects_unknown_model_before_request(monkeypatch):
+@pytest.mark.parametrize("model_name", ["missing-model", ""])
+async def test_runtime_rejects_invalid_model_before_request(monkeypatch, model_name):
     capture = {}
     _patch_runtime_client(
         monkeypatch,
@@ -222,7 +236,7 @@ async def test_runtime_rejects_unknown_model_before_request(monkeypatch):
     )
 
     with pytest.raises(HTTPException) as exc:
-        await bridge_app._call_agent_runtime("hello", model_name="missing-model")
+        await bridge_app._call_agent_runtime("hello", model_name=model_name)
 
     assert exc.value.status_code == 400
     assert capture == {}
@@ -257,9 +271,14 @@ async def test_bridge_chat_merges_client_context_and_forwards_model(monkeypatch)
             "model": "ci-mock",
             "route": "campaign",
             "tool_outputs": [{"tool_name": "list_datasets", "payload": {}}],
+            "plan_status": "done",
+            "selected_plan": {"plan_id": "p1"},
             "planning": {"status": "done"},
+            "surprise": {"severity": "low"},
             "campaign": {"status": "done"},
+            "campaign_status": "done",
             "hierarchy": {"status": "done"},
+            "hierarchy_status": "done",
             "world_model": {"phase": "trained"},
             "evaluation": {"score": 0.9},
             "execution_events": [{"type": "done"}],
@@ -311,10 +330,17 @@ async def test_bridge_chat_merges_client_context_and_forwards_model(monkeypatch)
         "phase": "server",
     }
     assert response.route == "campaign"
+    assert response.provider == "hagent"
+    assert response.model == "ci-mock"
+    assert response.plan_status == "done"
+    assert response.selected_plan == {"plan_id": "p1"}
     assert response.planning == {"status": "done"}
+    assert response.surprise == {"severity": "low"}
     assert response.tool_outputs[0]["tool_name"] == "list_datasets"
     assert response.campaign == {"status": "done"}
+    assert response.campaign_status == "done"
     assert response.hierarchy == {"status": "done"}
+    assert response.hierarchy_status == "done"
     assert response.world_model == {"phase": "trained"}
     assert response.evaluation == {"score": 0.9}
     assert response.execution_events == [{"type": "done"}]
@@ -483,6 +509,161 @@ async def test_toolkit_upload_forwards_model(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("surface", ["bridge", "toolkit"])
+@pytest.mark.parametrize(
+    ("response", "error", "expected_status"),
+    [
+        pytest.param(
+            _StubResponse(422, {"detail": "invalid dataset"}),
+            None,
+            422,
+            id="upstream-4xx",
+        ),
+        pytest.param(
+            _StubResponse(503, {"detail": "unavailable"}),
+            None,
+            502,
+            id="upstream-5xx",
+        ),
+        pytest.param(
+            None,
+            httpx.ConnectError(
+                "connection failed",
+                request=httpx.Request("POST", "http://toolkit:8000"),
+            ),
+            502,
+            id="network",
+        ),
+        pytest.param(
+            None,
+            httpx.ReadTimeout(
+                "timed out",
+                request=httpx.Request("POST", "http://toolkit:8000"),
+            ),
+            504,
+            id="timeout",
+        ),
+    ],
+)
+async def test_upload_failures_do_not_become_success_or_run_agent(
+    monkeypatch,
+    surface,
+    response,
+    error,
+    expected_status,
+):
+    async def _forbidden(*args, **kwargs):
+        raise AssertionError("agent or persistence must not run after upload failure")
+
+    def _client_factory(*args, **kwargs):
+        return _StubAsyncClient(response=response, error=error)
+
+    upload = UploadFile(filename="data.csv", file=BytesIO(b"x\n1\n"))
+
+    if surface == "bridge":
+
+        class _WorldStateStore:
+            async def ensure(self, user_id):
+                return None
+
+            async def get(self, user_id):
+                return None
+
+        monkeypatch.setattr(bridge_app.httpx, "AsyncClient", _client_factory)
+        monkeypatch.setattr(
+            bridge_app,
+            "get_hautoml_config",
+            lambda: {"base_url": "http://toolkit:8000"},
+        )
+        monkeypatch.setattr(bridge_app.conv_store, "add_message", _forbidden)
+        monkeypatch.setattr(bridge_app, "_call_hagent_gateway", _forbidden)
+        invocation = bridge_app.chat_with_file(
+            request=SimpleNamespace(
+                app=SimpleNamespace(
+                    state=SimpleNamespace(world_state_store=_WorldStateStore())
+                )
+            ),
+            message="train",
+            file=upload,
+            conversation_id="conversation-1",
+            model=None,
+            user=TokenPayload({"sub": "owner"}, raw_token="jwt"),
+        )
+    else:
+        monkeypatch.setattr(httpx, "AsyncClient", _client_factory)
+        monkeypatch.setattr(
+            chat_router,
+            "get_hautoml_config",
+            lambda: {"base_url": "http://toolkit:8000"},
+        )
+        monkeypatch.setattr(chat_router.chat_store, "add_message", _forbidden)
+        monkeypatch.setattr(chat_router, "_call_agent", _forbidden)
+        invocation = chat_router.chat_with_file(
+            request=SimpleNamespace(headers={"Authorization": "Bearer jwt"}),
+            message="train",
+            file=upload,
+            conversation_id="conversation-1",
+            model=None,
+            db=SimpleNamespace(),
+            current_user={"_id": "owner"},
+        )
+
+    with pytest.raises(HTTPException) as exc:
+        await invocation
+
+    assert exc.value.status_code == expected_status
+
+
+@pytest.mark.asyncio
+async def test_bridge_upload_does_not_expose_upstream_error_detail(monkeypatch):
+    async def _forbidden(*args, **kwargs):
+        raise AssertionError("persistence must not run after upload failure")
+
+    class _WorldStateStore:
+        async def ensure(self, user_id):
+            return None
+
+        async def get(self, user_id):
+            return None
+
+    sensitive_detail = "database path C:\\internal\\datasets and query SELECT secret"
+    monkeypatch.setattr(
+        bridge_app.httpx,
+        "AsyncClient",
+        lambda *args, **kwargs: _StubAsyncClient(
+            response=_StubResponse(422, {"detail": sensitive_detail})
+        ),
+    )
+    monkeypatch.setattr(
+        bridge_app,
+        "get_hautoml_config",
+        lambda: {"base_url": "http://toolkit:8000"},
+    )
+    monkeypatch.setattr(bridge_app.conv_store, "add_message", _forbidden)
+
+    upload = UploadFile(filename="data.csv", file=BytesIO(b"x\n1\n"))
+    invocation = bridge_app.chat_with_file(
+        request=SimpleNamespace(
+            app=SimpleNamespace(
+                state=SimpleNamespace(world_state_store=_WorldStateStore())
+            )
+        ),
+        message="train",
+        file=upload,
+        conversation_id="conversation-1",
+        model=None,
+        user=TokenPayload({"sub": "owner"}, raw_token="jwt"),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await invocation
+
+    assert exc.value.status_code == 422
+    assert exc.value.detail == "HAutoML upload returned HTTP 422"
+    assert sensitive_detail not in str(exc.value.detail)
+
+
+@pytest.mark.asyncio
 async def test_toolkit_server_world_model_overrides_forwarded_snapshot(monkeypatch):
     captured = {}
 
@@ -530,6 +711,45 @@ async def test_toolkit_server_world_model_overrides_forwarded_snapshot(monkeypat
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("server_world_model", [None, {"phase": "server"}])
+async def test_toolkit_world_model_always_uses_authenticated_user_id(
+    monkeypatch,
+    server_world_model,
+):
+    captured = {}
+
+    async def _load_world_model(*args, **kwargs):
+        return server_world_model
+
+    async def _call_agent(*args, **kwargs):
+        captured.update(kwargs)
+        return {
+            "message": "ok",
+            "provider": "hagent",
+            "model": "ci-mock",
+            "tool_outputs": [],
+        }
+
+    monkeypatch.setattr(chat_router, "_load_world_model", _load_world_model)
+    monkeypatch.setattr(chat_router, "_call_agent", _call_agent)
+
+    await chat_router.agent_run(
+        req=chat_router.ChatRequest(
+            message="hello",
+            conversation_id="conversation-1",
+            context={"world_state": {"user_id": "spoofed", "phase": "client"}},
+            model="ci-mock",
+        ),
+        request=SimpleNamespace(headers={"Authorization": "Bearer jwt"}),
+        db=SimpleNamespace(client=None, name="test"),
+        current_user={"_id": "owner"},
+    )
+
+    assert captured["user_id"] == "owner"
+    assert captured["world_model"]["user_id"] == "owner"
+
+
+@pytest.mark.asyncio
 async def test_toolkit_agent_mapping_keeps_complete_metadata(monkeypatch):
     from hagent.agent import graph
 
@@ -542,8 +762,11 @@ async def test_toolkit_agent_mapping_keeps_complete_metadata(monkeypatch):
             "tool_outputs": [{"tool_name": "list_datasets", "payload": {}}],
             "plan_status": "done",
             "selected_plan": {"plan_id": "p1"},
+            "surprise": {"severity": "low"},
             "campaign": {"status": "done"},
+            "campaign_status": "done",
             "hierarchy": {"status": "done"},
+            "hierarchy_status": "done",
             "world_model": {"phase": "trained"},
             "evaluation": {"score": 0.8},
             "execution_events": [{"type": "done"}],
@@ -556,30 +779,70 @@ async def test_toolkit_agent_mapping_keeps_complete_metadata(monkeypatch):
     result = await chat_router._call_agent("hello", model_name="ci-mock")
 
     assert result["route"] == "plan_executor"
+    assert result["provider"] == "hagent"
+    assert result["model"] == "ci-mock"
+    assert result["plan_status"] == "done"
+    assert result["selected_plan"] == {"plan_id": "p1"}
     assert result["planning"] == {
         "status": "done",
         "selected_plan": {"plan_id": "p1"},
     }
     assert result["campaign"] == {"status": "done"}
+    assert result["campaign_status"] == "done"
+    assert result["surprise"] == {"severity": "low"}
     assert result["tool_outputs"][0]["tool_name"] == "list_datasets"
     assert result["world_model"] == {"phase": "trained"}
     assert result["evaluation"] == {"score": 0.8}
     assert result["execution_events"] == [{"type": "done"}]
     assert result["cost_metrics"] == {"total_calls": 1}
     assert result["hierarchy"] == {"status": "done"}
+    assert result["hierarchy_status"] == "done"
     assert result["execution_log"] == [{"step": 1}]
     assert result["revision_count"] == 3
 
 
 @pytest.mark.asyncio
-async def test_toolkit_rejects_unknown_model_with_400():
+@pytest.mark.parametrize("model_name", ["missing-model", ""])
+async def test_toolkit_rejects_invalid_model_with_400(model_name):
     with pytest.raises(HTTPException) as exc:
         await chat_router._call_agent(
             "hello",
-            model_name="missing-model",
+            model_name=model_name,
         )
 
     assert exc.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_toolkit_stream_rejects_empty_model_before_runtime():
+    with pytest.raises(HTTPException) as exc:
+        await chat_router.agent_run_stream(
+            req=chat_router.ChatRequest(message="hello", model=""),
+            request=SimpleNamespace(headers={}),
+            db=SimpleNamespace(),
+            current_user={"_id": "owner"},
+        )
+
+    assert exc.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_toolkit_upload_rejects_empty_model_before_file_read():
+    upload = UploadFile(filename="data.csv", file=BytesIO(b"x\n1\n"))
+
+    with pytest.raises(HTTPException) as exc:
+        await chat_router.chat_with_file(
+            request=SimpleNamespace(headers={}),
+            message="train",
+            file=upload,
+            conversation_id="conversation-1",
+            model="",
+            db=SimpleNamespace(),
+            current_user={"_id": "owner"},
+        )
+
+    assert exc.value.status_code == 400
+    assert upload.file.tell() == 0
 
 
 @pytest.mark.asyncio
@@ -610,10 +873,22 @@ async def test_toolkit_agent_failure_is_not_fake_success(
 
 def test_response_schemas_expose_complete_contract():
     required = {
+        "message",
+        "conversation_id",
+        "provider",
+        "model",
         "route",
+        "tool_outputs",
+        "plan_status",
+        "selected_plan",
         "planning",
+        "surprise",
         "campaign",
+        "campaign_status",
         "hierarchy",
+        "hierarchy_status",
+        "world_model",
+        "evaluation",
         "execution_events",
         "execution_log",
         "revision_count",
@@ -621,3 +896,36 @@ def test_response_schemas_expose_complete_contract():
     }
     assert required <= set(bridge_app.ChatResponse.model_fields)
     assert required <= set(chat_router.ChatResponse.model_fields)
+
+
+@pytest.mark.parametrize(
+    "mapper",
+    [chat_router._to_chat_response, bridge_app._to_chat_response],
+    ids=["toolkit", "bridge"],
+)
+def test_response_mappers_normalize_null_route_to_direct(mapper):
+    response = mapper({"message": "ok", "route": None}, "conversation-1")
+
+    assert response.route == "direct"
+
+
+@pytest.mark.parametrize(
+    "mapper",
+    [chat_router._to_chat_response, bridge_app._to_chat_response],
+    ids=["toolkit", "bridge"],
+)
+def test_response_mappers_preserve_empty_string_route(mapper):
+    response = mapper({"message": "ok", "route": ""}, "conversation-1")
+
+    assert response.route == ""
+
+
+@pytest.mark.parametrize(
+    "mapper",
+    [chat_router._to_chat_response, bridge_app._to_chat_response],
+    ids=["toolkit", "bridge"],
+)
+@pytest.mark.parametrize("route", [False, 0, [], {}])
+def test_response_mappers_reject_invalid_falsey_route(mapper, route):
+    with pytest.raises(ValidationError):
+        mapper({"message": "ok", "route": route}, "conversation-1")

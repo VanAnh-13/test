@@ -12,7 +12,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from pymongo.asynchronous.database import AsyncDatabase
 
 from database.database import get_db
@@ -33,6 +33,8 @@ router = APIRouter(prefix="/api/v1/chat", tags=["HAgent Chat"])
 
 
 class ChatRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     message: str = Field(..., description="Nội dung tin nhắn")
     conversation_id: str | None = Field(
         None, description="ID cuộc hội thoại (tạo mới nếu null)"
@@ -136,7 +138,8 @@ def _apply_request_context(
     user_id: str,
 ) -> dict:
     """Merge only public request fields; persisted server state remains authoritative."""
-    merged = dict(world_model or {"user_id": user_id, "datasets": {}, "jobs": {}})
+    merged = dict(world_model or {"datasets": {}, "jobs": {}})
+    merged["user_id"] = user_id
     if not isinstance(context, dict):
         return merged
 
@@ -194,6 +197,18 @@ async def _load_world_model(db: AsyncDatabase, user_id: str) -> dict | None:
 # ─── Gọi HAgent Agent ────────────────────────────
 
 
+def _validate_model_name(model_name: str | None) -> None:
+    if model_name is None:
+        return
+
+    from hagent.agent.llm_config import require_model_config
+
+    try:
+        require_model_config(model_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 async def _call_agent(
     message: str,
     *,
@@ -208,14 +223,8 @@ async def _call_agent(
     """Gọi LangGraph agent runtime — runtime LangGraph."""
     error_messages = get_error_messages()
 
-    # Tên model sai → 400 kèm danh sách hợp lệ, KHÔNG âm thầm dùng default
-    if model_name:
-        from hagent.agent.llm_config import require_model_config
-
-        try:
-            require_model_config(model_name)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
+    # Tên model sai (kể cả chuỗi rỗng) → 400, KHÔNG âm thầm dùng default.
+    _validate_model_name(model_name)
 
     try:
         from hagent.agent.graph import run_agent
@@ -299,7 +308,7 @@ def _to_chat_response(
         tool_outputs=result.get("tool_outputs", []),
         provider=result.get("provider", "hagent"),
         model=result.get("model", ""),
-        route=result.get("route", "direct"),
+        route="direct" if result.get("route") is None else result.get("route"),
         plan_status=result.get("plan_status"),
         selected_plan=result.get("selected_plan"),
         planning=result.get("planning"),
@@ -408,13 +417,7 @@ async def agent_run_stream(
     current_user: dict = Depends(get_current_user),
 ):
     """Private stateless SSE invoke; Bridge owns all conversation writes."""
-    if req.model:
-        from hagent.agent.llm_config import require_model_config
-
-        try:
-            require_model_config(req.model)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _validate_model_name(req.model)
 
     user_id = str(current_user["_id"])
     conversation_id = req.conversation_id or uuid.uuid4().hex
@@ -594,6 +597,7 @@ async def chat_with_file(
     current_user: dict = Depends(get_current_user),
 ):
     """Chat kèm upload file."""
+    _validate_model_name(model)
     user_id = current_user["_id"]
     conv_id = conversation_id or uuid.uuid4().hex
     hautoml_cfg = get_hautoml_config()
@@ -605,22 +609,27 @@ async def chat_with_file(
 
     import httpx
 
-    file_info = ""
+    file_content = await file.read()
     try:
-        file_content = await file.read()
         async with httpx.AsyncClient(timeout=60) as client:
             resp = await client.post(
                 f"{hautoml_cfg['base_url']}/upload_files",
                 files={"files": (file.filename, file_content, file.content_type)},
             )
-            if resp.status_code == 200:
-                file_info = (
-                    f"\n[File đã upload: {file.filename} — {len(file_content)} bytes]"
-                )
-            else:
-                file_info = f"\n[Upload file thất bại: {resp.status_code}]"
-    except Exception as e:
-        file_info = f"\n[Lỗi upload file: {e}]"
+    except httpx.TimeoutException as exc:
+        raise HTTPException(status_code=504, detail="HAutoML upload timed out") from exc
+    except httpx.RequestError as exc:
+        raise HTTPException(
+            status_code=502, detail="HAutoML upload unavailable"
+        ) from exc
+
+    if not 200 <= resp.status_code < 300:
+        status_code = resp.status_code if 400 <= resp.status_code < 500 else 502
+        raise HTTPException(
+            status_code=status_code,
+            detail=f"HAutoML upload returned HTTP {resp.status_code}",
+        )
+    file_info = f"\n[File đã upload: {file.filename} — {len(file_content)} bytes]"
 
     full_message = f"{message}{file_info}"
     await chat_store.add_message(db, conv_id, user_id, "user", full_message)

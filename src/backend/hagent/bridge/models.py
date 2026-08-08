@@ -7,20 +7,21 @@ Tất cả giá trị mặc định được tải từ hagent.yaml thông qua c
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 # ─── Chat ────────────────────────────────────────────────
 
 
 class ChatRequest(BaseModel):
-    """Schema cho request chat — provider và model là tùy chọn."""
+    """Canonical chat request accepted by both sync and stream endpoints."""
+
+    model_config = ConfigDict(extra="forbid")
 
     message: str = Field(..., description="Nội dung tin nhắn")
     conversation_id: str | None = Field(
         None, description="ID cuộc hội thoại (tạo mới nếu null)"
     )
     context: dict | None = Field(None, description="Ngữ cảnh bổ sung")
-    provider: str | None = Field(None, description="Provider LLM — xem hagent.yaml")
     model: str | None = Field(None, description="Model cụ thể — xem hagent.yaml")
 
 

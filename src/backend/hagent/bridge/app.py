@@ -234,6 +234,7 @@ async def _call_agent_runtime(
             if not isinstance(message, str):
                 raise HTTPException(status_code=502, detail="Invalid runtime response")
             data["message"] = message
+            _to_chat_response(data, session_id or "hagent_session")
             return data
         status_code = resp.status_code if 400 <= resp.status_code < 500 else 502
         logger.warning("HAgent runtime returned HTTP %d", resp.status_code)
@@ -546,6 +547,7 @@ async def _bridge_event_stream(
             except Exception as exc:
                 logger.debug("Upstream SSE close failed: %s", type(exc).__name__)
 
+
 def _extract_training_job_id(message: str) -> str | None:
     """Chỉ lấy job_id khi nội dung cho thấy vừa submit training."""
     if not message:
@@ -847,7 +849,7 @@ def _to_chat_response(result: dict, conversation_id: str) -> ChatResponse:
         suggestions=result.get("suggestions", []),
         provider=result.get("provider", "hagent"),
         model=result.get("model", ""),
-        route=result.get("route", "direct"),
+        route="direct" if result.get("route") is None else result.get("route"),
         tool_outputs=result.get("tool_outputs", []),
         plan_status=result.get("plan_status"),
         selected_plan=result.get("selected_plan"),
@@ -976,6 +978,7 @@ async def chat_stream(
         },
     )
 
+
 @hagent_bridge.post("/api/v1/chat/upload", response_model=ChatResponse)
 async def chat_with_file(
     request: Request,
@@ -996,14 +999,10 @@ async def chat_with_file(
     world_state_snapshot = await world_state_store.get(user.user_id)
 
     # Chuyển tiếp file tới HAutoML để upload data
-    file_info = ""
+    file_content = await file.read()
+    filename = file.filename or "uploaded_data.csv"
+    data_type = filename.split(".")[-1].lower() if "." in filename else "csv"
     try:
-        file_content = await file.read()
-
-        # Xác định data_type từ đuôi file
-        filename = file.filename or "uploaded_data.csv"
-        data_type = filename.split(".")[-1].lower() if "." in filename else "csv"
-
         async with httpx.AsyncClient(timeout=60) as client:
             resp = await client.post(
                 f"{hautoml_cfg['base_url']}/upload-dataset?user_id={user.user_id}",
@@ -1014,14 +1013,24 @@ async def chat_with_file(
                 files={"file_data": (filename, file_content, file.content_type)},
                 headers={"Authorization": f"Bearer {user.raw_token}"},
             )
-            if resp.status_code == 200:
-                file_info = f"\n[File đã upload vào hệ thống dataset: {filename} — {len(file_content)} bytes]"
-            else:
-                file_info = (
-                    f"\n[Upload file thất bại: {resp.status_code} - {resp.text}]"
-                )
-    except Exception as e:
-        file_info = f"\n[Lỗi upload file: {e}]"
+    except httpx.TimeoutException as exc:
+        raise HTTPException(status_code=504, detail="HAutoML upload timed out") from exc
+    except httpx.RequestError as exc:
+        raise HTTPException(
+            status_code=502, detail="HAutoML upload unavailable"
+        ) from exc
+
+    if not 200 <= resp.status_code < 300:
+        status_code = resp.status_code if 400 <= resp.status_code < 500 else 502
+        logger.warning("HAutoML upload returned HTTP %d", resp.status_code)
+        raise HTTPException(
+            status_code=status_code,
+            detail=f"HAutoML upload returned HTTP {resp.status_code}",
+        )
+    file_info = (
+        f"\n[File đã upload vào hệ thống dataset: {filename} — "
+        f"{len(file_content)} bytes]"
+    )
 
     history = await conv_store.get_message_history(conv_id, user.user_id, limit=20)
 
