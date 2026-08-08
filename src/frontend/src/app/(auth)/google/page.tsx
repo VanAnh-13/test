@@ -8,24 +8,22 @@ export default function GoogleCallbackPage() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
-  const access_token = searchParams.get("access_token");
-  const refresh_token = searchParams.get("refresh_token");
+  const authorizationCode = searchParams?.get("code");
 
   useEffect(() => {
-    if (access_token && refresh_token) {
-      signIn("credentials", {
-        access_token,
-        refresh_token,
-        redirect: false, // nên để false để tự control
-      }).then((res) => {
-        if (res?.ok) {
-          router.replace("/"); // redirect sau khi login thành công
-        } else {
-          router.replace("/login"); // fail thì quay lại login
-        }
-      });
+    if (!authorizationCode) {
+      router.replace("/login");
+      return;
     }
-  }, [access_token, refresh_token]);
+
+    window.history.replaceState(null, "", window.location.pathname);
+    void signIn("credentials", {
+      authorization_code: authorizationCode,
+      redirect: false,
+    }).then((result) => {
+      router.replace(result?.ok ? "/" : "/login");
+    });
+  }, [authorizationCode, router]);
 
   return <p>Đang đăng nhập bằng Google...</p>;
 }

@@ -1,7 +1,8 @@
 import hashlib
 import os
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from urllib.parse import urlencode
 
 from authlib.integrations.starlette_client import OAuth
 from bson import ObjectId
@@ -17,6 +18,7 @@ from starlette.requests import Request
 from database.database import get_db
 from users.engine import handle_send_otp, verify_stored_password
 from users.schema import (
+    OAuthCodeExchangeRequest,
     PasswordResetRequest,
     RefreshRequest,
     ResendEmailRequest,
@@ -36,6 +38,8 @@ load_dotenv()
 
 
 router = APIRouter(tags=["Authentication"])
+
+OAUTH_CODE_TTL_SECONDS = int(os.getenv('OAUTH_CODE_TTL_SECONDS', '60'))
 
 
 def _is_skip_email_verification_enabled() -> bool:
@@ -310,6 +314,13 @@ async def google_login(request: Request):
 
 @router.get('/google/callback')
 async def google_callback(request: Request, response: Response, db: AsyncDatabase = Depends(get_db)):
+    frontend_url = os.getenv('FRONTEND_URL', '').rstrip('/')
+    if not frontend_url:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail='FRONTEND_URL chưa được cấu hình',
+        )
+
     token = await oauth.google.authorize_access_token(request)
 
     user_info = token.get('userinfo')
@@ -327,11 +338,8 @@ async def google_callback(request: Request, response: Response, db: AsyncDatabas
     existing_user = await db.tbl_User.find_one({'email': google_email})
 
     user_id = None
-    role = 'user'
-
     if existing_user:
         user_id = existing_user['_id']
-        role = existing_user.get('role', 'user')
 
         linked_acc = await db.linked_accounts.find_one({
             'user_id': user_id,
@@ -380,20 +388,53 @@ async def google_callback(request: Request, response: Response, db: AsyncDatabas
             'created_at': datetime.now(timezone.utc).timestamp()
         })
     
+    authorization_code = secrets.token_urlsafe(32)
+    await db.oauth_login_codes.insert_one({
+        'code_hash': hashlib.sha256(authorization_code.encode('utf-8')).hexdigest(),
+        'user_id': user_id,
+        'expires_at': datetime.now(timezone.utc) + timedelta(
+            seconds=OAUTH_CODE_TTL_SECONDS
+        ),
+    })
+
+    query = urlencode({'code': authorization_code})
+    return RedirectResponse(url=f"{frontend_url}/google?{query}")
+
+
+@router.post('/auth/oauth/exchange', response_model=Token)
+async def exchange_oauth_code(
+    request: OAuthCodeExchangeRequest,
+    db: AsyncDatabase = Depends(get_db),
+) -> Token:
+    code_hash = hashlib.sha256(request.code.encode('utf-8')).hexdigest()
+    login_code = await db.oauth_login_codes.find_one_and_delete({
+        'code_hash': code_hash,
+        'expires_at': {'$gte': datetime.now(timezone.utc)},
+    })
+    if not login_code:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Mã ủy quyền không hợp lệ hoặc đã hết hạn',
+        )
+
+    user = await db.tbl_User.find_one({'_id': login_code['user_id']})
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='Mã ủy quyền không hợp lệ hoặc đã hết hạn',
+        )
+
     access_token = jwt_service.create_access_token({
-        'sub': str(user_id),
-        'role': role,
-        'email': google_email
+        'sub': str(user['_id']),
+        'role': user.get('role', 'user'),
+        'email': user['email'],
     })
-
-    refresh_token = jwt_service.create_refresh_token({
-        'sub': str(user_id)
-    })
-
-    frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:8000/login')
-    redirect_response = RedirectResponse(url=f"{frontend_url}/google?access_token={access_token}&refresh_token={refresh_token}&login_success=true")
-
-    return redirect_response
+    refresh_token = jwt_service.create_refresh_token({'sub': str(user['_id'])})
+    return Token(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        token_type='bearer',
+    )
 
 
 @router.post('/auth/verifications', response_model=Token)

@@ -74,32 +74,18 @@ const LoginForm = () => {
     }
   };
 
-  // Xử lý đăng nhập bằng gg
-  const handleGoogleLogin = async () => {
-    window.location.href = `${process.env.NEXT_PUBLIC_BASE_API}/google/login`;
-
-    const res = await signIn("credentials", {
-      access_token: data.access_token,
-      refresh_token: data.refresh_token,
-    });
-
-    if (res?.ok && !res.error) {
+  // Backend quản lý toàn bộ luồng OAuth và chỉ trả về mã dùng một lần.
+  const handleGoogleLogin = () => {
+    const apiBaseUrl = process.env.NEXT_PUBLIC_BASE_API?.replace(/\/$/, "");
+    if (!apiBaseUrl) {
       toast({
-        title: "Đăng nhập thành công",
-        className: "bg-green-100 text-green-800 border border-green-300",
-        duration: 3000,
-      });
-      setTimeout(() => {
-        router.push("/");
-      }, 100);
-    } else {
-      toast({
-        title: "Đăng nhập thất bại",
-        description: "Tên đăng nhập hoặc mật khẩu không đúng.",
+        title: "Không thể đăng nhập bằng Google",
+        description: "Máy chủ xác thực chưa được cấu hình.",
         variant: "destructive",
-        duration: 3000,
       });
+      return;
     }
+    window.location.assign(`${apiBaseUrl}/google/login`);
   };
 
   return (

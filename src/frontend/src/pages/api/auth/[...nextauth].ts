@@ -1,37 +1,112 @@
-import NextAuth, { NextAuthOptions } from "next-auth";
+import NextAuth, { NextAuthOptions, User } from "next-auth";
+import { JWT } from "next-auth/jwt";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { jwtDecode } from "jwt-decode";
 
-const AUTH_API_BASE_URL = process.env.AUTH_API_BASE_URL || process.env.NEXT_PUBLIC_BASE_API;
+const AUTH_API_BASE_URL =
+  process.env.AUTH_API_BASE_URL || process.env.NEXT_PUBLIC_BASE_API;
 
-async function refreshAccessToken(token: any) {
+type TokenResponse = {
+  access_token: string;
+  refresh_token: string;
+};
+
+type ApiUser = {
+  _id: string;
+  username: string;
+  email: string;
+  role: string;
+};
+
+function parseTokenResponse(value: unknown): TokenResponse {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !("access_token" in value) ||
+    typeof value.access_token !== "string" ||
+    !("refresh_token" in value) ||
+    typeof value.refresh_token !== "string"
+  ) {
+    throw new Error("Phản hồi token không hợp lệ");
+  }
+
+  return {
+    access_token: value.access_token,
+    refresh_token: value.refresh_token,
+  };
+}
+
+function getAccessTokenExpiry(accessToken: string): number {
+  const decoded = jwtDecode<{ exp?: number }>(accessToken);
+  if (typeof decoded.exp !== "number") {
+    throw new Error("Access token không có thời hạn hợp lệ");
+  }
+  return decoded.exp * 1000;
+}
+
+async function requestTokens(
+  path: string,
+  body: Record<string, string>,
+): Promise<TokenResponse> {
+  if (!AUTH_API_BASE_URL) {
+    throw new Error("AUTH_API_BASE_URL chưa được cấu hình");
+  }
+
+  const response = await fetch(`${AUTH_API_BASE_URL}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    throw new Error("Không thể cấp token");
+  }
+  return parseTokenResponse(await response.json());
+}
+
+async function loadUser(tokens: TokenResponse): Promise<User | null> {
+  if (!AUTH_API_BASE_URL) {
+    return null;
+  }
+
+  const response = await fetch(`${AUTH_API_BASE_URL}/me`, {
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${tokens.access_token}`,
+    },
+  });
+  if (!response.ok) {
+    return null;
+  }
+
+  const user = (await response.json()) as ApiUser;
+  if (!user._id || !user.email || !user.role) {
+    return null;
+  }
+  return {
+    id: user._id,
+    username: user.username,
+    email: user.email,
+    role: user.role,
+    access_token: tokens.access_token,
+    refresh_token: tokens.refresh_token,
+    accessTokenExpires: getAccessTokenExpiry(tokens.access_token),
+  };
+}
+
+async function refreshAccessToken(token: JWT): Promise<JWT> {
   try {
-    console.log("Bắt đầu chưa gọi");
-    const res = await fetch(`${AUTH_API_BASE_URL}/refresh`, {
-      method: "POST",
-
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-
-      body: JSON.stringify({
-        refresh_token: token.refresh_token,
-      }),
+    if (!token.refresh_token) {
+      throw new Error("Không có refresh token");
+    }
+    const tokens = await requestTokens("/refresh", {
+      refresh_token: token.refresh_token,
     });
-
-    console.log("Respon: ", res);
-    const data = await res.json();
-
-    console.log("Dữ liệu trả:", data);
-    const decoded: any = jwtDecode(data.access_token);
-    console.log("Token mới là: ", data.access_token);
-
     return {
       ...token,
-      access_token: data.access_token,
-      refresh_token: data.refresh_token,
-      accessTokenExpires: decoded.exp * 1000, // ms
+      access_token: tokens.access_token,
+      refresh_token: tokens.refresh_token,
+      accessTokenExpires: getAccessTokenExpiry(tokens.access_token),
+      error: undefined,
     };
   } catch {
     return {
@@ -52,101 +127,25 @@ export const authOptions: NextAuthOptions = {
           placeholder: "Nguyen Van A",
         },
         password: { label: "Password", type: "password" },
-
-        //
-        access_token: { label: "Access Token", type: "text" },
-        refresh_token: { label: "Refresh Token", type: "text" },
+        authorization_code: { label: "Authorization Code", type: "hidden" },
       },
       async authorize(credentials) {
-        // CASE 1: LOGIN GOOGLE, email
-        if (credentials?.access_token) {
-          const access_token = credentials.access_token;
-          const refresh_token = credentials.refresh_token;
-
-          const decoded: any = jwtDecode(access_token);
-
-          // gọi API lấy user
-          const res = await fetch(`${AUTH_API_BASE_URL}/me`, {
-            method: "GET",
-            headers: {
-              Authorization: `Bearer ${access_token}`,
-            },
-          });
-
-          const userInf = await res.json();
-
-          return {
-            id: userInf._id,
-            username: userInf.username,
-            email: userInf.email,
-            role: userInf.role,
-            access_token,
-            refresh_token,
-            accessTokenExpires: decoded.exp * 1000,
-          };
-        }
-
-        // CASE 2: LOGIN THƯỜNG
         try {
-          const { username, password } = credentials as any;
-
-          const res = await fetch(`${AUTH_API_BASE_URL}/login`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              username,
-              password,
-            }),
-          });
-
-          if (!res.ok) {
-            throw new Error("Invalid credentials");
-          }
-
-          const data = await res.json();
-          console.log("Data: ", data);
-
-          // Giải mã lấy thông tin
-          const decoded: any = jwtDecode(data.access_token);
-          console.log("Decoded: ", decoded);
-
-          let userInf: any;
-          // Lấy thông tin user có access token
-          try {
-            const res = await fetch(`${AUTH_API_BASE_URL}/me`, {
-              method: "GET",
-              headers: {
-                Accept: "application/json",
-                Authorization: `Bearer ${data.access_token}`,
-              },
+          let tokens: TokenResponse;
+          if (credentials?.authorization_code) {
+            tokens = await requestTokens("/auth/oauth/exchange", {
+              code: credentials.authorization_code,
             });
-
-            if (!res.ok) throw new Error("Lỗi khi gọi API");
-
-            const userInf1 = await res.json();
-            console.log(userInf1);
-            userInf = userInf1;
-          } catch (err) {
-            console.error("Lỗi khi lấy dữ liệu:", err);
-          }
-
-          if (userInf) {
-            return {
-              id: userInf._id,
-              username: userInf.username,
-              email: userInf.email,
-              role: userInf.role,
-              access_token: data.access_token,
-              refresh_token: data.refresh_token,
-              accessTokenExpires: decoded.exp * 1000,
-            };
+          } else if (credentials?.username && credentials.password) {
+            tokens = await requestTokens("/login", {
+              username: credentials.username,
+              password: credentials.password,
+            });
           } else {
             return null;
           }
-        } catch (error) {
-          console.error("Authorization error:", error);
+          return await loadUser(tokens);
+        } catch {
           return null;
         }
       },
@@ -155,7 +154,6 @@ export const authOptions: NextAuthOptions = {
 
   callbacks: {
     async jwt({ token, user }) {
-      // Login lần đầu
       if (user) {
         token.id = user.id;
         token.username = user.username;
@@ -164,34 +162,25 @@ export const authOptions: NextAuthOptions = {
         token.access_token = user.access_token;
         token.refresh_token = user.refresh_token;
         token.accessTokenExpires = user.accessTokenExpires;
-      }
-
-      // Token còn hạn
-      console.log("Ngày hiện tại và hạn token");
-      console.log(Date.now());
-      console.log(token.accessTokenExpires);
-      if (Date.now() < Math.floor(token.accessTokenExpires)) {
-        console.log("Còn hạn");
         return token;
       }
 
-      // Token hết hạn → refresh
-      else {
-        console.log("Hêt hạn refresh lại");
-        return await refreshAccessToken(token);
+      if (
+        typeof token.accessTokenExpires === "number" &&
+        Date.now() < token.accessTokenExpires
+      ) {
+        return token;
       }
+      return refreshAccessToken(token);
     },
     async session({ session, token }) {
-      // Gán role từ token vào session.user
-      if (token && session.user) {
-        session.user.username = token.username as string;
-        session.user.email = token.email as string;
-        session.user.id = token.id as string;
-        session.user.role = token.role as string;
-        session.user.access_token = token.access_token as string;
-        session.user.refresh_token = token.refresh_token as string;
+      if (session.user) {
+        session.user.username = token.username;
+        session.user.email = token.email;
+        session.user.id = token.id;
+        session.user.role = token.role;
+        session.user.access_token = token.access_token;
       }
-      console.log("Session: ", session);
       return session;
     },
   },
@@ -199,7 +188,7 @@ export const authOptions: NextAuthOptions = {
   session: {
     strategy: "jwt",
     maxAge: 60 * 60 * 24 * 7,
-    updateAge: 60 * 60 * 1,
+    updateAge: 60 * 60,
   },
 
   pages: {

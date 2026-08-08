@@ -5,15 +5,16 @@ Sử dụng chung SECRET_KEY và ALGORITHM với HAutoML backend.
 Cấu hình tải từ hagent.yaml — KHÔNG hard-code.
 """
 
-from datetime import datetime, timezone
-from fastapi import Depends, HTTPException, status, Request
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from jwt import decode, PyJWTError
 import logging
+from datetime import datetime, timezone
 
-logger = logging.getLogger(__name__)
+from fastapi import Depends, HTTPException, Request, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from jwt import PyJWTError, decode
 
 from .config import get_auth_config
+
+logger = logging.getLogger(__name__)
 
 security = HTTPBearer(auto_error=False)
 
@@ -27,7 +28,7 @@ class TokenPayload:
         self.exp: float = payload.get("exp", 0)
         self.token_type: str = payload.get("type", "access")
         self.raw: dict = payload
-        self.raw_token: str = raw_token  # Lưu raw JWT token string
+        self.raw_token: str = raw_token
 
     @property
     def is_expired(self) -> bool:
@@ -54,18 +55,18 @@ def verify_jwt_token(token: str) -> TokenPayload:
             auth_cfg["secret_key"],
             algorithms=[auth_cfg["algorithm"]],
         )
-    except PyJWTError as e:
-        logger.warning(f"Lỗi JWT: {e}, secret_key length: {len(auth_cfg['secret_key']) if auth_cfg['secret_key'] else 0}")
+    except PyJWTError:
+        logger.warning("Xác thực JWT thất bại")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Token không hợp lệ: {e}",
+            detail="Token không hợp lệ",
             headers={"WWW-Authenticate": "Bearer"},
-        )
+        ) from None
 
     token_payload = TokenPayload(payload, token)
 
     if token_payload.is_expired:
-        logger.debug(f"Token expired: exp={token_payload.exp}")
+        logger.debug("JWT đã hết hạn")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token đã hết hạn",
@@ -73,7 +74,7 @@ def verify_jwt_token(token: str) -> TokenPayload:
         )
 
     if token_payload.token_type != "access":
-        logger.debug(f"Token type invalid: expected access, got {token_payload.token_type}")
+        logger.debug("JWT không phải access token")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Loại token không hợp lệ — yêu cầu access token",
@@ -87,9 +88,8 @@ async def get_current_user(
     request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
 ) -> TokenPayload:
-    logger.debug(f"ALL INCOMING HEADERS IN AUTH: {request.headers}")
     if credentials is None:
-        logger.debug("Missing credentials/Authorization header!")
+        logger.debug("Thiếu thông tin xác thực")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Thiếu header Authorization",

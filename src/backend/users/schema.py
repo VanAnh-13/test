@@ -78,6 +78,10 @@ class RefreshRequest(BaseModel):
     refresh_token: str
 
 
+class OAuthCodeExchangeRequest(BaseModel):
+    code: str = Field(..., min_length=32, max_length=512)
+
+
 class ResendEmailRequest(BaseModel):
     email: EmailStr
 
