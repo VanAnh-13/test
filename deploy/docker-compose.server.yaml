@@ -1,0 +1,666 @@
+name: hagent-server
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "3"
+
+x-app-security: &app-security
+  init: true
+  read_only: true
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+
+x-caddy-service: &caddy-service
+  image: caddy:2.11.4-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
+  restart: unless-stopped
+  stop_grace_period: 30s
+  init: true
+  read_only: true
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  cap_add:
+    - NET_BIND_SERVICE
+  environment:
+    SITE_ADDRESS: ${SITE_ADDRESS:?SITE_ADDRESS is required}
+  volumes:
+    - type: bind
+      source: ./Caddyfile
+      target: /etc/caddy/Caddyfile
+      read_only: true
+    - type: volume
+      source: caddy_data
+      target: /data
+    - type: volume
+      source: caddy_config
+      target: /config
+  tmpfs:
+    - /tmp:rw,nosuid,nodev,size=32m
+  networks:
+    - edge
+  depends_on:
+    frontend:
+      condition: service_healthy
+    toolkit:
+      condition: service_healthy
+  healthcheck:
+    test:
+      - CMD
+      - caddy
+      - validate
+      - --config
+      - /etc/caddy/Caddyfile
+      - --adapter
+      - caddyfile
+    interval: 30s
+    timeout: 5s
+    retries: 3
+    start_period: 10s
+  logging: *default-logging
+
+services:
+  caddy_private:
+    <<: *caddy-service
+    profiles:
+      - private
+    ports:
+      - target: 80
+        published: ${GATEWAY_HTTP_PORT:?GATEWAY_HTTP_PORT is required}
+        host_ip: ${GATEWAY_BIND_IP:?GATEWAY_BIND_IP is required}
+        protocol: tcp
+
+  caddy_public:
+    <<: *caddy-service
+    profiles:
+      - public
+    ports:
+      - target: 80
+        published: ${GATEWAY_HTTP_PORT:?GATEWAY_HTTP_PORT is required}
+        host_ip: ${GATEWAY_BIND_IP:?GATEWAY_BIND_IP is required}
+        protocol: tcp
+      - target: 443
+        published: "443"
+        host_ip: ${GATEWAY_BIND_IP:?GATEWAY_BIND_IP is required}
+        protocol: tcp
+
+  credential_init:
+    image: mongo:7.0.16@sha256:c630c59342c1493d50345136df2af14a76b9e827dd5316bfabee07a0880a5f3a
+    restart: on-failure:3
+    stop_grace_period: 30s
+    init: true
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    entrypoint:
+      - /bin/bash
+      - -euc
+    command:
+      - |
+        umask 077
+        atomic_write() {
+          local target="$$1"
+          local value="$$2"
+          local temporary="$${target}.tmp.$$$$.$$RANDOM"
+          printf '%s' "$$value" > "$$temporary"
+          chmod 0600 "$$temporary"
+          sync
+          mv -f -- "$$temporary" "$$target"
+          sync
+        }
+        random_hex() {
+          od -An -N32 -tx1 /dev/urandom | tr -d ' \n'
+        }
+        ensure_store() {
+          local directory="$$1"
+          local username_file="$${directory}/root-username"
+          local password_file="$${directory}/root-password"
+          (
+            flock -w 30 9 || exit 1
+            if [[ -e "$$username_file" ]]; then
+              [[ -f "$$username_file" ]]
+              [[ "$$(wc -c < "$$username_file")" -eq 20 ]]
+              [[ "$$(<"$$username_file")" == "hagent_internal_root" ]]
+            else
+              atomic_write "$$username_file" hagent_internal_root
+            fi
+            if [[ -e "$$password_file" ]]; then
+              [[ -f "$$password_file" ]]
+              [[ "$$(wc -c < "$$password_file")" -eq 64 ]]
+              [[ "$$(<"$$password_file")" =~ ^[0-9a-f]{64}$$ ]]
+            else
+              atomic_write "$$password_file" "$$(random_hex)"
+            fi
+          ) 9>"$${directory}/.credential-init.lock"
+        }
+        ensure_store /run/mongo-bootstrap
+        ensure_store /run/minio-bootstrap
+    volumes:
+      - type: volume
+        source: mongo_bootstrap_secrets
+        target: /run/mongo-bootstrap
+      - type: volume
+        source: minio_bootstrap_secrets
+        target: /run/minio-bootstrap
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=16m
+    network_mode: none
+    logging: *default-logging
+
+  frontend:
+    <<: *app-security
+    image: ${FRONTEND_IMAGE:?FRONTEND_IMAGE is required}
+    pull_policy: never
+    restart: unless-stopped
+    stop_grace_period: 30s
+    environment:
+      AUTH_API_BASE_URL: ${AUTH_API_BASE_URL:?AUTH_API_BASE_URL is required}
+      HAGENT_INTERNAL_URL: ${HAGENT_INTERNAL_URL:?HAGENT_INTERNAL_URL is required}
+      NEXTAUTH_URL: ${NEXTAUTH_URL:?NEXTAUTH_URL is required}
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:?NEXTAUTH_SECRET is required}
+    expose:
+      - "3000"
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=64m
+      - /app/.next/cache:rw,nosuid,nodev,size=128m,uid=1000,gid=1000
+    networks:
+      - edge
+      - app
+    depends_on:
+      hagent_bridge:
+        condition: service_healthy
+      toolkit:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - >-
+          fetch('http://127.0.0.1:3000/hagent').then((response) => {
+          if (!response.ok) process.exit(1); }).catch(() => process.exit(1));
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging: *default-logging
+
+  toolkit:
+    <<: *app-security
+    image: ${TOOLKIT_IMAGE:?TOOLKIT_IMAGE is required}
+    pull_policy: never
+    restart: unless-stopped
+    stop_grace_period: 180s
+    environment:
+      DEPLOY_MODE: ${DEPLOY_MODE:?DEPLOY_MODE is required}
+      APP_ORIGIN: ${APP_ORIGIN:?APP_ORIGIN is required}
+      SESSION_HTTPS_ONLY: ${SESSION_HTTPS_ONLY:?SESSION_HTTPS_ONLY is required}
+      BACKEND_RELOAD: "false"
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
+      SUPER_SECRET_KEY: ${SUPER_SECRET_KEY:?SUPER_SECRET_KEY is required}
+      ALGORITHM: ${ALGORITHM:?ALGORITHM is required}
+      ACCESS_EXPIRE: ${ACCESS_EXPIRE:?ACCESS_EXPIRE is required}
+      REFRESH_EXPIRE: ${REFRESH_EXPIRE:?REFRESH_EXPIRE is required}
+      PASSWORD_RESET_EXPIRE_MINUTES: ${PASSWORD_RESET_EXPIRE_MINUTES:?PASSWORD_RESET_EXPIRE_MINUTES is required}
+      SKIP_EMAIL_VERIFICATION: ${SKIP_EMAIL_VERIFICATION:?SKIP_EMAIL_VERIFICATION is required}
+      FRONTEND_URL: ${FRONTEND_URL:?FRONTEND_URL is required}
+      REDIRECT_URI: ${REDIRECT_URI:?REDIRECT_URI is required}
+      MAIL_USERNAME: ${MAIL_USERNAME:?MAIL_USERNAME is required}
+      MAIL_PASSWORD: ${MAIL_PASSWORD:?MAIL_PASSWORD is required}
+      LOGO: ${LOGO:?LOGO is required}
+      MONGODB_CONNECT: ${MONGODB_CONNECT:?MONGODB_CONNECT is required}
+      MONGODB_DB_NAME: ${MONGODB_DB_NAME:?MONGODB_DB_NAME is required}
+      HAGENT_RUNTIME_DB_NAME: ${HAGENT_RUNTIME_DB_NAME:?HAGENT_RUNTIME_DB_NAME is required}
+      HAGENT_CHECKPOINT_BACKEND: ${HAGENT_CHECKPOINT_BACKEND:?HAGENT_CHECKPOINT_BACKEND is required}
+      HAGENT_CHECKPOINT_TTL_SECONDS: ${HAGENT_CHECKPOINT_TTL_SECONDS:?HAGENT_CHECKPOINT_TTL_SECONDS is required}
+      HAGENT_EVENT_RETENTION_DAYS: ${HAGENT_EVENT_RETENTION_DAYS:?HAGENT_EVENT_RETENTION_DAYS is required}
+      HAGENT_ARTIFACT_RETENTION_DAYS: ${HAGENT_ARTIFACT_RETENTION_DAYS:?HAGENT_ARTIFACT_RETENTION_DAYS is required}
+      HAGENT_RUNTIME_MODE: ${HAGENT_RUNTIME_MODE:?HAGENT_RUNTIME_MODE is required}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:?MINIO_ENDPOINT is required}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY is required}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
+      MINIO_SECURE: ${MINIO_SECURE:?MINIO_SECURE is required}
+      KAFKA_SERVER: ${KAFKA_SERVER:?KAFKA_SERVER is required}
+      KAFKA_TOPIC: ${KAFKA_TOPIC:?KAFKA_TOPIC is required}
+      NUMBER_WORKERS: "1"
+      WORKER_LIST: http://worker:5101
+      LLM_DEFAULT_MODEL: ${LLM_DEFAULT_MODEL:?LLM_DEFAULT_MODEL is required}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-}
+      LOCAL_BASE_URL: ${LOCAL_BASE_URL:-}
+      LOCAL_MODEL_NAME: ${LOCAL_MODEL_NAME:-}
+      LOCAL_API_KEY: ${LOCAL_API_KEY:-}
+    expose:
+      - "8585"
+    volumes:
+      - type: volume
+        source: backend_data
+        target: /var/lib/hagent
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=512m,uid=10001,gid=10001
+    networks:
+      - edge
+      - app
+      - data
+    depends_on:
+      mongo_provision:
+        condition: service_completed_successfully
+      kafka:
+        condition: service_healthy
+      minio_provision:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8585/ready', timeout=3).close()
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    logging: *default-logging
+
+  worker:
+    <<: *app-security
+    image: ${WORKER_IMAGE:?WORKER_IMAGE is required}
+    pull_policy: never
+    restart: unless-stopped
+    stop_grace_period: 180s
+    command:
+      - uvicorn
+      - cluster.worker:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "5101"
+    environment:
+      WORKER_HOST: worker
+      WORKER_PORT: "5101"
+      HOST_BACK_END: toolkit
+      PORT_BACK_END: "8585"
+      MONGODB_CONNECT: ${MONGODB_CONNECT:?MONGODB_CONNECT is required}
+      MONGODB_DB_NAME: ${MONGODB_DB_NAME:?MONGODB_DB_NAME is required}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:?MINIO_ENDPOINT is required}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY is required}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
+      MINIO_SECURE: ${MINIO_SECURE:?MINIO_SECURE is required}
+      KAFKA_SERVER: ${KAFKA_SERVER:?KAFKA_SERVER is required}
+      KAFKA_TOPIC: ${KAFKA_TOPIC:?KAFKA_TOPIC is required}
+    expose:
+      - "5101"
+    volumes:
+      - type: volume
+        source: backend_data
+        target: /var/lib/hagent
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=2g,uid=10001,gid=10001
+    networks:
+      - app
+      - data
+    depends_on:
+      toolkit:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:5101/health', timeout=3).close()
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging: *default-logging
+
+  hagent_bridge:
+    <<: *app-security
+    image: ${BRIDGE_IMAGE:?BRIDGE_IMAGE is required}
+    pull_policy: never
+    restart: unless-stopped
+    stop_grace_period: 60s
+    environment:
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
+      ALGORITHM: ${ALGORITHM:?ALGORITHM is required}
+      MONGODB_CONNECT: ${MONGODB_CONNECT:?MONGODB_CONNECT is required}
+      MONGODB_DB_NAME: ${MONGODB_DB_NAME:?MONGODB_DB_NAME is required}
+      HAUTOML_BASE_URL: ${HAUTOML_BASE_URL:?HAUTOML_BASE_URL is required}
+      HAGENT_RUN_API_URL: ${HAGENT_RUN_API_URL:?HAGENT_RUN_API_URL is required}
+      LLM_DEFAULT_MODEL: ${LLM_DEFAULT_MODEL:?LLM_DEFAULT_MODEL is required}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-}
+      LOCAL_BASE_URL: ${LOCAL_BASE_URL:-}
+      LOCAL_MODEL_NAME: ${LOCAL_MODEL_NAME:-}
+      LOCAL_API_KEY: ${LOCAL_API_KEY:-}
+    expose:
+      - "9900"
+    volumes:
+      - type: volume
+        source: bridge_data
+        target: /var/lib/hagent
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=128m,uid=10002,gid=10002
+    networks:
+      - app
+      - data
+    depends_on:
+      mongo_provision:
+        condition: service_completed_successfully
+      toolkit:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen(
+          'http://127.0.0.1:9900/api/v1/ready', timeout=3).close()
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging: *default-logging
+
+  mongo:
+    image: mongo:7.0.16@sha256:c630c59342c1493d50345136df2af14a76b9e827dd5316bfabee07a0880a5f3a
+    restart: unless-stopped
+    stop_grace_period: 90s
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    entrypoint:
+      - /bin/bash
+      - -euc
+    command:
+      - |
+        export MONGO_INITDB_ROOT_USERNAME="$$(cat /run/mongo-bootstrap/root-username)"
+        export MONGO_INITDB_ROOT_PASSWORD="$$(cat /run/mongo-bootstrap/root-password)"
+        exec /usr/local/bin/docker-entrypoint.sh mongod
+    expose:
+      - "27017"
+    volumes:
+      - type: volume
+        source: mongo_data
+        target: /data/db
+      - type: volume
+        source: mongo_bootstrap_secrets
+        target: /run/mongo-bootstrap
+        read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=32m
+    networks:
+      - data
+    depends_on:
+      credential_init:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          mongosh --quiet --host 127.0.0.1
+          --username "$$(cat /run/mongo-bootstrap/root-username)"
+          --password "$$(cat /run/mongo-bootstrap/root-password)"
+          --authenticationDatabase admin
+          --eval "quit(db.adminCommand({ ping: 1 }).ok ? 0 : 2)"
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    logging: *default-logging
+
+  mongo_provision:
+    image: mongo:7.0.16@sha256:c630c59342c1493d50345136df2af14a76b9e827dd5316bfabee07a0880a5f3a
+    restart: on-failure:3
+    stop_grace_period: 30s
+    init: true
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    entrypoint:
+      - /bin/bash
+      - -euc
+    command:
+      - |
+        [[ "$$MONGO_APP_USERNAME" != "hagent_internal_root" ]]
+        export HOME=/tmp
+        mongosh --quiet --host mongo \
+          --username "$$(cat /run/mongo-bootstrap/root-username)" \
+          --password "$$(cat /run/mongo-bootstrap/root-password)" \
+          --authenticationDatabase admin \
+          --eval '
+            const adminDb = db.getSiblingDB("admin");
+            const managedBy = "hagent-server-v1";
+            const desiredUser = process.env.MONGO_APP_USERNAME;
+            const desiredRoles = [...new Set([
+              process.env.MONGODB_DB_NAME,
+              process.env.HAGENT_RUNTIME_DB_NAME
+            ])].map((databaseName) => ({ role: "readWrite", db: databaseName }));
+            const desired = adminDb.getUser(desiredUser);
+            const specification = {
+              pwd: process.env.MONGO_APP_PASSWORD,
+              roles: desiredRoles,
+              customData: { managedBy }
+            };
+            if (desired) {
+              adminDb.updateUser(desiredUser, specification);
+            } else {
+              adminDb.createUser({ user: desiredUser, ...specification });
+            }
+            for (const user of adminDb.runCommand({ usersInfo: 1 }).users) {
+              if (user.user !== desiredUser && user.customData?.managedBy === managedBy) {
+                adminDb.dropUser(user.user);
+              }
+            }
+          '
+    environment:
+      MONGO_APP_USERNAME: ${MONGO_ROOT_USERNAME:?MONGO_ROOT_USERNAME is required}
+      MONGO_APP_PASSWORD: ${MONGO_ROOT_PASSWORD:?MONGO_ROOT_PASSWORD is required}
+      MONGODB_DB_NAME: ${MONGODB_DB_NAME:?MONGODB_DB_NAME is required}
+      HAGENT_RUNTIME_DB_NAME: ${HAGENT_RUNTIME_DB_NAME:?HAGENT_RUNTIME_DB_NAME is required}
+    volumes:
+      - type: volume
+        source: mongo_bootstrap_secrets
+        target: /run/mongo-bootstrap
+        read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=32m
+    networks:
+      - data
+    depends_on:
+      mongo:
+        condition: service_healthy
+    logging: *default-logging
+
+  kafka:
+    image: apache/kafka:3.9.2@sha256:05b4616e0702ef2729327705d54ad6b50ea70b271c4b730fabd2320789fb7b02
+    restart: unless-stopped
+    stop_grace_period: 90s
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
+      KAFKA_NUM_PARTITIONS: "1"
+    expose:
+      - "9092"
+    volumes:
+      - type: volume
+        source: kafka_data
+        target: /var/lib/kafka/data
+    networks:
+      - data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          /opt/kafka/bin/kafka-topics.sh --bootstrap-server 127.0.0.1:9092
+          --list >/dev/null 2>&1
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 30s
+    logging: *default-logging
+
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+    restart: unless-stopped
+    stop_grace_period: 60s
+    init: true
+    entrypoint:
+      - /bin/sh
+      - -euc
+    command:
+      - |
+        export MINIO_ROOT_USER="$$(cat /run/minio-bootstrap/root-username)"
+        export MINIO_ROOT_PASSWORD="$$(cat /run/minio-bootstrap/root-password)"
+        exec minio server /data
+    security_opt:
+      - no-new-privileges:true
+    expose:
+      - "9000"
+    volumes:
+      - type: volume
+        source: minio_data
+        target: /data
+      - type: volume
+        source: minio_bootstrap_secrets
+        target: /run/minio-bootstrap
+        read_only: true
+    networks:
+      - data
+    depends_on:
+      credential_init:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - curl --fail --silent --show-error http://127.0.0.1:9000/minio/health/ready
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    logging: *default-logging
+
+  minio_provision:
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727
+    restart: on-failure:3
+    stop_grace_period: 30s
+    init: true
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    entrypoint:
+      - /bin/sh
+      - -euc
+    command:
+      - |
+        umask 077
+        state_file=/var/lib/hagent-provision/current-user
+        previous_user=""
+        if [ -e "$$state_file" ]; then
+          [ -f "$$state_file" ]
+          previous_user="$$(cat "$$state_file")"
+          [ "$${#previous_user}" -ge 3 ]
+          [ "$${#previous_user}" -le 128 ]
+          case "$$previous_user" in
+            [A-Za-z0-9]*) ;;
+            *) exit 1 ;;
+          esac
+          case "$$previous_user" in
+            *[!A-Za-z0-9._-]*) exit 1 ;;
+          esac
+        fi
+        [ "$$MINIO_APP_ACCESS_KEY" != "hagent_internal_root" ]
+        attempt=0
+        until mc alias set hagent http://minio:9000 \
+          "$$(cat /run/minio-bootstrap/root-username)" \
+          "$$(cat /run/minio-bootstrap/root-password)" >/dev/null 2>&1; do
+          attempt=$$((attempt + 1))
+          if [ "$$attempt" -ge 30 ]; then
+            exit 1
+          fi
+          sleep 2
+        done
+        mc admin user remove hagent "$$MINIO_APP_ACCESS_KEY" >/dev/null 2>&1 || true
+        mc admin user add hagent "$$MINIO_APP_ACCESS_KEY" "$$MINIO_APP_SECRET_KEY"
+        mc admin policy attach hagent readwrite --user "$$MINIO_APP_ACCESS_KEY"
+        if [ -n "$$previous_user" ] && [ "$$previous_user" != "$$MINIO_APP_ACCESS_KEY" ]; then
+          mc admin user remove hagent "$$previous_user"
+        fi
+        temporary_file="$${state_file}.tmp.$$$$"
+        printf '%s' "$$MINIO_APP_ACCESS_KEY" > "$$temporary_file"
+        chmod 0600 "$$temporary_file"
+        sync
+        mv -f "$$temporary_file" "$$state_file"
+        sync
+    environment:
+      MC_CONFIG_DIR: /tmp/mc
+      MINIO_APP_ACCESS_KEY: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY is required}
+      MINIO_APP_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
+    volumes:
+      - type: volume
+        source: minio_bootstrap_secrets
+        target: /run/minio-bootstrap
+        read_only: true
+      - type: volume
+        source: minio_provision_state
+        target: /var/lib/hagent-provision
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=32m
+    networks:
+      - data
+    depends_on:
+      credential_init:
+        condition: service_completed_successfully
+      minio:
+        condition: service_healthy
+    logging: *default-logging
+
+networks:
+  edge:
+    driver: bridge
+  app:
+    driver: bridge
+  data:
+    driver: bridge
+    internal: true
+
+volumes:
+  backend_data:
+  bridge_data:
+  caddy_config:
+  caddy_data:
+  kafka_data:
+  minio_bootstrap_secrets:
+  minio_data:
+  minio_provision_state:
+  mongo_bootstrap_secrets:
+  mongo_data:

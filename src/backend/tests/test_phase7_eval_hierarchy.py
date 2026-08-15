@@ -6,8 +6,6 @@ import asyncio
 import sys
 from pathlib import Path
 
-import pytest
-
 BACKEND_DIR = Path(__file__).parent.parent
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))

@@ -9,28 +9,28 @@ token theo model và quy ra USD theo bảng giá per-1M-token trong config
 from __future__ import annotations
 
 import contextvars
-import logging
 import threading
-from typing import Any, Dict, Optional
+from typing import Any
 
+import structlog
 from langchain_core.callbacks import BaseCallbackHandler
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 # Tracker của RUN hiện tại — contextvar để mỗi run_agent/stream_agent có
 # tracker riêng kể cả khi nhiều request chạy song song (asyncio task copy
 # context lúc tạo, nên mọi LLM call trong cùng run nhìn thấy đúng tracker).
-_current_tracker: contextvars.ContextVar[Optional["UsageTracker"]] = (
+_current_tracker: contextvars.ContextVar[UsageTracker | None] = (
     contextvars.ContextVar("hagent_usage_tracker", default=None)
 )
 
 
-def set_current_tracker(tracker: Optional["UsageTracker"]) -> contextvars.Token:
+def set_current_tracker(tracker: UsageTracker | None) -> contextvars.Token:
     """Đặt tracker cho run hiện tại; trả token để reset_current_tracker."""
     return _current_tracker.set(tracker)
 
 
-def get_current_tracker() -> Optional["UsageTracker"]:
+def get_current_tracker() -> UsageTracker | None:
     return _current_tracker.get()
 
 
@@ -41,11 +41,11 @@ def reset_current_tracker(token: contextvars.Token) -> None:
 class UsageTracker:
     """Cộng dồn usage theo model; thread-safe (callback có thể chạy đa luồng)."""
 
-    def __init__(self, pricing: Dict[str, Dict[str, float]] | None = None):
+    def __init__(self, pricing: dict[str, dict[str, float]] | None = None):
         # pricing: {model: {"input_per_1m": usd, "output_per_1m": usd}}
         self.pricing = dict(pricing or {})
         self._lock = threading.Lock()
-        self._by_model: Dict[str, Dict[str, float]] = {}
+        self._by_model: dict[str, dict[str, float]] = {}
 
     def record(
         self,
@@ -64,7 +64,7 @@ class UsageTracker:
             entry["output_tokens"] += max(0, int(output_tokens))
             entry["calls"] += max(0, int(calls))
 
-    def _cost_for(self, model: str, entry: Dict[str, float]) -> float:
+    def _cost_for(self, model: str, entry: dict[str, float]) -> float:
         price = self.pricing.get(model)
         if not price:
             return 0.0
@@ -73,7 +73,7 @@ class UsageTracker:
             + entry["output_tokens"] * float(price.get("output_per_1m", 0.0))
         ) / 1_000_000.0
 
-    def summary(self) -> Dict[str, Any]:
+    def summary(self) -> dict[str, Any]:
         with self._lock:
             by_model = {
                 model: {**entry, "cost_usd": self._cost_for(model, entry)}
@@ -92,7 +92,7 @@ class UsageTracker:
             self._by_model.clear()
 
 
-def _usage_from_llm_result(response: Any) -> Optional[Dict[str, Any]]:
+def _usage_from_llm_result(response: Any) -> dict[str, Any] | None:
     """Rút (model, input, output) từ LLMResult — hỗ trợ cả hai convention."""
     model = None
     input_tokens = 0
@@ -158,7 +158,7 @@ class UsageTrackingCallback(BaseCallbackHandler):
             logger.debug("usage tracking parse failed: %s", exc)
 
 
-def create_usage_tracker(config: dict | None = None) -> Optional[UsageTracker]:
+def create_usage_tracker(config: dict | None = None) -> UsageTracker | None:
     """Tracker từ llm.usage_tracking trong hagent.yaml. None khi disabled."""
     cfg = config
     if cfg is None:

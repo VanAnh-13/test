@@ -13,7 +13,7 @@ rung cao nhất mà ứng viên đạt được.
 import logging
 import math
 import time
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 import numpy as np
 from sklearn.base import BaseEstimator
@@ -29,16 +29,16 @@ class SuccessiveHalvingStrategy(RandomSearchStrategy):
     """Halving trên fraction dữ liệu; kế thừa sampling/evaluate từ RandomSearch."""
 
     @staticmethod
-    def get_default_config() -> Dict[str, Any]:
+    def get_default_config() -> dict[str, Any]:
         base_config = SearchStrategy.get_default_config()
-        yaml_config = SearchStrategy._load_yaml_config('successive_halving')
+        yaml_config = SearchStrategy._load_yaml_config("successive_halving")
         base_config.update(
             {
-                'eta': 3,
-                'n_candidates': 27,
-                'min_resource_frac': 1.0 / 9.0,
-                'min_subsample_rows': 60,
-                'max_duplicate_attempts': 50,
+                "eta": 3,
+                "n_candidates": 27,
+                "min_resource_frac": 1.0 / 9.0,
+                "min_subsample_rows": 60,
+                "max_duplicate_attempts": 50,
             }
         )
         if yaml_config:
@@ -47,13 +47,13 @@ class SuccessiveHalvingStrategy(RandomSearchStrategy):
 
     def _subsample(
         self, X: np.ndarray, y: np.ndarray, frac: float, rung: int
-    ) -> Tuple[np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray]:
         """Stratified subsample theo frac; dữ liệu quá nhỏ → dùng toàn bộ."""
         n = len(y)
-        min_rows = int(self.config.get('min_subsample_rows', 60))
+        min_rows = int(self.config.get("min_subsample_rows", 60))
         if frac >= 1.0 or n * frac < min_rows:
             return X, y
-        seed = self.config.get('random_state')
+        seed = self.config.get("random_state")
         try:
             X_sub, _, y_sub, _ = train_test_split(
                 X,
@@ -70,22 +70,24 @@ class SuccessiveHalvingStrategy(RandomSearchStrategy):
     def search(
         self,
         model: BaseEstimator,
-        param_grid: List[Dict[str, Any]],
+        param_grid: list[dict[str, Any]],
         X: np.ndarray,
         y: np.ndarray,
         **kwargs,
-    ) -> Tuple[Dict, float, Dict, Dict, bool]:
+    ) -> tuple[dict, float, dict, dict, bool]:
         self.set_config(**kwargs)
         self._start_timer()
         self._init_search_log()
-        log_file = self.create_log_file_path(model, 'successive_halving')
+        log_file = self.create_log_file_path(model, "successive_halving")
 
         param_grid_list = normalize_param_grid(param_grid)
-        primary_metric = self.config.get('metric_sort', 'accuracy')
-        rng = np.random.default_rng(self.config.get('random_state'))
-        eta = max(2, int(self.config.get('eta', 3)))
-        n_candidates = max(2, int(self.config.get('n_candidates', 27)))
-        min_frac = min(1.0, max(1e-3, float(self.config.get('min_resource_frac', 1 / 9))))
+        primary_metric = self.config.get("metric_sort", "accuracy")
+        rng = np.random.default_rng(self.config.get("random_state"))
+        eta = max(2, int(self.config.get("eta", 3)))
+        n_candidates = max(2, int(self.config.get("n_candidates", 27)))
+        min_frac = min(
+            1.0, max(1e-3, float(self.config.get("min_resource_frac", 1 / 9)))
+        )
 
         candidates = self._sample_combos(param_grid_list, n_candidates, rng)
         if not candidates:
@@ -99,44 +101,40 @@ class SuccessiveHalvingStrategy(RandomSearchStrategy):
                 int(math.floor(math.log(max(1, len(candidates)), eta))),
             ),
         )
-        fracs = [min(1.0, min_frac * (eta ** r)) for r in range(n_rungs)]
+        fracs = [min(1.0, min_frac * (eta**r)) for r in range(n_rungs)]
         fracs[-1] = 1.0  # rung cuối luôn full data
 
-        scoring = self.config.get('scoring') or {}
+        scoring = self.config.get("scoring") or {}
         metric_names = list(scoring.keys()) if scoring else [primary_metric]
-        cv_results_: Dict[str, Any] = {
-            'params': [],
-            'mean_test_score': [],
-            'std_test_score': [],
-            'resource_frac': [],
-        }
-        for metric in metric_names:
-            cv_results_[f'mean_test_{metric}'] = []
-            cv_results_[f'std_test_{metric}'] = []
+        cv_results_ = self._init_cv_results(metric_names, extra_keys=["resource_frac"])
 
-        best_params: Dict[str, Any] = {}
-        best_score = float('-inf')
-        best_all_scores: Dict[str, float] = {}
+        best_params: dict[str, Any] = {}
+        best_score = float("-inf")
+        best_all_scores: dict[str, float] = {}
         stopped = False
 
         survivors = list(candidates)
         for rung, frac in enumerate(fracs):
             X_r, y_r = self._subsample(X, y, frac, rung)
-            if self.config.get('verbose', 0) > 0:
+            if self.config.get("verbose", 0) > 0:
                 logger.info(
                     "SH rung %d/%d: %d ứng viên × frac=%.3f (%d hàng)",
-                    rung + 1, len(fracs), len(survivors), frac, len(y_r),
+                    rung + 1,
+                    len(fracs),
+                    len(survivors),
+                    frac,
+                    len(y_r),
                 )
 
             # Mỗi rung là embarrassingly parallel — đánh giá theo lô song song
             from joblib import effective_n_jobs
 
-            chunk_size = max(1, effective_n_jobs(self.config.get('n_jobs') or 1))
-            rung_scores: List[float] = []
-            evaluated: List[Dict[str, Any]] = []
+            chunk_size = max(1, effective_n_jobs(self.config.get("n_jobs") or 1))
+            rung_scores: list[float] = []
+            evaluated: list[dict[str, Any]] = []
             j = 0
             while j < len(survivors):
-                batch = survivors[j:j + chunk_size]
+                batch = survivors[j : j + chunk_size]
                 t0 = time.time()
                 results = self._evaluate_batch(model, batch, X_r, y_r)
                 duration = time.time() - t0
@@ -151,16 +149,15 @@ class SuccessiveHalvingStrategy(RandomSearchStrategy):
 
                     rung_scores.append(score)
                     evaluated.append(params)
-                    cv_results_['params'].append(dict(params))
-                    cv_results_['mean_test_score'].append(score)
-                    cv_results_['std_test_score'].append(0.0)
-                    cv_results_['resource_frac'].append(frac)
-                    for metric in metric_names:
-                        cv_results_[f'mean_test_{metric}'].append(all_scores.get(metric, 0.0))
-                        cv_results_[f'std_test_{metric}'].append(0.0)
+                    self._append_cv_result(
+                        cv_results_, dict(params), score, all_scores, metric_names
+                    )
+                    cv_results_["resource_frac"].append(frac)
 
                     self._log_evaluation(
-                        model.__class__.__name__, 'successive_halving', params,
+                        model.__class__.__name__,
+                        "successive_halving",
+                        params,
                         all_scores,
                     )
 
@@ -183,7 +180,7 @@ class SuccessiveHalvingStrategy(RandomSearchStrategy):
                 break
 
             # Fallback best khi time limit chặn trước rung cuối
-            if best_score == float('-inf'):
+            if best_score == float("-inf"):
                 top = int(np.argmax(rung_scores))
                 best_score = rung_scores[top]
                 best_params = dict(evaluated[top])
@@ -196,14 +193,15 @@ class SuccessiveHalvingStrategy(RandomSearchStrategy):
             order = np.argsort(-np.array(rung_scores))[:keep]
             survivors = [evaluated[i] for i in order]
 
-        if cv_results_['mean_test_score']:
-            scores_arr = np.array(cv_results_['mean_test_score'])
-            cv_results_['rank_test_score'] = (
-                np.argsort(np.argsort(-scores_arr)) + 1
-            ).tolist()
+        if cv_results_["mean_test_score"]:
+            cv_results_["rank_test_score"] = self._rank_descending(
+                cv_results_["mean_test_score"]
+            )
 
-        if best_score == float('-inf'):
+        if best_score == float("-inf"):
             best_score = 0.0
 
         self._save_search_log(log_file)
-        return self._finalize_results(best_params, best_score, best_all_scores, cv_results_)
+        return self._finalize_results(
+            best_params, best_score, best_all_scores, cv_results_
+        )

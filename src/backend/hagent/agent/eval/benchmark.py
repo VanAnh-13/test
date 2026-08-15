@@ -17,26 +17,27 @@ surface của mỗi profile là hàm biết trước → đo được regret so 
 from __future__ import annotations
 
 import asyncio
-import logging
 import math
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import numpy as np
+import structlog
 
 from hagent.agent.campaign.builder import build_campaign
 from hagent.agent.campaign.runner import campaign_step
 from hagent.agent.campaign.schema import Campaign, CampaignVariant
-from hagent.agent.execution.tool_runner import set_tool_invoker
 from hagent.agent.eval.metrics import (
     best_so_far_curve,
     jobs_to_threshold,
     normalized_regret,
 )
+from hagent.agent.execution.tool_runner import set_tool_invoker
 from hagent.world.predictor.outcome_head_v1 import train_outcome_head
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 _ALGOS = ["grid_search", "bayesian_search", "genetic_algorithm"]
 _TIME_OPTIONS = [180, 300, 600]
@@ -50,14 +51,14 @@ _MAX_TICKS = 200
 class DatasetProfile:
     name: str
     base: float
-    algo_bonus: Dict[str, float]
+    algo_bonus: dict[str, float]
     time_coef: float
     noise: float
-    meta: Dict[str, Any] = field(default_factory=lambda: {"n_rows": 1000, "n_cols": 10})
+    meta: dict[str, Any] = field(default_factory=lambda: {"n_rows": 1000, "n_cols": 10})
     # Hiệu ứng model-subset: điểm cộng của model TỐT NHẤT trong subset đã chọn,
     # trừ dilution cho mỗi model thừa (chọn đúng model > quét cả catalog).
     # Rỗng = chiều models không tác động (tương thích profile cũ).
-    model_effects: Dict[str, float] = field(default_factory=dict)
+    model_effects: dict[str, float] = field(default_factory=dict)
     model_dilution: float = 0.01
 
     def _model_term(self, models: Sequence[str] | None) -> float:
@@ -98,7 +99,7 @@ class DatasetProfile:
         )
 
 
-PROFILES: Dict[str, DatasetProfile] = {
+PROFILES: dict[str, DatasetProfile] = {
     # Tín hiệu mạnh, nhiễu nhỏ — nơi steering phải thắng rõ
     "synth_strong": DatasetProfile(
         name="synth_strong",
@@ -151,8 +152,8 @@ class SimulatedAutoMLEnv:
     def __init__(self, profile: DatasetProfile, seed: int = 0):
         self.profile = profile
         self.rng = np.random.default_rng(seed)
-        self.jobs: Dict[str, Dict[str, Any]] = {}
-        self.submission_log: List[Dict[str, Any]] = []
+        self.jobs: dict[str, dict[str, Any]] = {}
+        self.submission_log: list[dict[str, Any]] = []
 
     @property
     def jobs_used(self) -> int:
@@ -196,7 +197,7 @@ class SimulatedAutoMLEnv:
 # ── Variant builders cho baseline conditions ─────────────
 
 
-def _campaign_from_params(goal: dict, params_list: List[dict], *, source: str) -> Campaign:
+def _campaign_from_params(goal: dict, params_list: list[dict], *, source: str) -> Campaign:
     variants = [
         CampaignVariant(
             variant_id=str(uuid.uuid4()),
@@ -224,7 +225,7 @@ def _base_params(goal: dict) -> dict:
     }
 
 
-def make_transfer_profiles(k: int = 6, seed: int = 0) -> List[DatasetProfile]:
+def make_transfer_profiles(k: int = 6, seed: int = 0) -> list[DatasetProfile]:
     """
     Họ profile cho thí nghiệm transfer: thuật toán tốt nhất PHỤ THUỘC meta
     theo luật cố định mà outcome head nhìn thấy được qua feature v2:
@@ -233,7 +234,7 @@ def make_transfer_profiles(k: int = 6, seed: int = 0) -> List[DatasetProfile]:
       - frac_categorical > 0.5 → genetic_algorithm được cộng thêm.
     """
     rng = np.random.default_rng(seed)
-    profiles: List[DatasetProfile] = []
+    profiles: list[DatasetProfile] = []
     row_options = [200, 500, 1000, 5000, 20000, 100000]
     for i in range(k):
         n_rows = int(row_options[int(rng.integers(0, len(row_options)))])
@@ -268,7 +269,7 @@ def make_transfer_profiles(k: int = 6, seed: int = 0) -> List[DatasetProfile]:
 
 def generate_offline_samples(
     profile: DatasetProfile, m: int = 60, seed: int = 0
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Sinh sample (config → score) offline từ một profile — dữ liệu pretrain."""
     rng = np.random.default_rng(seed)
     samples = []
@@ -298,14 +299,14 @@ def run_transfer_loo(
     seed: int = 0,
     samples_per_profile: int = 60,
     profile_seed: int = 0,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Leave-one-dataset-out: pretrain outcome head trên k-1 profile, so
     wm-pretrained vs wm-scratch trên profile giữ lại.
     """
     profiles = make_transfer_profiles(k, seed=profile_seed)
     held = profiles[heldout_index % len(profiles)]
-    pretrain: List[Dict[str, Any]] = []
+    pretrain: list[dict[str, Any]] = []
     for i, p in enumerate(profiles):
         if p.name == held.name:
             continue
@@ -349,8 +350,8 @@ async def _run_condition_async(
     min_train_samples: int = 6,
     head_config: dict | None = None,
     train_epochs: int = 60,
-    initial_samples: List[Dict[str, Any]] | None = None,
-) -> Dict[str, Any]:
+    initial_samples: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     validate_condition(condition)
     goal = {
         "goal_type": "train",
@@ -364,17 +365,17 @@ async def _run_condition_async(
     rng = np.random.default_rng(seed + 1)
     # Chiều model-subset chỉ bật khi profile có model_effects; [] tắt hẳn
     # (override yaml) để các profile cũ giữ nguyên không gian tìm kiếm
-    model_opts: List[str] = sorted(profile.model_effects) if profile.model_effects else []
+    model_opts: list[str] = sorted(profile.model_effects) if profile.model_effects else []
     head_cfg = dict(head_config or {"use_latent": False, "hidden_dim": 32})
     head_cfg.setdefault("model_vocab", model_opts)
     # user_id riêng theo condition — chặn nhiễm chéo qua warm-start memory
     uid = f"bench_{profile.name}_{condition}_{seed}"
     wm_snapshot = {"datasets": {profile.name: dict(profile.meta)}}
 
-    samples: List[Dict[str, Any]] = list(initial_samples or [])
+    samples: list[dict[str, Any]] = list(initial_samples or [])
     outcome_model = None
-    wm_trained_after: Optional[int] = None
-    outcome_surprise_events: List[dict] = []
+    wm_trained_after: int | None = None
+    outcome_surprise_events: list[dict] = []
 
     # Pretrained transfer: đủ sample từ dataset khác → có model từ job 0
     if condition in ("wm", "wm_mpc") and len(samples) >= min_train_samples:
@@ -470,7 +471,7 @@ async def _run_condition_async(
             else:  # đã validate ở đầu hàm — chỉ còn "random" rơi vào nhánh trên
                 raise ValueError(f"Unknown benchmark condition: {condition!r}")
 
-            events: List[dict] = []
+            events: list[dict] = []
             ticks = 0
             while camp.status not in ("done", "failed") and ticks < _MAX_TICKS:
                 camp = await campaign_step(
@@ -546,7 +547,7 @@ async def _run_condition_async(
     }
 
 
-def run_condition(condition: str, profile: DatasetProfile | str, **kwargs) -> Dict[str, Any]:
+def run_condition(condition: str, profile: DatasetProfile | str, **kwargs) -> dict[str, Any]:
     """Sync wrapper — mỗi lần chạy trên event loop mới (an toàn khi gọi lặp)."""
     prof = PROFILES[profile] if isinstance(profile, str) else profile
     loop = asyncio.new_event_loop()
@@ -560,12 +561,12 @@ def run_condition(condition: str, profile: DatasetProfile | str, **kwargs) -> Di
 
 def run_benchmark_matrix(
     *,
-    conditions: List[str],
-    profiles: List[str],
+    conditions: list[str],
+    profiles: list[str],
     budget_jobs: int = 20,
-    seeds: List[int] | None = None,
+    seeds: list[int] | None = None,
     **kwargs,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Chạy đủ ma trận conditions × profiles × seeds, trả list kết quả."""
     # Fail-fast: một condition sai chính tả không được phép đốt cả ma trận
     for condition in conditions:

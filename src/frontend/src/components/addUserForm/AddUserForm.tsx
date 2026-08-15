@@ -91,7 +91,17 @@ export default function AddUserForm({
 
   const onSubmit = async (data: AddUserFormValues) => {
     try {
-      const { confirmPassword, ...submitData } = data;
+      const submitData = {
+        username: data.username,
+        email: data.email,
+        password: data.password,
+        gender: data.gender,
+        date: data.date,
+        number: data.number,
+        fullName: data.fullName,
+        role: data.role,
+        avatar: data.avatar,
+      };
 
       const res = await fetch(`${process.env.NEXT_PUBLIC_BASE_API}/signup`, {
         method: "POST",
@@ -119,7 +129,6 @@ export default function AddUserForm({
         description: err.message || "Không thể thêm người dùng.",
         variant: "destructive",
       });
-      console.log(err);
     }
   };
 

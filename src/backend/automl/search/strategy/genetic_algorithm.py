@@ -2,7 +2,7 @@ import copy
 import logging
 import random
 from datetime import datetime
-from typing import List, Dict, Any, Tuple
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -20,12 +20,12 @@ class GeneticAlgorithm(SearchStrategy):
     """Triển khai Thuật toán di truyền (Genetic Algorithm) để tối ưu hóa siêu tham số"""
 
     @staticmethod
-    def get_default_config() -> Dict[str, Any]:
+    def get_default_config() -> dict[str, Any]:
         """Lấy cấu hình mặc định bằng cách tải từ file YAML."""
         config = SearchStrategy.get_default_config()
 
         # Tải cấu hình GA từ file YAML (sử dụng method từ base class)
-        ga_config = SearchStrategy._load_yaml_config('genetic_algorithm')
+        ga_config = SearchStrategy._load_yaml_config("genetic_algorithm")
 
         if ga_config:
             config.update(ga_config)
@@ -44,13 +44,13 @@ class GeneticAlgorithm(SearchStrategy):
         self._total_evaluations = 0
 
     @staticmethod
-    def _make_hashable(individual: Dict[str, float]) -> tuple:
+    def _make_hashable(individual: dict[str, float]) -> tuple:
         """Chuyển đổi cá thể sang định dạng có thể hash để lưu vào bộ nhớ đệm."""
         return tuple(sorted(individual.items()))
 
-    def _encode_parameters(self, param_grid: Dict[str, Any]) -> Dict[str, Any]:
+    def _encode_parameters(self, param_grid: dict[str, Any]) -> dict[str, Any]:
         """Mã hóa lưới tham số cho thuật toán di truyền.
-        
+
         Hỗ trợ list-of-dicts format. Mỗi grid có encoding riêng để đảm bảo
         decode đúng giá trị.
         """
@@ -76,32 +76,35 @@ class GeneticAlgorithm(SearchStrategy):
         # Tạo encoding riêng cho từng grid
         self._grid_encodings = []
         for grid_idx, single_grid in enumerate(param_grid_list):
-            grid_encoding = {
-                'param_bounds': {},
-                'param_types': {}
-            }
+            grid_encoding = {"param_bounds": {}, "param_types": {}}
             for param_name, param_values in single_grid.items():
                 if isinstance(param_values, list):
-                    grid_encoding['param_bounds'][param_name] = (0, len(param_values) - 1)
-                    grid_encoding['param_types'][param_name] = ('categorical', param_values)
+                    grid_encoding["param_bounds"][param_name] = (
+                        0,
+                        len(param_values) - 1,
+                    )
+                    grid_encoding["param_types"][param_name] = (
+                        "categorical",
+                        param_values,
+                    )
                 elif isinstance(param_values, tuple) and len(param_values) == 2:
                     min_val, max_val = param_values
-                    grid_encoding['param_bounds'][param_name] = (min_val, max_val)
+                    grid_encoding["param_bounds"][param_name] = (min_val, max_val)
                     if isinstance(min_val, int) and isinstance(max_val, int):
-                        grid_encoding['param_types'][param_name] = ('integer', None)
+                        grid_encoding["param_types"][param_name] = ("integer", None)
                     else:
-                        grid_encoding['param_types'][param_name] = ('continuous', None)
+                        grid_encoding["param_types"][param_name] = ("continuous", None)
             self._grid_encodings.append(grid_encoding)
 
         # Tạo param_bounds và param_types tổng hợp (cho compatibility)
         # Sử dụng grid đầu tiên làm mặc định
         if self._grid_encodings:
-            self.param_bounds = self._grid_encodings[0]['param_bounds'].copy()
-            self.param_types = self._grid_encodings[0]['param_types'].copy()
+            self.param_bounds = self._grid_encodings[0]["param_bounds"].copy()
+            self.param_types = self._grid_encodings[0]["param_types"].copy()
 
         return {}
 
-    def _decode_individual(self, individual: Dict[str, float]) -> Dict[str, Any]:
+    def _decode_individual(self, individual: dict[str, float]) -> dict[str, Any]:
         """Giải mã cá thể từ biểu diễn di truyền sang giá trị tham số thực tế."""
         # Kiểm tra bộ nhớ đệm trước
         cache_key = self._make_hashable(individual)
@@ -111,17 +114,17 @@ class GeneticAlgorithm(SearchStrategy):
         decoded = {}
 
         # Lấy grid_idx từ cá thể
-        grid_idx = int(individual.get('_grid_idx', 0))
+        grid_idx = int(individual.get("_grid_idx", 0))
 
         # Lấy encoding của grid này
-        if hasattr(self, '_grid_encodings') and grid_idx < len(self._grid_encodings):
+        if hasattr(self, "_grid_encodings") and grid_idx < len(self._grid_encodings):
             grid_encoding = self._grid_encodings[grid_idx]
-            param_types = grid_encoding['param_types']
+            param_types = grid_encoding["param_types"]
         else:
             param_types = self.param_types
 
         for param_name, value in individual.items():
-            if param_name == '_grid_idx':
+            if param_name == "_grid_idx":
                 continue
 
             if param_name not in param_types:
@@ -129,11 +132,11 @@ class GeneticAlgorithm(SearchStrategy):
 
             param_type, param_values = param_types[param_name]
 
-            if param_type == 'categorical':
+            if param_type == "categorical":
                 index = int(round(value))
                 index = max(0, min(index, len(param_values) - 1))
                 decoded[param_name] = param_values[index]
-            elif param_type == 'integer':
+            elif param_type == "integer":
                 decoded[param_name] = int(round(value))
             else:
                 decoded[param_name] = float(value)
@@ -142,21 +145,23 @@ class GeneticAlgorithm(SearchStrategy):
         self._decode_cache[cache_key] = decoded
         return decoded
 
-    def _create_individual(self, grid_idx: int = None) -> Dict[str, float]:
+    def _create_individual(self, grid_idx: int = None) -> dict[str, float]:
         """Tạo một cá thể cho thuật toán di truyền.
-        
+
         Args:
             grid_idx: Chỉ số của grid trong list-of-dicts. Nếu None, chọn ngẫu nhiên.
-            
+
         Returns:
             Dict[str, float]: Cá thể với các tham số được mã hóa.
-            
+
         Raises:
             ValueError: Nếu không có grid nào được định nghĩa.
         """
         # Kiểm tra xem có grid nào không
         if self._num_grids == 0:
-            raise ValueError("Không thể tạo cá thể: không có grid tham số nào được định nghĩa.")
+            raise ValueError(
+                "Không thể tạo cá thể: không có grid tham số nào được định nghĩa."
+            )
 
         individual = {}
 
@@ -165,12 +170,12 @@ class GeneticAlgorithm(SearchStrategy):
             grid_idx = random.randint(0, self._num_grids - 1)
 
         # Lưu grid_idx vào cá thể
-        individual['_grid_idx'] = float(grid_idx)
+        individual["_grid_idx"] = float(grid_idx)
 
         # Lấy encoding của grid được chọn
-        if hasattr(self, '_grid_encodings') and grid_idx < len(self._grid_encodings):
+        if hasattr(self, "_grid_encodings") and grid_idx < len(self._grid_encodings):
             grid_encoding = self._grid_encodings[grid_idx]
-            param_bounds = grid_encoding['param_bounds']
+            param_bounds = grid_encoding["param_bounds"]
         else:
             param_bounds = self.param_bounds
 
@@ -180,12 +185,14 @@ class GeneticAlgorithm(SearchStrategy):
 
         return individual
 
-    def _create_smart_population(self, size: int) -> List[Dict[str, float]]:
+    def _create_smart_population(self, size: int) -> list[dict[str, float]]:
         """Tạo quần thể ban đầu sử dụng khởi tạo thông minh."""
         population = []
 
         # Phân bổ đều số cá thể cho mỗi grid
-        individuals_per_grid = max(1, size // self._num_grids) if self._num_grids > 0 else size
+        individuals_per_grid = (
+            max(1, size // self._num_grids) if self._num_grids > 0 else size
+        )
 
         for grid_idx in range(self._num_grids):
             for _ in range(individuals_per_grid):
@@ -199,8 +206,14 @@ class GeneticAlgorithm(SearchStrategy):
 
         return population[:size]
 
-    def _evaluate_individual(self, individual: Dict[str, float], model: BaseEstimator, X: np.ndarray,
-                             y: np.ndarray, cv_n_jobs: int = None) -> dict:
+    def _evaluate_individual(
+        self,
+        individual: dict[str, float],
+        model: BaseEstimator,
+        X: np.ndarray,
+        y: np.ndarray,
+        cv_n_jobs: int = None,
+    ) -> dict:
         """Đánh giá cá thể sử dụng cross-validation với bộ nhớ đệm toàn cục.
 
         cv_n_jobs: n_jobs cho cross_validate BÊN TRONG. Khi được gọi từ đường
@@ -210,7 +223,7 @@ class GeneticAlgorithm(SearchStrategy):
         self._total_evaluations += 1
 
         # Kiểm tra bộ nhớ đệm toàn cục nếu được bật
-        if self.config.get('use_global_cache', True):
+        if self.config.get("use_global_cache", True):
             cache_key = self._make_hashable(individual)
             if cache_key in self._evaluation_cache:
                 self._cache_hits += 1
@@ -222,32 +235,37 @@ class GeneticAlgorithm(SearchStrategy):
             model.set_params(**params)
 
             # Lấy cấu hình điểm số (dict từ engine.py)
-            scoring_config = self.config.get('scoring')
+            scoring_config = self.config.get("scoring")
             scoring_metrics = scoring_config
-            metric_names = list(scoring_config.keys())
 
             # sử dụng cross_validate thay vì cross_val_score để lấy điểm của mỗi fold
             scores = cross_validate(
-                model, X, y,
-                cv=self.config['cv'],
+                model,
+                X,
+                y,
+                cv=self.config["cv"],
                 scoring=scoring_metrics,
-                n_jobs=cv_n_jobs if cv_n_jobs is not None else self.config['n_jobs'],
-                error_score=self.config['error_score']
+                n_jobs=cv_n_jobs if cv_n_jobs is not None else self.config["n_jobs"],
+                error_score=self.config["error_score"],
             )
 
             # Xây dựng dictionary kết quả
-            result = {}
-            for metric_name in metric_names:
-                result[metric_name] = float(np.mean(scores[f'test_{metric_name}']))
+            result = self._extract_cv_mean_scores(
+                scores,
+                scoring_config,
+                self.config.get("metric_sort", "accuracy"),
+            )
 
             # Lưu kết quả vào bộ nhớ đệm nếu được bật
-            if self.config.get('use_global_cache', True):
+            if self.config.get("use_global_cache", True):
                 cache_key = self._make_hashable(individual)
                 # Quản lý kích thước bộ nhớ đệm
-                max_cache_size = self.config.get('max_cache_size', 500)
+                max_cache_size = self.config.get("max_cache_size", 500)
                 if len(self._evaluation_cache) >= max_cache_size:
                     # Loại bỏ các mục cũ nhất (FIFO)
-                    keys_to_remove = list(self._evaluation_cache.keys())[:max_cache_size // 4]
+                    keys_to_remove = list(self._evaluation_cache.keys())[
+                        : max_cache_size // 4
+                    ]
                     for key in keys_to_remove:
                         del self._evaluation_cache[key]
                 self._evaluation_cache[cache_key] = result.copy()
@@ -257,29 +275,31 @@ class GeneticAlgorithm(SearchStrategy):
         except (ValueError, TypeError, KeyError):
             # Trả về giá trị 0 cho tất cả chỉ số khi đánh giá thất bại
             # Lỗi thường gặp: tham số không hợp lệ, kiểu không khớp, thiếu key
-            scoring = self.config.get('scoring', {})
+            scoring = self.config.get("scoring", {})
             if isinstance(scoring, dict) and scoring:
-                return {metric: -float('inf') for metric in scoring.keys()}
+                return {metric: -float("inf") for metric in scoring.keys()}
             else:
-                return {'accuracy': -float('inf')}
+                return {"accuracy": -float("inf")}
 
-    def _get_adaptive_tournament_size(self, diversity: float, population_size: int) -> int:
+    def _get_adaptive_tournament_size(
+        self, diversity: float, population_size: int
+    ) -> int:
         """
         Tính tournament size thích ứng dựa trên diversity.
-        
+
         - Diversity thấp: giảm tournament size để tăng exploration
         - Diversity cao: tăng tournament size để tăng exploitation
-        
+
         Args:
             diversity: Độ đa dạng của quần thể (0-1)
             population_size: Kích thước quần thể
-            
+
         Returns:
             int: Tournament size tối ưu
         """
-        base_size = self.config.get('tournament_size', 3)
+        base_size = self.config.get("tournament_size", 3)
 
-        if not self.config.get('adaptive_tournament_size', False):
+        if not self.config.get("adaptive_tournament_size", False):
             return min(base_size, population_size)
 
         if diversity < 0.1:
@@ -293,10 +313,15 @@ class GeneticAlgorithm(SearchStrategy):
 
         return min(adaptive_size, population_size)
 
-    def _tournament_selection(self, population: List[Dict[str, float]], fitness_scores, diversity: float = None) -> Dict[str, float]:
+    def _tournament_selection(
+        self,
+        population: list[dict[str, float]],
+        fitness_scores,
+        diversity: float = None,
+    ) -> dict[str, float]:
         """
         Chọn cá thể sử dụng chọn lọc đấu trường với tối ưu hóa numpy.
-        
+
         Args:
             population: Danh sách các cá thể
             fitness_scores: Điểm fitness của từng cá thể
@@ -312,48 +337,53 @@ class GeneticAlgorithm(SearchStrategy):
             raise ValueError("Điểm độ thích nghi không thể trống")
 
         # Sử dụng adaptive tournament size nếu có diversity
-        if diversity is not None and self.config.get('adaptive_tournament_size', False):
-            tournament_size = self._get_adaptive_tournament_size(diversity, len(population))
+        if diversity is not None and self.config.get("adaptive_tournament_size", False):
+            tournament_size = self._get_adaptive_tournament_size(
+                diversity, len(population)
+            )
         else:
-            tournament_size = min(self.config['tournament_size'], len(population))
+            tournament_size = min(self.config["tournament_size"], len(population))
 
         # Sử dụng numpy để chọn nhanh hơn
-        tournament_indices = np.random.choice(len(population), size=tournament_size, replace=False)
+        tournament_indices = np.random.choice(
+            len(population), size=tournament_size, replace=False
+        )
         winner_index = tournament_indices[np.argmax(fitness_scores[tournament_indices])]
         # Trả về bản sao nông vì sẽ deepcopy khi cần
         return population[winner_index].copy()
 
-    def _crossover(self, parent1: Dict[str, float], parent2: Dict[str, float]) -> Tuple[
-        Dict[str, float], Dict[str, float]]:
+    def _crossover(
+        self, parent1: dict[str, float], parent2: dict[str, float]
+    ) -> tuple[dict[str, float], dict[str, float]]:
         """Thực hiện lai ghép giữa hai cá thể sử dụng chiến lược khác nhau dựa trên kiểu tham số.
-        
+
         Chỉ thực hiện lai ghép nếu hai cá thể thuộc cùng một grid group.
         """
-        if random.random() > self.config['crossover_rate']:
+        if random.random() > self.config["crossover_rate"]:
             return parent1.copy(), parent2.copy()
 
         # Kiểm tra xem hai cá thể có thuộc cùng grid group không
-        grid_idx1 = int(parent1.get('_grid_idx', 0))
-        grid_idx2 = int(parent2.get('_grid_idx', 0))
+        grid_idx1 = int(parent1.get("_grid_idx", 0))
+        grid_idx2 = int(parent2.get("_grid_idx", 0))
 
         # Nếu khác grid group, không lai ghép - trả về bản sao
         if grid_idx1 != grid_idx2:
             return parent1.copy(), parent2.copy()
 
         # Lấy encoding của grid
-        if hasattr(self, '_grid_encodings') and grid_idx1 < len(self._grid_encodings):
+        if hasattr(self, "_grid_encodings") and grid_idx1 < len(self._grid_encodings):
             grid_encoding = self._grid_encodings[grid_idx1]
-            param_bounds = grid_encoding['param_bounds']
-            param_types = grid_encoding['param_types']
+            param_bounds = grid_encoding["param_bounds"]
+            param_types = grid_encoding["param_types"]
         else:
             param_bounds = self.param_bounds
             param_types = self.param_types
 
         # Lai ghép đơn giản siêu nhanh
-        if self.config.get('simple_crossover', False):
+        if self.config.get("simple_crossover", False):
             child1 = parent1.copy()
             child2 = parent2.copy()
-            params = [p for p in parent1.keys() if p != '_grid_idx']
+            params = [p for p in parent1 if p != "_grid_idx"]
             if len(params) > 1:
                 swap_point = len(params) // 2
                 for param in params[:swap_point]:
@@ -363,8 +393,8 @@ class GeneticAlgorithm(SearchStrategy):
         child1 = parent1.copy()
         child2 = parent2.copy()
 
-        for param_name in parent1.keys():
-            if param_name == '_grid_idx':
+        for param_name in parent1:
+            if param_name == "_grid_idx":
                 continue
 
             if param_name not in param_types:
@@ -372,11 +402,14 @@ class GeneticAlgorithm(SearchStrategy):
 
             param_type, param_values = param_types[param_name]
 
-            if param_type == 'categorical':
+            if param_type == "categorical":
                 if random.random() < 0.5:
-                    child1[param_name], child2[param_name] = child2[param_name], child1[param_name]
+                    child1[param_name], child2[param_name] = (
+                        child2[param_name],
+                        child1[param_name],
+                    )
             else:
-                alpha = self.config.get('alpha', 0.5)
+                alpha = self.config.get("alpha", 0.5)
                 min_val = min(parent1[param_name], parent2[param_name])
                 max_val = max(parent1[param_name], parent2[param_name])
                 range_val = max_val - min_val
@@ -393,29 +426,35 @@ class GeneticAlgorithm(SearchStrategy):
 
         return child1, child2
 
-    def _mutate(self, individual: Dict[str, float], generation: int = 0, max_generation: int = None) -> Dict[
-        str, float]:
+    def _mutate(
+        self,
+        individual: dict[str, float],
+        generation: int = 0,
+        max_generation: int = None,
+    ) -> dict[str, float]:
         """Đột biến cá thể với cường độ đột biến thích nghi."""
         mutated = individual.copy()
 
         # Lấy grid_idx và encoding tương ứng
-        grid_idx = int(individual.get('_grid_idx', 0))
-        if hasattr(self, '_grid_encodings') and grid_idx < len(self._grid_encodings):
+        grid_idx = int(individual.get("_grid_idx", 0))
+        if hasattr(self, "_grid_encodings") and grid_idx < len(self._grid_encodings):
             grid_encoding = self._grid_encodings[grid_idx]
-            param_bounds = grid_encoding['param_bounds']
-            param_types = grid_encoding['param_types']
+            param_bounds = grid_encoding["param_bounds"]
+            param_types = grid_encoding["param_types"]
         else:
             param_bounds = self.param_bounds
             param_types = self.param_types
 
         # Tỷ lệ đột biến thích nghi
         if max_generation and max_generation > 0:
-            adaptive_rate = self.config['mutation_rate'] * (1 - generation / max_generation)
+            adaptive_rate = self.config["mutation_rate"] * (
+                1 - generation / max_generation
+            )
         else:
-            adaptive_rate = self.config['mutation_rate']
+            adaptive_rate = self.config["mutation_rate"]
 
         for param_name in mutated.keys():
-            if param_name == '_grid_idx':
+            if param_name == "_grid_idx":
                 continue
 
             if param_name not in param_bounds or param_name not in param_types:
@@ -426,27 +465,31 @@ class GeneticAlgorithm(SearchStrategy):
                 param_type, param_values = param_types[param_name]
                 current_val = mutated[param_name]
 
-                if param_type == 'categorical':
+                if param_type == "categorical":
                     possible_values = list(range(int(min_val), int(max_val) + 1))
                     if len(possible_values) > 1:
                         possible_values.remove(int(round(current_val)))
                         mutated[param_name] = float(random.choice(possible_values))
                 else:
                     mutation_strength = (max_val - min_val) * (
-                        0.2 * (1 - generation / (max_generation + 1)) if max_generation else 0.1)
+                        0.2 * (1 - generation / (max_generation + 1))
+                        if max_generation
+                        else 0.1
+                    )
                     new_val = current_val + random.gauss(0, mutation_strength)
                     mutated[param_name] = max(min_val, min(new_val, max_val))
 
         return mutated
 
-    def _inject_diversity(self, population: List[Dict[str, float]], injection_rate: float = 0.3) -> List[
-        Dict[str, float]]:
+    def _inject_diversity(
+        self, population: list[dict[str, float]], injection_rate: float = 0.3
+    ) -> list[dict[str, float]]:
         """Tiêm các cá thể ngẫu nhiên mới để tăng đa dạng khi quần thể trì trệ.
-        
+
         Args:
             population: Quần thể hiện tại
             injection_rate: Tỷ lệ quần thể được thay thế bằng các cá thể ngẫu nhiên mới
-        
+
         Returns:
             Quần thể đã tiêm đa dạng
         """
@@ -466,31 +509,39 @@ class GeneticAlgorithm(SearchStrategy):
 
         return new_population
 
-    def _create_next_generation(self, population: List[Dict[str, float]], fitness_scores: np.ndarray, diversity: float,
-                                generation: int, population_size: int,
-                                max_generation: int = None) -> List[Dict[str, float]]:
+    def _create_next_generation(
+        self,
+        population: list[dict[str, float]],
+        fitness_scores: np.ndarray,
+        diversity: float,
+        generation: int,
+        population_size: int,
+        max_generation: int = None,
+    ) -> list[dict[str, float]]:
         """Tạo thế hệ tiếp theo từ quần thể hiện tại.
-        
+
         Args:
             population: Quần thể hiện tại
             fitness_scores: Điểm fitness của từng cá thể
             diversity: Độ đa dạng của quần thể
             generation: Số thế hệ hiện tại
             population_size: Kích thước quần thể mục tiêu
-            
+
         Returns:
             Quần thể mới cho thế hệ tiếp theo
         """
         new_population = []
 
         # Elitism: Giữ lại các cá thể tốt nhất
-        if self.config['elite_size'] > 0:
-            elite_indices = np.argpartition(fitness_scores, -self.config['elite_size'])[-self.config['elite_size']:]
+        if self.config["elite_size"] > 0:
+            elite_indices = np.argpartition(fitness_scores, -self.config["elite_size"])[
+                -self.config["elite_size"] :
+            ]
             for idx in elite_indices:
                 new_population.append(population[idx].copy())
 
         # Tỷ lệ lai ghép thích ứng dựa trên đa dạng
-        adaptive_crossover_rate = self.config['crossover_rate']
+        adaptive_crossover_rate = self.config["crossover_rate"]
         if diversity < 0.1:
             adaptive_crossover_rate = min(1.0, adaptive_crossover_rate * 1.2)
 
@@ -501,15 +552,19 @@ class GeneticAlgorithm(SearchStrategy):
             parent2 = self._tournament_selection(population, fitness_scores, diversity)
 
             # Tạm thời sử dụng tỷ lệ lai ghép thích ứng
-            original_rate = self.config['crossover_rate']
-            self.config['crossover_rate'] = adaptive_crossover_rate
+            original_rate = self.config["crossover_rate"]
+            self.config["crossover_rate"] = adaptive_crossover_rate
             child1, child2 = self._crossover(parent1, parent2)
-            self.config['crossover_rate'] = original_rate
+            self.config["crossover_rate"] = original_rate
 
             # Áp dụng đột biến
             # Số thế hệ THỰC TẾ của lần search này (có thể đã bị trần cắt bớt) —
             # dùng config sẽ làm annealing tỉ lệ đột biến sai nhịp
-            max_gen = max_generation if max_generation is not None else self.config['generation']
+            max_gen = (
+                max_generation
+                if max_generation is not None
+                else self.config["generation"]
+            )
             child1 = self._mutate(child1, generation, max_gen)
             child2 = self._mutate(child2, generation, max_gen)
 
@@ -520,16 +575,18 @@ class GeneticAlgorithm(SearchStrategy):
 
         return new_population
 
-    def _calculate_population_diversity_fast(self, population: List[Dict[str, float]]) -> float:
+    def _calculate_population_diversity_fast(
+        self, population: list[dict[str, float]]
+    ) -> float:
         """
         Tính độ đa dạng của quần thể với độ phức tạp O(n).
-        
+
         Sử dụng variance của mỗi parameter thay vì so sánh pairwise.
         Nhanh hơn nhiều cho quần thể lớn.
-        
+
         Args:
             population: Danh sách các cá thể
-            
+
         Returns:
             float: Độ đa dạng normalized (0-1)
         """
@@ -539,7 +596,7 @@ class GeneticAlgorithm(SearchStrategy):
         # Nhóm cá thể theo grid
         grid_groups = {}
         for ind in population:
-            grid_idx = int(ind.get('_grid_idx', 0))
+            grid_idx = int(ind.get("_grid_idx", 0))
             if grid_idx not in grid_groups:
                 grid_groups[grid_idx] = []
             grid_groups[grid_idx].append(ind)
@@ -552,9 +609,11 @@ class GeneticAlgorithm(SearchStrategy):
                 continue
 
             # Lấy encoding của grid
-            if hasattr(self, '_grid_encodings') and grid_idx < len(self._grid_encodings):
-                param_bounds = self._grid_encodings[grid_idx]['param_bounds']
-                param_types = self._grid_encodings[grid_idx]['param_types']
+            if hasattr(self, "_grid_encodings") and grid_idx < len(
+                self._grid_encodings
+            ):
+                param_bounds = self._grid_encodings[grid_idx]["param_bounds"]
+                param_types = self._grid_encodings[grid_idx]["param_types"]
             else:
                 param_bounds = self.param_bounds
                 param_types = self.param_types
@@ -562,13 +621,13 @@ class GeneticAlgorithm(SearchStrategy):
             # Tính variance cho mỗi parameter
             param_diversities = []
             for param_name in param_bounds.keys():
-                if param_name == '_grid_idx':
+                if param_name == "_grid_idx":
                     continue
 
                 values = [ind.get(param_name, 0) for ind in group]
-                param_type, _ = param_types.get(param_name, ('continuous', None))
+                param_type, _ = param_types.get(param_name, ("continuous", None))
 
-                if param_type == 'categorical':
+                if param_type == "categorical":
                     # Cho categorical: tính tỷ lệ unique values
                     unique_ratio = len(set(values)) / len(values)
                     param_diversities.append(unique_ratio)
@@ -576,7 +635,9 @@ class GeneticAlgorithm(SearchStrategy):
                     # Cho continuous/integer: tính normalized variance
                     min_val, max_val = param_bounds[param_name]
                     if max_val != min_val:
-                        normalized_values = [(v - min_val) / (max_val - min_val) for v in values]
+                        normalized_values = [
+                            (v - min_val) / (max_val - min_val) for v in values
+                        ]
                         variance = np.var(normalized_values)
                         # Chuẩn hóa phương sai (phương sai lý thuyết tối đa là 0.25 đối với phân phối đều)
                         param_diversities.append(min(1.0, variance * 4))
@@ -590,18 +651,24 @@ class GeneticAlgorithm(SearchStrategy):
 
         # Thêm diversity từ việc có nhiều grids
         if len(grid_groups) > 1:
-            grid_diversity = len(grid_groups) / self._num_grids if self._num_grids > 0 else 0
-            weighted_diversity = total_diversity / total_weight if total_weight > 0 else 0
+            grid_diversity = (
+                len(grid_groups) / self._num_grids if self._num_grids > 0 else 0
+            )
+            weighted_diversity = (
+                total_diversity / total_weight if total_weight > 0 else 0
+            )
             total_diversity = weighted_diversity * 0.7 + grid_diversity * 0.3
         elif total_weight > 0:
             total_diversity = total_diversity / total_weight
 
         return total_diversity
 
-    def _calculate_population_diversity(self, population: List[Dict[str, float]]) -> float:
+    def _calculate_population_diversity(
+        self, population: list[dict[str, float]]
+    ) -> float:
         """
         Tính độ đa dạng của quần thể.
-        
+
         Tự động chọn phương pháp tối ưu dựa trên kích thước quần thể:
         - Quần thể nhỏ (< 20): sử dụng pairwise comparison (chính xác hơn)
         - Quần thể lớn (>= 20): sử dụng variance-based (nhanh hơn)
@@ -610,7 +677,7 @@ class GeneticAlgorithm(SearchStrategy):
             return 0.0
 
         # Sử dụng fast method cho quần thể lớn
-        use_fast = self.config.get('fast_diversity', True)
+        use_fast = self.config.get("fast_diversity", True)
         if use_fast and len(population) >= 20:
             return self._calculate_population_diversity_fast(population)
 
@@ -621,16 +688,18 @@ class GeneticAlgorithm(SearchStrategy):
         for i in range(len(population)):
             for j in range(i + 1, len(population)):
                 # Chỉ so sánh cá thể cùng grid
-                grid_i = int(population[i].get('_grid_idx', 0))
-                grid_j = int(population[j].get('_grid_idx', 0))
+                grid_i = int(population[i].get("_grid_idx", 0))
+                grid_j = int(population[j].get("_grid_idx", 0))
 
                 if grid_i != grid_j:
                     distance = 1.0  # Khác grid = khoảng cách tối đa
                 else:
                     # Lấy encoding của grid
-                    if hasattr(self, '_grid_encodings') and grid_i < len(self._grid_encodings):
-                        param_bounds = self._grid_encodings[grid_i]['param_bounds']
-                        param_types = self._grid_encodings[grid_i]['param_types']
+                    if hasattr(self, "_grid_encodings") and grid_i < len(
+                        self._grid_encodings
+                    ):
+                        param_bounds = self._grid_encodings[grid_i]["param_bounds"]
+                        param_types = self._grid_encodings[grid_i]["param_types"]
                     else:
                         param_bounds = self.param_bounds
                         param_types = self.param_types
@@ -638,19 +707,27 @@ class GeneticAlgorithm(SearchStrategy):
                     distance = 0
                     param_count = 0
                     for param_name in population[i].keys():
-                        if param_name == '_grid_idx':
+                        if param_name == "_grid_idx":
                             continue
                         if param_name not in param_types:
                             continue
 
                         param_type, _ = param_types[param_name]
                         param_count += 1
-                        if param_type == 'categorical':
-                            distance += 0 if population[i][param_name] == population[j][param_name] else 1
+                        if param_type == "categorical":
+                            distance += (
+                                0
+                                if population[i][param_name]
+                                == population[j][param_name]
+                                else 1
+                            )
                         else:
                             min_val, max_val = param_bounds[param_name]
                             if max_val != min_val:
-                                normalized_diff = abs(population[i][param_name] - population[j][param_name]) / (max_val - min_val)
+                                normalized_diff = abs(
+                                    population[i][param_name]
+                                    - population[j][param_name]
+                                ) / (max_val - min_val)
                                 distance += normalized_diff
 
                     if param_count > 0:
@@ -661,13 +738,18 @@ class GeneticAlgorithm(SearchStrategy):
 
         return total_distance / count if count > 0 else 0.0
 
-    def _evaluate_population_parallel(self, population: List[Dict[str, float]], model: BaseEstimator, X: np.ndarray,
-                                      y: np.ndarray) -> List[Dict[str, float]]:
+    def _evaluate_population_parallel(
+        self,
+        population: list[dict[str, float]],
+        model: BaseEstimator,
+        X: np.ndarray,
+        y: np.ndarray,
+    ) -> list[dict[str, float]]:
         """Đánh giá tất cả các cá thể song song với tối ưu hóa thông minh.
-        
+
         Giới hạn thời gian được kiểm tra ở cấp độ thế hệ trong search(), không phải ở đây.
         """
-        n_jobs = self.config.get('n_jobs', -1)
+        n_jobs = self.config.get("n_jobs", -1)
 
         # Nếu n_jobs = 1, chạy tuần tự
         if n_jobs == 1:
@@ -677,16 +759,17 @@ class GeneticAlgorithm(SearchStrategy):
             return results
 
         # Quyết định song song thông minh dựa trên kích thước quần thể và số fold CV
-        cv = self.config.get('cv', 5)
-        if hasattr(cv, 'n_splits'):
+        cv = self.config.get("cv", 5)
+        if hasattr(cv, "n_splits"):
             cv_folds = cv.n_splits
-        elif hasattr(cv, 'get_n_splits'):
+        elif hasattr(cv, "get_n_splits"):
             cv_folds = cv.get_n_splits()
         else:
             cv_folds = cv if isinstance(cv, int) else 5
 
         if n_jobs == -1:
             import multiprocessing
+
             n_jobs = multiprocessing.cpu_count()
 
         # Tính tổng đơn vị công việc (quần thể * cv_folds)
@@ -697,11 +780,14 @@ class GeneticAlgorithm(SearchStrategy):
             optimal_jobs = min(n_jobs, len(population))
             # loky (process) mặc định: sklearn fit phần lớn bị GIL khóa nên
             # threading gần như không tăng tốc; inner cv PHẢI n_jobs=1
-            backend = self.config.get('parallel_backend') or 'loky'
+            backend = self.config.get("parallel_backend") or "loky"
 
             results = Parallel(n_jobs=optimal_jobs, backend=backend)(
-                delayed(self._evaluate_individual)(individual, copy.deepcopy(model), X, y, 1)
-                for individual in population)
+                delayed(self._evaluate_individual)(
+                    individual, copy.deepcopy(model), X, y, 1
+                )
+                for individual in population
+            )
             return results
         else:
             # Tuần tự cho quần thể nhỏ
@@ -710,44 +796,51 @@ class GeneticAlgorithm(SearchStrategy):
                 results.append(self._evaluate_individual(individual, model, X, y))
             return results
 
-    def search(self, model: BaseEstimator, param_grid: List[Dict[str, Any]], X: np.ndarray, y: np.ndarray, **kwargs):
+    def search(
+        self,
+        model: BaseEstimator,
+        param_grid: list[dict[str, Any]],
+        X: np.ndarray,
+        y: np.ndarray,
+        **kwargs,
+    ):
         """Thực thi tìm kiếm thuật toán di truyền với các tính năng vòng lặp nâng cao.
 
-               Args:
-                   model: The estimator to search over
-                   param_grid: Dictionary with parameters names as keys and ranges/lists as values
-                   X: Training data features
-                   y: Training data targets
-                   **kwargs: Additional configuration parameters
+        Args:
+            model: The estimator to search over
+            param_grid: Dictionary with parameters names as keys and ranges/lists as values
+            X: Training data features
+            y: Training data targets
+            **kwargs: Additional configuration parameters
 
-               Returns:
-                   tuple: (best_params, best_score, best_all_scores, cv_results)
-                       - best_params: Từ điển các tham số tốt nhất
-                       - best_score: Điểm số tốt nhất đạt được
-                       - best_all_scores: Từ điển với tất cả điểm số metric cho tham số tốt nhất
-                       - cv_results: Từ điển với kết quả cross-validation chi tiết
+        Returns:
+            tuple: (best_params, best_score, best_all_scores, cv_results)
+                - best_params: Từ điển các tham số tốt nhất
+                - best_score: Điểm số tốt nhất đạt được
+                - best_all_scores: Từ điển với tất cả điểm số metric cho tham số tốt nhất
+                - cv_results: Từ điển với kết quả cross-validation chi tiết
         """
         # Cập nhật cấu hình của thuật toán với bất kỳ đối số keyword nào được cung cấp
         explicit = {k: v for k, v in kwargs.items() if k in self.config}
         self.set_config(**explicit)
-        if not hasattr(self, '_explicit_config_keys'):
+        if not hasattr(self, "_explicit_config_keys"):
             self._explicit_config_keys = set()
         self._explicit_config_keys |= set(explicit)
         self._start_timer()  # Bắt đầu đếm thời gian
 
         # Đặt seed ngẫu nhiên để tái tạo được kết quả
-        if self.config.get('random_state') is not None:
-            random.seed(self.config['random_state'])
-            np.random.seed(self.config['random_state'])
+        if self.config.get("random_state") is not None:
+            random.seed(self.config["random_state"])
+            np.random.seed(self.config["random_state"])
 
         # Xác thực cấu hình
-        if self.config['population_size'] < 2:
+        if self.config["population_size"] < 2:
             raise ValueError("Population size must be at least 2")
-        if self.config['elite_size'] >= self.config['population_size']:
-            self.config['elite_size'] = max(1, self.config['population_size'] // 4)
+        if self.config["elite_size"] >= self.config["population_size"]:
+            self.config["elite_size"] = max(1, self.config["population_size"] // 4)
 
         # Tạo đường dẫn file log sử dụng phương thức lớp cơ sở
-        log_file = self.create_log_file_path(model, 'genetic_algorithm')
+        log_file = self.create_log_file_path(model, "genetic_algorithm")
 
         # Chuyển đổi lưới siêu tham số sang định dạng phù hợp cho thuật toán di truyền
         self._encode_parameters(param_grid)
@@ -773,28 +866,32 @@ class GeneticAlgorithm(SearchStrategy):
         # Điều chỉnh kích thước quần thể dựa trên độ phức tạp không gian tham số.
         # KHÔNG áp dụng khi caller đặt population_size tường minh — khối này
         # lấy min() nên vẫn cắt budget người dùng xuống (vd. yêu cầu 20 → 8).
-        explicit_keys = getattr(self, '_explicit_config_keys', set())
+        explicit_keys = getattr(self, "_explicit_config_keys", set())
         if (
-            'population_size' not in explicit_keys
-            and self.config.get('adaptive_population', True)
-            and self.config.get('fast_mode', True)
+            "population_size" not in explicit_keys
+            and self.config.get("adaptive_population", True)
+            and self.config.get("fast_mode", True)
         ):
             # Tính kích thước không gian tham số
             param_space_size = 1
             for param_name, (min_val, max_val) in self.param_bounds.items():
                 param_type, param_values = self.param_types[param_name]
-                if param_type == 'categorical':
-                    param_space_size *= (max_val - min_val + 1)
+                if param_type == "categorical":
+                    param_space_size *= max_val - min_val + 1
                 else:
                     param_space_size *= 10  # Ước lượng cho continuous
 
             # Điều chỉnh kích thước quần thể với giới hạn chặt hơn để runtime nhanh hơn
-            min_pop = self.config.get('min_population', 8)
-            max_pop = self.config.get('max_population', 25)
-            adaptive_pop_size = min(max_pop, max(min_pop, int(np.log(param_space_size) * 2)))
-            actual_population_size = min(adaptive_pop_size, self.config['population_size'])
+            min_pop = self.config.get("min_population", 8)
+            max_pop = self.config.get("max_population", 25)
+            adaptive_pop_size = min(
+                max_pop, max(min_pop, int(np.log(param_space_size) * 2))
+            )
+            actual_population_size = min(
+                adaptive_pop_size, self.config["population_size"]
+            )
         else:
-            actual_population_size = self.config['population_size']
+            actual_population_size = self.config["population_size"]
 
         # Tự động điều chỉnh cho không gian categorical nhỏ.
         #
@@ -804,12 +901,16 @@ class GeneticAlgorithm(SearchStrategy):
         # 2. Tổng đánh giá không được vượt tổng số tổ hợp: vượt nghĩa là GA tốn
         #    hơn grid vét cạn mà vẫn chỉ xấp xỉ — đo thực tế: 54 evals vs 18,
         #    chậm gấp 5 lần grid trên cùng dataset.
-        user_set_budget = bool({'population_size', 'generation'} & explicit_keys)
+        user_set_budget = bool({"population_size", "generation"} & explicit_keys)
         # Số thế hệ dùng cho LẦN SEARCH NÀY — biến cục bộ, không ghi đè
         # self.config: instance dùng lại cho model khác phải giữ nguyên budget.
-        generations = int(self.config['generation'])
+        generations = int(self.config["generation"])
 
-        if is_all_categorical and total_grid_combinations <= 100 and not user_set_budget:
+        if (
+            is_all_categorical
+            and total_grid_combinations <= 100
+            and not user_set_budget
+        ):
             # Đây là TRẦN, chỉ có tác dụng GIẢM. Phiên bản trước nới cả chiều
             # tăng nên với không gian 42–100 tổ hợp lại chạy tới 2.4× số đánh
             # giá so với trước khi "sửa" — đúng loại lỗi nó định chữa.
@@ -829,13 +930,17 @@ class GeneticAlgorithm(SearchStrategy):
                 generations = new_gen
 
         # Tạo quần thể ban đầu sử dụng khởi tạo thông minh hoặc ngẫu nhiên
-        if self.config.get('ultra_fast_mode', False):
+        if self.config.get("ultra_fast_mode", False):
             # Trong chế độ siêu nhanh, sử dụng chủ yếu quần thể ngẫu nhiên
-            population = [self._create_individual() for _ in range(actual_population_size)]
-        elif self.config.get('init_strategy', 'smart') == 'smart':
+            population = [
+                self._create_individual() for _ in range(actual_population_size)
+            ]
+        elif self.config.get("init_strategy", "smart") == "smart":
             population = self._create_smart_population(actual_population_size)
         else:
-            population = [self._create_individual() for _ in range(actual_population_size)]
+            population = [
+                self._create_individual() for _ in range(actual_population_size)
+            ]
 
         # Danh sách để lưu lịch sử của tất cả các cá thể và điểm số của chúng qua tất cả các thế hệ
         all_individuals = []
@@ -845,12 +950,12 @@ class GeneticAlgorithm(SearchStrategy):
 
         # Khởi tạo các biến để theo dõi giải pháp tốt nhất tìm được cho đến nay
         best_individual = None
-        best_score = float('-inf')
+        best_score = float("-inf")
         best_all_scores = None  # Theo dõi tất cả metrics cho cá thể tốt nhất
 
         # Theo dõi dừng sớm
-        early_stopping_enabled = self.config.get('early_stopping_enabled', True)
-        early_stopping_patience = self.config.get('early_stopping_patience', 5)
+        early_stopping_enabled = self.config.get("early_stopping_enabled", True)
+        early_stopping_patience = self.config.get("early_stopping_patience", 5)
         generations_without_improvement = 0
         best_generation = 0
 
@@ -859,13 +964,20 @@ class GeneticAlgorithm(SearchStrategy):
         diversity_history = []
 
         # Thực thi vòng lặp chính của thuật toán di truyền
-        verbose = self.config.get('verbose', 1)
+        verbose = self.config.get("verbose", 1)
         if verbose > 0:
             logger.info(
-                f"Starting Genetic Algorithm with {actual_population_size} individuals for {generations} generations")
+                f"Starting Genetic Algorithm with {actual_population_size} individuals for {generations} generations"
+            )
             if verbose > 1:
-                logger.info(f"Early stopping: {'Enabled' if early_stopping_enabled else 'Disabled'}" +
-                            (f" (patience: {early_stopping_patience})" if early_stopping_enabled else ""))
+                logger.info(
+                    f"Early stopping: {'Enabled' if early_stopping_enabled else 'Disabled'}"
+                    + (
+                        f" (patience: {early_stopping_patience})"
+                        if early_stopping_enabled
+                        else ""
+                    )
+                )
 
         for generation in range(generations):
             # Kiểm tra time limit trước mỗi thế hệ (sử dụng base.py)
@@ -876,7 +988,7 @@ class GeneticAlgorithm(SearchStrategy):
             generation_start_time = datetime.now()
 
             # Tính đa dạng quần thể (bỏ qua trong chế độ siêu nhanh)
-            if not self.config.get('skip_diversity_check', False):
+            if not self.config.get("skip_diversity_check", False):
                 diversity = self._calculate_population_diversity(population)
                 diversity_history.append(diversity)
             else:
@@ -884,39 +996,57 @@ class GeneticAlgorithm(SearchStrategy):
                 diversity_history.append(diversity)
 
             # Chỉ báo tiến trình
-            if verbose > 0 and (verbose > 1 or generation % 5 == 0 or generation == 0 or generation == self.config[
-                'generation'] - 1):
-                logger.info(f"Thế hệ {generation + 1}/{generations} | Đa dạng: {diversity:.4f}")
+            if verbose > 0 and (
+                verbose > 1
+                or generation % 5 == 0
+                or generation == 0
+                or generation == self.config["generation"] - 1
+            ):
+                logger.info(
+                    f"Thế hệ {generation + 1}/{generations} | Đa dạng: {diversity:.4f}"
+                )
 
             # Đánh giá quần thể (với tối ưu hóa cho chế độ siêu nhanh)
-            if self.config.get('ultra_fast_mode', False) and generation > 0:
+            if self.config.get("ultra_fast_mode", False) and generation > 0:
                 # Trong chế độ siêu nhanh sau thế hệ đầu tiên, chỉ đánh giá các cá thể mới/đã thay đổi
                 # Sử dụng điểm số đã cache cho các cá thể ưu tú
                 all_individual_scores = []
                 for idx, individual in enumerate(population):
-                    if idx < self.config['elite_size'] and generation > 0:
+                    if idx < self.config["elite_size"] and generation > 0:
                         # Các cá thể ưu tú - sử dụng điểm số trước đó nếu có
                         cache_key = self._make_hashable(individual)
                         if cache_key in self._evaluation_cache:
-                            all_individual_scores.append(self._evaluation_cache[cache_key].copy())
+                            all_individual_scores.append(
+                                self._evaluation_cache[cache_key].copy()
+                            )
                         else:
-                            all_individual_scores.append(self._evaluate_individual(individual, model, X, y))
+                            all_individual_scores.append(
+                                self._evaluate_individual(individual, model, X, y)
+                            )
                     else:
                         # Các cá thể mới phải được đánh giá
-                        all_individual_scores.append(self._evaluate_individual(individual, model, X, y))
+                        all_individual_scores.append(
+                            self._evaluate_individual(individual, model, X, y)
+                        )
             else:
                 # Đánh giá bình thường
-                all_individual_scores = self._evaluate_population_parallel(population, model, X, y)
+                all_individual_scores = self._evaluate_population_parallel(
+                    population, model, X, y
+                )
 
             # Xác định metric chính để đánh giá fitness
-            primary_metric = self.config.get('metric_sort', 'accuracy')
+            primary_metric = self.config.get("metric_sort", "accuracy")
 
             # Trích xuất điểm fitness và theo dõi cá thể tốt nhất
-            fitness_scores = np.zeros(len(population))  # Sử dụng numpy array để hiệu suất tốt hơn
-            generation_best_score = float('-inf')
+            fitness_scores = np.zeros(
+                len(population)
+            )  # Sử dụng numpy array để hiệu suất tốt hơn
+            generation_best_score = float("-inf")
             generation_improved = False
 
-            for idx, (individual, scores) in enumerate(zip(population, all_individual_scores)):
+            for idx, (individual, scores) in enumerate(
+                zip(population, all_individual_scores)
+            ):
                 score = scores.get(primary_metric, 0.0)
                 fitness_scores[idx] = score
 
@@ -926,8 +1056,7 @@ class GeneticAlgorithm(SearchStrategy):
                 all_metric_scores.append(scores.copy())  # Lưu tất cả điểm số metric
 
                 # Theo dõi tốt nhất của thế hệ
-                if score >= generation_best_score:
-                    generation_best_score = score
+                generation_best_score = max(score, generation_best_score)
 
                 # Cập nhật tốt nhất toàn cục nếu cải thiện
                 if score >= best_score:
@@ -939,15 +1068,15 @@ class GeneticAlgorithm(SearchStrategy):
                     generations_without_improvement = 0
 
                 # Lưu vào lịch sử thế hệ để logging
-                if self.config['save_log']:
+                if self.config["save_log"]:
                     history_entry = {
-                        'generation': generation + 1,
-                        'individual_id': len(generation_history) + 1,
-                        'best_params': str(self._decode_individual(individual)),
-                        'fitness_score': score,
-                        'is_best_so_far': score == best_score,
-                        'diversity': diversity,
-                        'generation_best': generation_best_score
+                        "generation": generation + 1,
+                        "individual_id": len(generation_history) + 1,
+                        "best_params": str(self._decode_individual(individual)),
+                        "fitness_score": score,
+                        "is_best_so_far": score == best_score,
+                        "diversity": diversity,
+                        "generation_best": generation_best_score,
                     }
                     # Thêm tất cả metrics từ scores
                     for metric_key, metric_value in scores.items():
@@ -959,21 +1088,27 @@ class GeneticAlgorithm(SearchStrategy):
             std_fitness = fitness_scores.std()
             convergence_history.append(
                 {
-                    'generation': generation + 1,
-                    'best': best_score,
-                    'mean': mean_fitness,
-                    'std': std_fitness,
-                    'diversity': diversity
-                })
+                    "generation": generation + 1,
+                    "best": best_score,
+                    "mean": mean_fitness,
+                    "std": std_fitness,
+                    "diversity": diversity,
+                }
+            )
 
             # Cập nhật tiến trình với kết quả thế hệ
             generation_time = (datetime.now() - generation_start_time).total_seconds()
             # Cập nhật EMA iteration time trong base.py
             self._should_start_next_iteration(iteration_duration=generation_time)
-            if verbose > 0 and (verbose > 1 or generation % 5 == 0 or generation == 0 or generation == self.config[
-                'generation'] - 1):
+            if verbose > 0 and (
+                verbose > 1
+                or generation % 5 == 0
+                or generation == 0
+                or generation == self.config["generation"] - 1
+            ):
                 logger.info(
-                    f" | Tốt nhất: {generation_best_score:.4f} | Trung bình: {mean_fitness:.4f} | Độ lệch chuẩn: {std_fitness:.4f} | Thời gian: {generation_time:.2f}s")
+                    f" | Tốt nhất: {generation_best_score:.4f} | Trung bình: {mean_fitness:.4f} | Độ lệch chuẩn: {std_fitness:.4f} | Thời gian: {generation_time:.2f}s"
+                )
 
                 if generation_improved and verbose > 1:
                     logger.info(" ✓ TỐT NHẤT MỚI!")
@@ -983,56 +1118,86 @@ class GeneticAlgorithm(SearchStrategy):
                 generations_without_improvement += 1
 
             # Kiểm tra ngưỡng hội tụ (cải thiện rất nhỏ) - chỉ khi không có time limit
-            convergence_threshold = self.config.get('convergence_threshold', 0.001)
-            if self._should_apply_early_stopping() and generation > 0 and len(convergence_history) > 1:
-                recent_improvement = convergence_history[-1]['best'] - convergence_history[-2]['best']
-                if abs(recent_improvement) < convergence_threshold and generations_without_improvement >= 2:
+            convergence_threshold = self.config.get("convergence_threshold", 0.001)
+            if (
+                self._should_apply_early_stopping()
+                and generation > 0
+                and len(convergence_history) > 1
+            ):
+                recent_improvement = (
+                    convergence_history[-1]["best"] - convergence_history[-2]["best"]
+                )
+                if (
+                    abs(recent_improvement) < convergence_threshold
+                    and generations_without_improvement >= 2
+                ):
                     logger.info(
-                        f"Phát hiện hội tụ tại thế hệ {generation + 1} (cải thiện < {convergence_threshold:.4f})")
-                    logger.info(f"Điểm số tốt nhất {best_score:.4f} đạt được tại thế hệ {best_generation + 1}")
+                        f"Phát hiện hội tụ tại thế hệ {generation + 1} (cải thiện < {convergence_threshold:.4f})"
+                    )
+                    logger.info(
+                        f"Điểm số tốt nhất {best_score:.4f} đạt được tại thế hệ {best_generation + 1}"
+                    )
                     break
 
             # Kiểm tra early stopping - chỉ khi không có time limit
-            if self._should_apply_early_stopping() and early_stopping_enabled and generations_without_improvement >= early_stopping_patience:
+            if (
+                self._should_apply_early_stopping()
+                and early_stopping_enabled
+                and generations_without_improvement >= early_stopping_patience
+            ):
                 logger.info(
-                    f"Dừng sớm được kích hoạt tại thế hệ {generation + 1} (không cải thiện trong {early_stopping_patience} thế hệ)")
-                logger.info(f"Điểm số tốt nhất {best_score:.4f} đạt được tại thế hệ {best_generation + 1}")
+                    f"Dừng sớm được kích hoạt tại thế hệ {generation + 1} (không cải thiện trong {early_stopping_patience} thế hệ)"
+                )
+                logger.info(
+                    f"Điểm số tốt nhất {best_score:.4f} đạt được tại thế hệ {best_generation + 1}"
+                )
                 break
 
             # Lưu log sau mỗi thế hệ
-            if self.config['save_log'] and log_file:
+            if self.config["save_log"] and log_file:
                 df = pd.DataFrame(generation_history)
                 df.to_csv(log_file, index=False)
 
             # Kiểm tra xem quần thể đã hội tụ (đa dạng thấp) - bỏ qua trong chế độ siêu nhanh
-            if not self.config.get('ultra_fast_mode', False):
+            if not self.config.get("ultra_fast_mode", False):
                 stagnation_threshold = 0.05
-                if diversity < stagnation_threshold and generations_without_improvement >= 3:
+                if (
+                    diversity < stagnation_threshold
+                    and generations_without_improvement >= 3
+                ):
                     logger.warning(
-                        f"Phát hiện trì trệ (đa dạng={diversity:.4f}, không cải thiện trong {generations_without_improvement} thế hệ). Tiêm đa dạng...")
+                        f"Phát hiện trì trệ (đa dạng={diversity:.4f}, không cải thiện trong {generations_without_improvement} thế hệ). Tiêm đa dạng..."
+                    )
                     # Tiêm các cá thể ngẫu nhiên mới để thoát khỏi tối ưu cục bộ
                     population = self._inject_diversity(population, injection_rate=0.2)
                     logger.info(" Hoàn thành tiêm đa dạng!")
 
             # Tạo thế hệ tiếp theo
             population = self._create_next_generation(
-                population, fitness_scores, diversity, generation,
-                actual_population_size, max_generation=generations,
+                population,
+                fitness_scores,
+                diversity,
+                generation,
+                actual_population_size,
+                max_generation=generations,
             )
 
         # Sau tất cả các thế hệ, giải mã cá thể tốt nhất tìm được để lấy siêu tham số tốt nhất
-        best_params = self._decode_individual(best_individual) if best_individual else {}
+        best_params = (
+            self._decode_individual(best_individual) if best_individual else {}
+        )
 
         # Biên dịch kết quả cuối cùng theo định dạng tương tự cv_results_ của GridSearchCV
         cv_results = {
-            'params': all_individuals,
-            'mean_test_score': all_scores,
-            'std_test_score': [0.0] * len(all_scores),  # Độ lệch chuẩn không được tính trong thiết lập này
-            'rank_test_score': self._compute_ranks(all_scores),
-            'convergence_history': convergence_history,
-            'diversity_history': diversity_history,
-            'best_generation': best_generation + 1,
-            'total_evaluations': len(all_individuals)
+            "params": all_individuals,
+            "mean_test_score": all_scores,
+            "std_test_score": [0.0]
+            * len(all_scores),  # Độ lệch chuẩn không được tính trong thiết lập này
+            "rank_test_score": self._compute_ranks(all_scores),
+            "convergence_history": convergence_history,
+            "diversity_history": diversity_history,
+            "best_generation": best_generation + 1,
+            "total_evaluations": len(all_individuals),
         }
 
         # Thêm mean_test_{metric} và std_test_{metric} cho mỗi metric
@@ -1043,50 +1208,63 @@ class GeneticAlgorithm(SearchStrategy):
 
             for metric_name in metric_names:
                 # Trích xuất điểm số cho metric này từ tất cả các đánh giá
-                metric_scores_list = [scores.get(metric_name, 0.0) for scores in all_metric_scores]
-                cv_results[f'mean_test_{metric_name}'] = metric_scores_list
-                cv_results[f'std_test_{metric_name}'] = [0.0] * len(metric_scores_list)  # Không có std trong GA
+                metric_scores_list = [
+                    scores.get(metric_name, 0.0) for scores in all_metric_scores
+                ]
+                cv_results[f"mean_test_{metric_name}"] = metric_scores_list
+                cv_results[f"std_test_{metric_name}"] = [0.0] * len(
+                    metric_scores_list
+                )  # Không có std trong GA
 
                 # Thêm xếp hạng cho metric này
-                cv_results[f'rank_test_{metric_name}'] = self._compute_ranks(metric_scores_list)
+                cv_results[f"rank_test_{metric_name}"] = self._compute_ranks(
+                    metric_scores_list
+                )
 
         # Nếu best_all_scores không được đặt (không nên xảy ra), tạo mặc định
         if best_all_scores is None:
-            scoring = self.config.get('scoring', {})
+            scoring = self.config.get("scoring", {})
             if isinstance(scoring, dict) and scoring:
                 best_all_scores = {metric: 0.0 for metric in scoring.keys()}
                 # Đặt metric chính bằng best_score
-                primary_metric = self.config.get('metric_sort', 'accuracy')
+                primary_metric = self.config.get("metric_sort", "accuracy")
                 if primary_metric in best_all_scores:
                     best_all_scores[primary_metric] = best_score
             else:
-                best_all_scores = {'accuracy': best_score}
+                best_all_scores = {"accuracy": best_score}
 
         # Tóm tắt cuối cùng
         logger.info(f"{'=' * 60}")
-        logger.info(f"Hoàn thành Tìm kiếm Thuật toán Di truyền!")
+        logger.info("Hoàn thành Tìm kiếm Thuật toán Di truyền!")
         logger.info(f"{'=' * 60}")
         logger.info(f"Tổng số đánh giá: {len(all_individuals)}")
-        logger.info(f"Điểm số tốt nhất: {best_score:.4f} (đạt được tại thế hệ {best_generation + 1})")
+        logger.info(
+            f"Điểm số tốt nhất: {best_score:.4f} (đạt được tại thế hệ {best_generation + 1})"
+        )
         logger.info(f"Tham số tốt nhất: {best_params}")
         logger.info(f"Đa dạng quần thể cuối cùng: {diversity_history[-1]:.4f}")
 
         # Báo cáo hiệu quả cache nếu được bật
-        if self.config.get('use_global_cache', True) and self._total_evaluations > 0:
+        if self.config.get("use_global_cache", True) and self._total_evaluations > 0:
             cache_efficiency = (self._cache_hits / self._total_evaluations) * 100
             logger.info(
-                f"Hiệu quả cache: {self._cache_hits}/{self._total_evaluations} ({cache_efficiency:.1f}% tỷ lệ trúng)")
-            logger.info(f"Đánh giá duy nhất: {self._total_evaluations - self._cache_hits}")
+                f"Hiệu quả cache: {self._cache_hits}/{self._total_evaluations} ({cache_efficiency:.1f}% tỷ lệ trúng)"
+            )
+            logger.info(
+                f"Đánh giá duy nhất: {self._total_evaluations - self._cache_hits}"
+            )
 
         # In vị trí file log nếu logging được bật
-        if self.config['save_log'] and log_file:
+        if self.config["save_log"] and log_file:
             logger.info(f"Log chi tiết đã lưu vào: {log_file}")
 
         # Xóa cache và chuyển đổi kiểu numpy trước khi trả về
-        return self._finalize_results(best_params, best_score, best_all_scores, cv_results)
+        return self._finalize_results(
+            best_params, best_score, best_all_scores, cv_results
+        )
 
     @staticmethod
-    def _compute_ranks(scores: List[float]) -> List[int]:
+    def _compute_ranks(scores: list[float]) -> list[int]:
         """Tính xếp hạng cho điểm số (1 = tốt nhất)."""
         if not scores:
             return []

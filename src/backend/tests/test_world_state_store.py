@@ -18,14 +18,20 @@ class FakeCollection:
 
     async def update_one(self, query, update, upsert=False):
         if self.doc is None and upsert:
-            self.doc = {"_id": "mongo-internal", **query, **update.get("$setOnInsert", {})}
+            self.doc = {
+                "_id": "mongo-internal",
+                **query,
+                **update.get("$setOnInsert", {}),
+            }
 
     async def find_one(self, query):
         if self.doc and self.doc.get("user_id") == query.get("user_id"):
             return dict(self.doc)
         return None
 
-    async def find_one_and_update(self, query, update, upsert=False, return_document=False):
+    async def find_one_and_update(
+        self, query, update, upsert=False, return_document=False
+    ):
         if self.doc is None and upsert:
             self.doc = {"_id": "mongo-internal", **query}
         if self.doc and self.doc.get("user_id") == query.get("user_id"):

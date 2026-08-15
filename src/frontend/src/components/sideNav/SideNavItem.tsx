@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from "react";
+import type { FC, ReactNode } from "react";
 import Link from "next/link";
 import {
   Tooltip,
@@ -6,15 +6,10 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { NavItems } from "@/config";
-import { cn } from "@/lib/utils";
-import { ChevronLeft, ChevronRight } from "lucide-react";
-import { useSession } from "next-auth/react";
 
-export const SideNavItem: React.FC<{
+export const SideNavItem: FC<{
   label: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  icon: any;
+  icon: ReactNode;
   path: string;
   active: boolean;
   isSidebarExpanded: boolean;
@@ -39,7 +34,7 @@ export const SideNavItem: React.FC<{
       ) : (
         <TooltipProvider delayDuration={70}>
           <Tooltip>
-            <TooltipTrigger>
+            <TooltipTrigger asChild>
               <Link
                 href={path}
                 className={`h-full relative flex items-center whitespace-nowrap rounded-md ${
@@ -47,7 +42,7 @@ export const SideNavItem: React.FC<{
                     ? "font-base text-sm bg-neutral-200 text-neutral-700 dark:bg-neutral-800 dark:text-white"
                     : "hover:bg-neutral-200 hover:text-neutral-700 text-neutral-500 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-white"
                 }`}
-                suppressHydrationWarning={true}
+                suppressHydrationWarning
               >
                 <div className="relative font-base text-sm p-2 flex flex-row items-center space-x-2 rounded-md duration-100">
                   {icon}

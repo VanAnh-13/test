@@ -32,7 +32,7 @@ async def run_training(
     world_model: dict | None = None,
 ) -> dict:
     """Chạy agent graph với message training."""
-    from hagent.agent.graph import run_agent
+    from hagent.agent.orchestration.graph import run_agent
 
     print("=" * 60)
     print("  HAgent — Agent Training Runner")
@@ -87,7 +87,11 @@ async def run_training(
                 print(f"      {str(payload)[:200]}")
 
     # World Model / planning surface
-    if result.get("plan_status") or result.get("surprise") or result.get("campaign_status"):
+    if (
+        result.get("plan_status")
+        or result.get("surprise")
+        or result.get("campaign_status")
+    ):
         print("\n🌍 World Model / planning:")
         if result.get("plan_status"):
             print(f"      plan_status: {result.get('plan_status')}")
@@ -100,7 +104,9 @@ async def run_training(
             print(f"      surprise: level={sur.get('level')} value={sur.get('value')}")
         if result.get("evaluation"):
             ev = result["evaluation"]
-            print(f"      best_job: {ev.get('best_job_id')} rec={ev.get('recommendation')}")
+            print(
+                f"      best_job: {ev.get('best_job_id')} rec={ev.get('recommendation')}"
+            )
 
     print(f"\n📌 Route: {result.get('route', 'N/A')}")
     print(f"⏱️  Time: {elapsed:.1f}s")
@@ -112,7 +118,7 @@ async def run_training(
 
 async def run_conversation(user_id: str) -> list[dict]:
     """Chạy chuỗi conversation giả lập end-user flow."""
-    from hagent.agent.graph import run_agent
+    from hagent.agent.orchestration.graph import run_agent
 
     messages = [
         "Hiển thị danh sách dataset của tôi",
@@ -153,18 +159,20 @@ async def run_conversation(user_id: str) -> list[dict]:
                 print(f"\n  🏆 BEST MODEL: {payload['best_model']}")
                 print(f"  📊 BEST SCORE: {payload.get('best_score', 'N/A')}")
                 if "model_results" in payload:
-                    print(f"  📋 ALL RESULTS:")
+                    print("  📋 ALL RESULTS:")
                     for mr in payload["model_results"]:
                         print(f"     - {mr['model']}: {mr.get('metrics', {})}")
 
-        results.append({
-            "step": i,
-            "message": msg,
-            "response_length": len(response),
-            "tool_calls": n_tools,
-            "route": route,
-            "elapsed": round(elapsed, 1),
-        })
+        results.append(
+            {
+                "step": i,
+                "message": msg,
+                "response_length": len(response),
+                "tool_calls": n_tools,
+                "route": route,
+                "elapsed": round(elapsed, 1),
+            }
+        )
 
     print(f"\n{'═' * 60}")
     print("  📊 SUMMARY")
@@ -182,14 +190,23 @@ async def run_conversation(user_id: str) -> list[dict]:
 
 def main():
     parser = argparse.ArgumentParser(description="HAgent Agent Training Runner")
-    parser.add_argument("--message", "-m", type=str, default=None,
-                        help="Single message to send to agent")
-    parser.add_argument("--user-id", "-u", type=str, default="ci_user",
-                        help="User ID")
-    parser.add_argument("--conversation", "-c", action="store_true",
-                        help="Run full conversation flow instead of single message")
-    parser.add_argument("--output", "-o", type=str, default=None,
-                        help="Output JSON file path")
+    parser.add_argument(
+        "--message",
+        "-m",
+        type=str,
+        default=None,
+        help="Single message to send to agent",
+    )
+    parser.add_argument("--user-id", "-u", type=str, default="ci_user", help="User ID")
+    parser.add_argument(
+        "--conversation",
+        "-c",
+        action="store_true",
+        help="Run full conversation flow instead of single message",
+    )
+    parser.add_argument(
+        "--output", "-o", type=str, default=None, help="Output JSON file path"
+    )
     parser.add_argument(
         "--seed-glass-wm",
         action="store_true",
@@ -208,7 +225,16 @@ def main():
                     "n_rows": 214,
                     "n_cols": 10,
                     "features": [
-                        "RI", "Na", "Mg", "Al", "Si", "K", "Ca", "Ba", "Fe", "Type",
+                        "RI",
+                        "Na",
+                        "Mg",
+                        "Al",
+                        "Si",
+                        "K",
+                        "Ca",
+                        "Ba",
+                        "Fe",
+                        "Type",
                     ],
                     "target": "Type",
                 }
@@ -231,9 +257,7 @@ def main():
             "Please train a model on dataset ds_glass. "
             "Target column is Type, problem type classification, metric f1."
         )
-        result = asyncio.run(
-            run_training(msg, args.user_id, world_model=world_model)
-        )
+        result = asyncio.run(run_training(msg, args.user_id, world_model=world_model))
         results = [result]
 
     if args.output:

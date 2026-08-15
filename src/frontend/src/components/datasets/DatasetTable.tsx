@@ -22,12 +22,12 @@ const DatasetTable = ({ datasets, onEdit, onDelete }: Props) => {
     <Table>
       <TableHeader>
         <TableRow>
-          <th>Tên bộ dữ liệu</th>
-          <th>Kiểu dữ liệu</th>
-          <th>Ngày tạo</th>
-          <th>Lần cập nhật mới nhất</th>
-          <th className="text-center">Người dùng</th>
-          <th className="text-center">Chức năng</th>
+          <TableHead>Tên bộ dữ liệu</TableHead>
+          <TableHead>Kiểu dữ liệu</TableHead>
+          <TableHead>Ngày tạo</TableHead>
+          <TableHead>Lần cập nhật mới nhất</TableHead>
+          <TableHead className="text-center">Người dùng</TableHead>
+          <TableHead className="text-center">Chức năng</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>

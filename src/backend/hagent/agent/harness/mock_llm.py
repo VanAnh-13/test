@@ -7,13 +7,14 @@ returns a fixed AIMessage so graph can route without API keys.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Any, Iterator, List, Optional
+from typing import Any
 from unittest.mock import patch
 
 
 class FakeAIMessage:
-    def __init__(self, content: str = "", tool_calls: Optional[list] = None):
+    def __init__(self, content: str = "", tool_calls: list | None = None):
         self.content = content
         self.tool_calls = tool_calls or []
         self.type = "ai"
@@ -22,7 +23,7 @@ class FakeAIMessage:
 class FakeChatModel:
     """Minimal chat model with bind_tools / ainvoke / invoke."""
 
-    def __init__(self, responses: Optional[List[str]] = None):
+    def __init__(self, responses: list[str] | None = None):
         self._responses = list(
             responses
             or [
@@ -31,7 +32,7 @@ class FakeChatModel:
         )
         self._i = 0
 
-    def bind_tools(self, tools: list) -> "FakeChatModel":
+    def bind_tools(self, tools: list) -> FakeChatModel:
         return self
 
     def _next(self) -> FakeAIMessage:
@@ -53,17 +54,17 @@ def create_fake_chat_model(model_name: str | None = None, **kwargs: Any) -> Fake
 
 
 @contextmanager
-def patch_chat_model(responses: Optional[List[str]] = None) -> Iterator[FakeChatModel]:
-    """Patch hagent.agent.llm_config.create_chat_model during harness run."""
+def patch_chat_model(responses: list[str] | None = None) -> Iterator[FakeChatModel]:
+    """Thay factory canonical bằng model giả trong lúc chạy harness."""
     fake = FakeChatModel(responses=responses)
 
     def _factory(*args: Any, **kwargs: Any) -> FakeChatModel:
         return fake
 
-    # Patch common import sites
+    # Patch public interface và call site import sẵn nếu có.
     targets = [
-        "hagent.agent.llm_config.create_chat_model",
-        "hagent.agent.coordinator.create_chat_model",
+        "hagent.agent.llm.create_chat_model",
+        "hagent.agent.orchestration.coordinator.create_chat_model",
     ]
     patches = []
     for t in targets:
@@ -74,9 +75,9 @@ def patch_chat_model(responses: Optional[List[str]] = None) -> Iterator[FakeChat
     for p in patches:
         p.start()
     try:
-        # Also try patching module attribute if coordinator imports inside function
+        # Giữ patch package hoạt động với import nằm bên trong hàm coordinator.
         with patch(
-            "hagent.agent.llm_config.create_chat_model",
+            "hagent.agent.llm.create_chat_model",
             _factory,
         ):
             yield fake

@@ -4,11 +4,12 @@ Test HAgent training flow end-to-end.
 2. Send chat message to HAgent asking to train
 3. Check backend logs for training API call
 """
-import urllib.request
+
 import json
-import sys
 import os
+import sys
 import time
+import urllib.request
 
 TOKEN = os.getenv("TOKEN", "")
 USER_ID = os.getenv("USER_ID", "")
@@ -19,6 +20,7 @@ DATASET_PATH = os.getenv(
     "HAGENT_TEST_DATASET",
     os.path.join(os.path.dirname(__file__), "..", "data", "adult.csv"),
 )
+
 
 def api_request(method, url, data=None, headers=None, content_type="application/json"):
     """Simple HTTP request helper."""
@@ -42,6 +44,7 @@ def api_request(method, url, data=None, headers=None, content_type="application/
         print(f"  Connection error: {e}")
         return {"error": "connection", "detail": str(e)}
 
+
 def upload_dataset():
     """Upload adult.csv as test dataset."""
     file_path = DATASET_PATH
@@ -55,7 +58,9 @@ def upload_dataset():
 
     body = b""
     body += ("--" + boundary + "\r\n").encode()
-    body += b'Content-Disposition: form-data; name="file_data"; filename="adult.csv"\r\n'
+    body += (
+        b'Content-Disposition: form-data; name="file_data"; filename="adult.csv"\r\n'
+    )
     body += b"Content-Type: text/csv\r\n\r\n"
     body += file_data
     body += b"\r\n"
@@ -86,21 +91,20 @@ def upload_dataset():
         print(f"  Upload connection error: {e}")
         return None
 
+
 def list_datasets():
     """List user's datasets."""
     return api_request("POST", f"{BASE_URL}/get-list-data-by-userid?id={USER_ID}")
+
 
 def get_available_models():
     """Get available classification models."""
     return api_request("GET", f"{BASE_URL}/api/v1/available-models/classification")
 
+
 def send_chat(message):
     """Send chat message to HAgent via Bridge."""
-    payload = {
-        "message": message,
-        "conversation_id": None,
-        "context": {}
-    }
+    payload = {"message": message, "conversation_id": None, "context": {}}
     return api_request("POST", f"{HAGENT_URL}/api/v1/chat/", data=payload)
 
 
@@ -134,7 +138,9 @@ def main(argv=None):
         datasets = list_datasets()
         if isinstance(datasets, list) and len(datasets) > 0:
             dataset_id = datasets[0]["_id"]
-            print(f"  Using existing dataset: {dataset_id} ({datasets[0].get('dataName')})")
+            print(
+                f"  Using existing dataset: {dataset_id} ({datasets[0].get('dataName')})"
+            )
         else:
             print("  ERROR: No datasets available. Cannot continue.")
             return 1
@@ -149,7 +155,9 @@ def main(argv=None):
 
     print(f"\n[3/5] Getting dataset info for {dataset_id}...")
     data_info = api_request("GET", f"{BASE_URL}/get-data-info?id={dataset_id}")
-    print(f"  Dataset info: {json.dumps(data_info, indent=2, ensure_ascii=False)[:500]}")
+    print(
+        f"  Dataset info: {json.dumps(data_info, indent=2, ensure_ascii=False)[:500]}"
+    )
 
     print("\n[4/5] Sending training request to HAgent...")
     chat_message = (
@@ -182,7 +190,9 @@ def main(argv=None):
     if isinstance(jobs, list):
         print(f"  Total jobs: {len(jobs)}")
         for j in jobs[:3]:
-            print(f"  - Job {j.get('_id')}: status={j.get('status')}, model={j.get('best_model_name', 'N/A')}")
+            print(
+                f"  - Job {j.get('_id')}: status={j.get('status')}, model={j.get('best_model_name', 'N/A')}"
+            )
     else:
         print(f"  Jobs response: {jobs}")
 

@@ -3,19 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-import json
-import sys
-import tempfile
-from pathlib import Path
 
 import pytest
 
-BACKEND_DIR = Path(__file__).parent.parent
-if str(BACKEND_DIR) not in sys.path:
-    sys.path.insert(0, str(BACKEND_DIR))
-
 from hagent.agent.campaign.builder import build_campaign
-from hagent.agent.campaign.compare import compare_campaign, best_config_payload
+from hagent.agent.campaign.compare import best_config_payload, compare_campaign
 from hagent.agent.campaign.nodes import campaign_node, campaign_route
 from hagent.agent.campaign.schema import Campaign, CampaignVariant
 from hagent.agent.campaign.warm_start import (
@@ -23,8 +15,8 @@ from hagent.agent.campaign.warm_start import (
     merge_warm_starts,
 )
 from hagent.agent.execution.tool_runner import set_tool_invoker
-from hagent.agent.graph import _should_run_campaign, coordinator_route
-from hagent.agent.memory import Fact, LocalFactStore
+from hagent.agent.memory import LocalFactStore
+from hagent.agent.orchestration.graph import _should_run_campaign, coordinator_route
 
 
 def run(coro):
@@ -154,54 +146,46 @@ class TestCampaignNode:
 
         set_tool_invoker(fake)
 
-        with tempfile.TemporaryDirectory() as td:
-            store = LocalFactStore(td)
-            state = {
-                "messages": [],
+        state = {
+            "messages": [],
+            "user_id": "u1",
+            "user_token": "t",
+            "goal": GOAL,
+            "world_model": {
                 "user_id": "u1",
-                "user_token": "t",
-                "goal": GOAL,
-                "world_model": {
-                    "user_id": "u1",
-                    "datasets": {
-                        "ds1": {
-                            "id": "ds1",
-                            "features": ["a", "target"],
-                        }
-                    },
-                    "jobs": {},
+                "datasets": {
+                    "ds1": {
+                        "id": "ds1",
+                        "features": ["a", "target"],
+                    }
                 },
-                "execution_events": [],
-                "cost_metrics": {},
-                "campaign_tick": 0,
-            }
+                "jobs": {},
+            },
+            "execution_events": [],
+            "cost_metrics": {},
+            "campaign_tick": 0,
+        }
 
-            # Tick until done (submit + poll)
-            for _ in range(10):
-                out = run(campaign_node(state))
-                state = {**state, **out}
-                state["messages"] = []
-                if campaign_route(state) == "synthesize":
-                    break
+        # Lặp submit và poll cho tới khi campaign kết thúc.
+        for _ in range(10):
+            out = run(campaign_node(state))
+            state = {**state, **out}
+            state["messages"] = []
+            if campaign_route(state) == "synthesize":
+                break
 
-            assert state["campaign_status"] == "done"
-            assert state["evaluation"]["best_job_id"] in ("job-1", "job-2", "job-3")
-            # best should be job-2 with 0.95
-            assert state["evaluation"]["best_job_id"] == "job-2"
-            assert state["cost_metrics"]["campaign_completed"] == 3
-
-            # Warm-start fact written
-            fact = run(store.get("u1", "warm_start_classification"))
-            # campaign_node uses create_fact_store default path — check evaluation only
-            # Memory path may differ; assert evaluation recommendation set
-            assert state["evaluation"]["recommendation"] == "model-job-2"
+        assert state["campaign_status"] == "done"
+        assert state["evaluation"]["best_job_id"] in ("job-1", "job-2", "job-3")
+        assert state["evaluation"]["best_job_id"] == "job-2"
+        assert state["cost_metrics"]["campaign_completed"] == 3
+        assert state["evaluation"]["recommendation"] == "model-job-2"
 
     def test_coordinator_prefers_campaign_when_hierarchy_off(self, monkeypatch):
         class Msg:
             tool_calls = None
 
         monkeypatch.setattr(
-            "hagent.agent.graph._hierarchy_live_enabled",
+            "hagent.agent.orchestration.graph._hierarchy_live_enabled",
             lambda: False,
         )
         st = {
@@ -217,7 +201,7 @@ class TestCampaignNode:
         class Msg:
             tool_calls = None
 
-        from hagent.agent.graph import _should_run_hierarchy
+        from hagent.agent.orchestration.graph import _should_run_hierarchy
 
         st = {
             "messages": [Msg()],
@@ -242,7 +226,7 @@ class TestCampaignNode:
 
         async def fake(action_type, params):
             if action_type == "start_training":
-                jid = f"j{len(submitted)+1}"
+                jid = f"j{len(submitted) + 1}"
                 submitted.append(jid)
                 return {"job_id": jid, "status": 0}
             if action_type == "get_job_info":
@@ -260,39 +244,32 @@ class TestCampaignNode:
         )
         from hagent.agent.campaign.runner import campaign_step
 
-        camp = run(
-            campaign_step(
-                camp, user_id="u1", user_token=None, world_model={}
-            )
-        )
+        camp = run(campaign_step(camp, user_id="u1", user_token=None, world_model={}))
         assert len(submitted) == 2
         assert len(camp.in_flight()) == 2
         assert len(camp.pending_submit()) == 1
 
 
 class TestMemoryWarmStartWrite:
-    def test_write_and_read(self):
+    def test_write_and_read(self, tmp_path):
         from hagent.agent.campaign.runner import write_warm_start_memory
         from hagent.agent.campaign.warm_start import configs_from_memory
 
-        with tempfile.TemporaryDirectory() as td:
-            store = LocalFactStore(td)
-            run(
-                write_warm_start_memory(
-                    "u1",
-                    {
-                        "problem_type": "classification",
-                        "search_algorithm": "bayesian_search",
-                        "best_model": "xgb",
-                        "best_score": 0.91,
-                    },
-                    fact_store=store,
-                )
+        store = LocalFactStore(tmp_path)
+        run(
+            write_warm_start_memory(
+                "u1",
+                {
+                    "problem_type": "classification",
+                    "search_algorithm": "bayesian_search",
+                    "best_model": "xgb",
+                    "best_score": 0.91,
+                },
+                fact_store=store,
             )
-            cfgs = run(
-                configs_from_memory(
-                    "u1", problem_type="classification", fact_store=store
-                )
-            )
-            assert len(cfgs) == 1
-            assert cfgs[0]["best_model"] == "xgb"
+        )
+        cfgs = run(
+            configs_from_memory("u1", problem_type="classification", fact_store=store)
+        )
+        assert len(cfgs) == 1
+        assert cfgs[0]["best_model"] == "xgb"

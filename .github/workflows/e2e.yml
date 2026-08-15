@@ -1,58 +1,64 @@
-# ══════════════════════════════════════════════════════════
-# E2E — Full system (Docker Compose + real services)
-#
-# - Spin backend stack (toolkit, bridge, mongo, kafka, minio, worker)
-# - Optional Ollama for agent chat paths
-# - Run scripts/e2e_docker_test.py
-# ══════════════════════════════════════════════════════════
-
-name: E2E
+name: HAgent Docker E2E
 
 on:
   push:
     branches:
       - main
-      - features/deerflow-automl
-      - features/hagent
+      - hagent
     paths:
       - "src/backend/**"
-      - "docker-compose.yaml"
       - ".github/workflows/e2e.yml"
   pull_request:
     branches:
       - main
-      - features/deerflow-automl
+      - hagent
     paths:
       - "src/backend/**"
       - ".github/workflows/e2e.yml"
   workflow_dispatch:
-    inputs:
-      with_ollama:
-        description: "Install Ollama + pull model for LLM agent paths"
-        type: boolean
-        default: true
-      ollama_model:
-        description: "Ollama model tag"
-        type: string
-        default: "qwen2.5:7b"
+
+permissions:
+  contents: read
 
 concurrency:
-  group: e2e-${{ github.ref }}
+  group: e2e-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  docker-e2e:
-    name: Docker full-system E2E
+  docker-contract:
+    name: Docker chat contract
     runs-on: ubuntu-latest
-    timeout-minutes: 50
+    timeout-minutes: 40
 
     env:
-      OLLAMA_BASE_URL: "http://host.docker.internal:11434"
-      OLLAMA_MODEL: ${{ github.event.inputs.ollama_model || 'qwen2.5:7b' }}
-      LLM_DEFAULT_MODEL: "ollama-ci"
-      HAGENT_RUNTIME_MODE: "deerflow"
+      PYTHONUTF8: "1"
       BASE_URL: "http://localhost:5370"
       HAGENT_URL: "http://localhost:5360"
+      E2E_MODEL: "ci-mock"
+      E2E_REQUEST_TIMEOUT_SECONDS: "90"
+      E2E_ABORT_SETTLE_SECONDS: "5"
+      LLM_DEFAULT_MODEL: "ci-mock"
+      OPENAI_API_KEY: "ci-local-mock-not-a-secret"
+      SECRET_KEY: "ci-only-signing-key-not-for-production"
+      ALGORITHM: "HS256"
+      ACCESS_EXPIRE: "60"
+      REFRESH_EXPIRE: "7"
+      SKIP_EMAIL_VERIFICATION: "true"
+      LANGCHAIN_TRACING_V2: "false"
+      DO_NOT_TRACK: "1"
+      TOOLKIT_CONTAINER_NAME: "toolkit-testing"
+      TOOLKIT_HOST_PORT: "5370"
+      HAGENT_BRIDGE_CONTAINER_NAME: "hagent_bridge_testing"
+      HAGENT_BRIDGE_HOST_PORT: "5360"
+      MONGO_CONTAINER_NAME: "mongodb_hautoml_testing"
+      MONGO_HOST_PORT: "5380"
+      MONGODB_DB_NAME: "hagent_e2e"
+      KAFKA_CONTAINER_NAME: "kafka-testing"
+      KAFKA_HOST_PORT: "5383"
+      MINIO_CONTAINER_NAME: "minio_hautoml_testing"
+      MINIO_HOST_PORT: "5381"
+      MINIO_ACCESS_KEY: "ci-minio-user"
+      MINIO_SECRET_KEY: "ci-minio-password"
 
     steps:
       - name: Checkout
@@ -65,193 +71,101 @@ jobs:
           cache: pip
           cache-dependency-path: src/backend/requirements.txt
 
-      - name: Install host test deps
+      - name: Install focused test dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install httpx
+          python -m pip install fastapi httpx pydantic pytest pytest-asyncio uvicorn
 
-      - name: Install & start Ollama
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.with_ollama == true }}
+      - name: Run focused contract tests
+        working-directory: src/backend
+        run: python -m pytest tests/test_e2e_docker_smoke.py -q
+
+      - name: Prepare isolated runtime directory
+        shell: bash
         run: |
-          curl -fsSL https://ollama.com/install.sh | sh
-          ollama serve &
-          echo "OLLAMA_PID=$!" >> "$GITHUB_ENV"
-          for i in $(seq 1 30); do
-            if curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then
-              echo "Ollama ready"
-              break
+          set -euo pipefail
+          mongo_dir="$(mktemp -d /tmp/hagent-e2e-mongo.XXXXXX)"
+          echo "MONGO_DATA_DIR=$mongo_dir" >> "$GITHUB_ENV"
+
+      - name: Validate Compose configuration
+        run: docker compose -f src/backend/docker-compose.yaml config --quiet
+
+      - name: Build toolkit and Bridge
+        run: docker compose -f src/backend/docker-compose.yaml build toolkit hagent_bridge
+
+      - name: Start minimal stack
+        run: docker compose -f src/backend/docker-compose.yaml up -d toolkit hagent_bridge
+
+      - name: Wait for application health
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 60); do
+            toolkit_code="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+              http://localhost:5370/home || true)"
+            bridge_code="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+              http://localhost:5360/api/v1/chat/health || true)"
+            if [[ "$toolkit_code" == "200" && "$bridge_code" == "200" ]]; then
+              echo "Toolkit and Bridge are healthy"
+              exit 0
             fi
-            if [ "$i" -eq 30 ]; then
-              echo "Ollama failed to start"
+            if [[ "$attempt" == "60" ]]; then
+              echo "Application health check timed out"
+              docker compose -f src/backend/docker-compose.yaml ps
+              exit 1
+            fi
+            sleep 3
+          done
+
+      - name: Start local OpenAI-compatible mock
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker compose -f src/backend/docker-compose.yaml exec -T -d toolkit \
+            python tests/mock_llm_server.py --host 127.0.0.1 --port 11435
+          for attempt in $(seq 1 30); do
+            if docker compose -f src/backend/docker-compose.yaml exec -T toolkit \
+              python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:11435/health', timeout=2)"; then
+              echo "Local mock is ready"
+              exit 0
+            fi
+            if [[ "$attempt" == "30" ]]; then
+              echo "Local mock failed to start"
               exit 1
             fi
             sleep 1
           done
-          ollama pull "$OLLAMA_MODEL"
-          ollama list
-          curl -sf http://localhost:11434/api/generate \
-            -d "{\"model\": \"$OLLAMA_MODEL\", \"prompt\": \"ping\", \"stream\": false}" \
-            >/dev/null
-          echo "Model warmed"
 
-      - name: Prepare backend .env for CI
-        working-directory: src/backend
+      - name: Run Docker contract smoke
+        shell: bash
         run: |
-          cat > .env <<'ENVFILE'
-          SECRET_KEY=ci-secret-key-for-testing
-          ALGORITHM=HS256
-          ACCESS_EXPIRE=60
-          REFRESH_EXPIRE=7
-          HAGENT_HOOKS_TOKEN=ci-hagent-hooks-token
-          SKIP_EMAIL_VERIFICATION=true
-          CUSTOM_API_KEY=sk-ci-test-key
-
-          TOOLKIT_IMAGE=hautoml-toolkit
-          TOOLKIT_CONTAINER_NAME=toolkit-testing
-          TOOLKIT_HOST_PORT=5370
-          TOOLKIT_PORT=8585
-
-          WORKER_IMAGE=workers:latest
-          WORKER_CONTAINER_NAME=hautoml-woker-1-testing
-          WORKER_PORT=5101
-          WORKER_INDEX=1
-
-          MONGO_IMAGE=mongo:latest
-          MONGO_CONTAINER_NAME=mongodb_hautoml_testing
-          MONGO_HOST_PORT=5380
-          MONGO_DATA_DIR=/tmp/mongo-automl-ci
-          MONGODB_DB_NAME=hautoml
-
-          KAFKA_IMAGE=apache/kafka:latest
-          KAFKA_CONTAINER_NAME=kafka-testing
-          KAFKA_HOST_PORT=5383
-          KAFKA_TOPIC=example-topic
-
-          MINIO_IMAGE=minio/minio:latest
-          MINIO_CONTAINER_NAME=minio_hautoml_testing
-          MINIO_HOST_PORT=5381
-          MINIO_ACCESS_KEY=minioadmin
-          MINIO_SECRET_KEY=minioadmin
-
-          HAGENT_BRIDGE_IMAGE=hagent-bridge:latest
-          HAGENT_BRIDGE_CONTAINER_NAME=hagent_bridge_testing
-          HAGENT_BRIDGE_HOST_PORT=5360
-          HAGENT_BRIDGE_PORT=9900
-
-          OPENCLAW_IMAGE=ghcr.io/openclaw/openclaw:latest
-          OPENCLAW_CONTAINER_NAME=openclaw_gateway_testing
-          OPENCLAW_HOST_PORT=5361
-          OPENCLAW_GATEWAY_PORT=18789
-          OPENCLAW_PROXY_PORT=18790
-          OPENCLAW_ALLOW_INSECURE_PRIVATE_WS=1
-          OPENCLAW_BUNDLED_PLUGINS_DIR=/app/extensions
-          ENVFILE
-          echo "OLLAMA_BASE_URL=${OLLAMA_BASE_URL}" >> .env
-          echo "OLLAMA_MODEL=${OLLAMA_MODEL}" >> .env
-          echo "LLM_DEFAULT_MODEL=${LLM_DEFAULT_MODEL}" >> .env
-          echo "HAGENT_RUNTIME_MODE=deerflow" >> .env
-          cat .env
-
-      - name: Build worker image
-        run: docker build -t workers:latest -f src/backend/worker.dockerfile src/backend
-
-      - name: Start stack (compose + worker profile)
-        run: |
-          docker compose -f src/backend/docker-compose.yaml --profile worker up --build -d
-          docker ps -a --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
-
-      - name: Wait for Kafka + create training topic
-        run: |
-          TOPIC="${KAFKA_TOPIC:-example-topic}"
-          for i in $(seq 1 30); do
-            if docker exec kafka-testing /opt/kafka/bin/kafka-topics.sh \
-                --bootstrap-server localhost:9092 --list >/dev/null 2>&1; then
-              echo "Kafka broker ready"
-              docker exec kafka-testing /opt/kafka/bin/kafka-topics.sh \
-                --bootstrap-server localhost:9092 \
-                --create --if-not-exists \
-                --topic "$TOPIC" \
-                --partitions 1 \
-                --replication-factor 1 || true
-              docker exec kafka-testing /opt/kafka/bin/kafka-topics.sh \
-                --bootstrap-server localhost:9092 --list || true
-              exit 0
-            fi
-            echo "Waiting for Kafka... $i/30"
-            sleep 3
-          done
-          echo "Kafka not ready"
-          docker logs kafka-testing 2>&1 | tail -50 || true
-          exit 1
-
-      - name: Wait for health endpoints
-        run: |
-          for i in $(seq 1 60); do
-            AUTOML=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5370/home || echo 000)
-            BRIDGE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5360/api/v1/chat/health || echo 000)
-            echo "Attempt $i/60 AutoML=$AUTOML Bridge=$BRIDGE"
-            if [ "$AUTOML" = "200" ] && [ "$BRIDGE" = "200" ]; then
-              echo "Healthy"
-              exit 0
-            fi
-            if [ $((i % 10)) -eq 0 ]; then
-              docker logs hagent_bridge_testing 2>&1 | tail -20 || true
-              docker logs toolkit-testing 2>&1 | tail -20 || true
-            fi
-            if [ "$i" -eq 60 ]; then
-              docker ps -a
-              docker logs hagent_bridge_testing 2>&1 | tail -80 || true
-              docker logs toolkit-testing 2>&1 | tail -80 || true
-              exit 1
-            fi
-            sleep 5
-          done
-
-      - name: Run Docker E2E script
-        run: |
+          set -euo pipefail
           python src/backend/scripts/e2e_docker_test.py 2>&1 | tee e2e_docker_output.txt
 
-      - name: Dump bridge + toolkit logs after E2E
+      - name: Collect safe service logs
         if: always()
+        shell: bash
         run: |
           mkdir -p e2e_logs
-          docker logs hagent_bridge_testing 2>&1 | tail -200 | tee e2e_logs/bridge.log || true
-          docker logs toolkit-testing 2>&1 | tail -300 | tee e2e_logs/toolkit.log || true
-          docker logs hautoml-woker-1-testing 2>&1 | tail -100 | tee e2e_logs/worker.log || true
+          docker compose -f src/backend/docker-compose.yaml logs \
+            --no-color --tail=300 toolkit hagent_bridge \
+            > e2e_logs/services.log 2>&1 || true
 
-      - name: Upload E2E logs
+      - name: Upload E2E evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-logs-${{ github.run_id }}
+          name: hagent-e2e-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             e2e_docker_output.txt
             e2e_logs/
           if-no-files-found: ignore
 
-      - name: Dump compose logs on failure
-        if: failure()
-        run: docker compose -f src/backend/docker-compose.yaml logs --tail=200
-
       - name: Cleanup
         if: always()
+        shell: bash
         run: |
-          docker compose -f src/backend/docker-compose.yaml --profile worker down -v || true
-          if [ -n "${OLLAMA_PID:-}" ]; then
-            kill "$OLLAMA_PID" 2>/dev/null || true
+          docker compose -f src/backend/docker-compose.yaml down -v --remove-orphans || true
+          if [[ "${MONGO_DATA_DIR:-}" == /tmp/hagent-e2e-mongo.* ]]; then
+            sudo rm -rf -- "$MONGO_DATA_DIR"
           fi
-
-      - name: Summary
-        if: always()
-        run: |
-          {
-            echo "## E2E"
-            echo "- Branch: \`${{ github.ref_name }}\`"
-            echo "- Model: \`$OLLAMA_MODEL\`"
-            if [ -f e2e_docker_output.txt ]; then
-              echo ""
-              echo '```'
-              tail -40 e2e_docker_output.txt
-              echo '```'
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"

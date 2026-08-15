@@ -1,5 +1,5 @@
 """
-Meta-features của dataset — đầu vào để outcome model TRANSFER xuyên dataset.
+Đặc trưng meta của tập dữ liệu, dùng để model kết quả chuyển giao giữa các tập.
 
 Một bộ key cố định (META_KEYS_V2) dùng thống nhất ở ba nơi:
   - meta_features_from_frame: tính từ DataFrame thật (OpenML CSV, upload user);
@@ -9,7 +9,7 @@ Một bộ key cố định (META_KEYS_V2) dùng thống nhất ở ba nơi:
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any
 
 META_KEYS_V2 = [
     "n_rows",
@@ -22,7 +22,7 @@ META_KEYS_V2 = [
 ]
 
 
-def meta_features_from_frame(df: Any, target: str = "target") -> Dict[str, float]:
+def meta_features_from_frame(df: Any, target: str = "target") -> dict[str, float]:
     """
     Tính meta-features từ pandas DataFrame (cột target đã chuẩn hóa).
 
@@ -42,12 +42,8 @@ def meta_features_from_frame(df: Any, target: str = "target") -> Dict[str, float
         if counts.sum() > 0:
             class_imbalance = float(counts.iloc[0] / counts.sum())
 
-    numeric_cols = [
-        c for c in feature_cols if pd.api.types.is_numeric_dtype(df[c])
-    ]
-    frac_categorical = (
-        (n_cols - len(numeric_cols)) / n_cols if n_cols else 0.0
-    )
+    numeric_cols = [c for c in feature_cols if pd.api.types.is_numeric_dtype(df[c])]
+    frac_categorical = (n_cols - len(numeric_cols)) / n_cols if n_cols else 0.0
 
     missing_frac = 0.0
     if n_rows and n_cols:

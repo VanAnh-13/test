@@ -356,7 +356,9 @@ async def test_invocation_trace_redacts_credentials():
     )
 
     assert result.success
-    start_call = next(call for call in result.invocations if call.name == "start_training")
+    start_call = next(
+        call for call in result.invocations if call.name == "start_training"
+    )
     assert start_call.output["access_token"] == "[REDACTED]"
     assert start_call.output["accessToken"] == "[REDACTED]"
     assert start_call.output["apiKey"] == "[REDACTED]"

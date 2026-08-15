@@ -1,46 +1,54 @@
 """
-Plan executor node — run selected_plan steps one-by-one (MPC-style).
+Node thực thi lần lượt từng bước của selected_plan theo kiểu MPC.
 
-Flow per visit:
-  validate → tool → update world model → surprise → continue | revise | done
+Luồng mỗi lượt:
+  kiểm tra → công cụ → cập nhật World Model → surprise → tiếp tục | sửa | hoàn tất
 """
 
 from __future__ import annotations
 
-import logging
-from typing import Any, Dict, List
+import json
+from typing import Any
+
+import structlog
 
 try:
     from langchain_core.messages import AIMessage, ToolMessage
 except ImportError:  # pragma: no cover — tests without langchain
+
     class AIMessage:  # type: ignore[no-redef]
         def __init__(self, content: str = "", **kwargs):
             self.content = content
             self.type = "ai"
 
     class ToolMessage:  # type: ignore[no-redef]
-        def __init__(self, content: str = "", name: str = "", tool_call_id: str = "", **kwargs):
+        def __init__(self, content: str = "", name: str = "", tool_call_id: str = ""):
             self.content = content
             self.name = name
             self.tool_call_id = tool_call_id
             self.type = "tool"
 
+
 from hagent.agent.constraints import validate_action
 from hagent.agent.execution.tool_runner import enrich_params, invoke_tool
-from hagent.agent.state import AutoMLState
-from hagent.world.schema import AutoMLAction, WorldState
+from hagent.agent.orchestration import AutoMLState
+from hagent.world.schema import AutoMLAction, SurpriseResult, WorldState
+from hagent.world.surprise import (
+    compute_aggregate_plan_surprise,
+    should_trigger_plan_revision,
+)
 from hagent.world.updater import apply_tool_output
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 def _revise_on_high_surprise(action_type: str) -> bool:
-    """Whether high surprise after this action should trigger reviser."""
+    """Kiểm tra surprise cao sau action này có cần kích hoạt bộ sửa plan hay không."""
     try:
         from hagent.bridge.config import get_planning_config
 
         cfg = get_planning_config()
-    except Exception:
+    except Exception:  # noqa: BLE001
         cfg = {}
     if not cfg.get("revise_on_high_surprise", True):
         return False
@@ -53,24 +61,46 @@ def _revise_on_high_surprise(action_type: str) -> bool:
     return action_type not in set(ignore)
 
 
-def _steps_from_plan(plan: dict | None) -> List[dict]:
+def _steps_from_plan(plan: Any) -> list[Any]:
     if not plan:
         return []
-    return list(plan.get("steps") or [])
+    if hasattr(plan, "steps"):
+        return list(plan.steps or [])
+    if isinstance(plan, dict):
+        return list(plan.get("steps") or [])
+    return []
 
 
-def _action_from_step(step: dict) -> AutoMLAction:
-    act = step.get("action") if isinstance(step, dict) else None
-    if isinstance(act, dict):
+def _action_from_step(step: Any) -> AutoMLAction:
+    if hasattr(step, "get_action_type") and hasattr(step, "get_action_params"):
         return AutoMLAction(
-            type=str(act.get("type") or ""),
-            params=dict(act.get("params") or {}),
+            type=step.get_action_type(),
+            params=step.get_action_params(),
         )
-    if isinstance(step, dict) and step.get("type"):
-        return AutoMLAction(
-            type=str(step.get("type")),
-            params=dict(step.get("params") or {}),
-        )
+    if hasattr(step, "action"):
+        act = step.action
+        if hasattr(act, "type"):
+            return AutoMLAction(
+                type=str(act.type),
+                params=dict(getattr(act, "params", {}) or {}),
+            )
+        if isinstance(act, dict):
+            return AutoMLAction(
+                type=str(act.get("type") or ""),
+                params=dict(act.get("params") or {}),
+            )
+    if isinstance(step, dict):
+        act = step.get("action")
+        if isinstance(act, dict):
+            return AutoMLAction(
+                type=str(act.get("type") or ""),
+                params=dict(act.get("params") or {}),
+            )
+        if step.get("type"):
+            return AutoMLAction(
+                type=str(step.get("type")),
+                params=dict(step.get("params") or {}),
+            )
     return AutoMLAction(type="", params={})
 
 
@@ -87,7 +117,7 @@ def _observation_from_state(state: AutoMLState):
     ), wm_service
 
 
-def _merge_world_patch(state: AutoMLState, patch: Dict[str, Any]) -> dict:
+def _merge_world_patch(state: AutoMLState, patch: dict[str, Any]) -> dict:
     snap = dict(state.get("world_model") or {"user_id": state.get("user_id") or ""})
     for k, v in patch.items():
         snap[k] = v
@@ -102,7 +132,7 @@ def _append_event(state: AutoMLState, event: dict) -> list:
 
 async def plan_executor_node(state: AutoMLState) -> dict:
     """
-    Execute one plan step. Graph loops until done/revise/fail.
+    Thực thi một bước plan. Graph lặp đến khi hoàn tất, cần sửa hoặc thất bại.
     """
     plan = state.get("selected_plan")
     steps = _steps_from_plan(plan)
@@ -112,7 +142,7 @@ async def plan_executor_node(state: AutoMLState) -> dict:
     cost = dict(state.get("cost_metrics") or {})
     cost["steps_executed"] = int(cost.get("steps_executed") or 0)
 
-    # No plan → done
+    # Không có plan thì hoàn tất.
     if not steps:
         msg = AIMessage(content="Không có plan steps để thực thi.")
         return {
@@ -166,18 +196,42 @@ async def plan_executor_node(state: AutoMLState) -> dict:
         user_token=state.get("user_token"),
         goal=goal if isinstance(goal, dict) else None,
         world_model=state.get("world_model"),
+        action_id=(
+            f"plan:{plan['plan_id']}:step:{idx}"
+            if isinstance(plan, dict) and plan.get("plan_id")
+            else None
+        ),
     )
-    action = AutoMLAction(type=action.type, params=params)
+    if action.type == "start_training" and not params.get("idempotency_key"):
+        return {
+            "messages": [
+                AIMessage(content="Training step thiếu action identity đáng tin cậy.")
+            ],
+            "plan_status": "need_revise",
+            "last_step_error": "training action identity required",
+            "execution_events": _append_event(
+                state,
+                {"type": "step_invalid", "index": idx},
+            ),
+        }
+    persisted_params = {
+        key: value
+        for key, value in params.items()
+        if key not in {"token", "idempotency_key"}
+    }
+    action = AutoMLAction(type=action.type, params=persisted_params)
 
     # Hard validate
-    validation = validate_action(action, obs, goal=goal if isinstance(goal, dict) else None)
+    validation = validate_action(
+        action, obs, goal=goal if isinstance(goal, dict) else None
+    )
     events = _append_event(
         state,
         {
             "type": "step_start",
             "index": idx,
             "action": action.type,
-            "params": {k: v for k, v in params.items() if k != "token"},
+            "params": persisted_params,
         },
     )
 
@@ -211,16 +265,9 @@ async def plan_executor_node(state: AutoMLState) -> dict:
 
     # Invoke tool
     payload = await invoke_tool(action.type, params)
-    tool_msg = ToolMessage(
-        content=str(payload) if not isinstance(payload, str) else payload,
-        name=action.type,
-        tool_call_id=f"plan-step-{idx}",
-    )
     # Prefer JSON string content for consistency
-    import json as _json
-
     tool_msg = ToolMessage(
-        content=_json.dumps(payload, ensure_ascii=False, default=str),
+        content=json.dumps(payload, ensure_ascii=False, default=str),
         name=action.type,
         tool_call_id=f"plan-step-{idx}",
     )
@@ -229,19 +276,11 @@ async def plan_executor_node(state: AutoMLState) -> dict:
     cost["steps_executed"] = int(cost.get("steps_executed") or 0) + 1
     cost["tools_called"] = int(cost.get("tools_called") or 0) + 1
 
-    # Update world snapshot from tool output
+    # Cập nhật snapshot World Model từ kết quả công cụ.
     snap = state.get("world_model") or {"user_id": state.get("user_id") or ""}
-    ws = WorldState(
-        user_id=str(state.get("user_id") or snap.get("user_id") or ""),
-        datasets=dict(snap.get("datasets") or {}),
-        jobs=dict(snap.get("jobs") or {}),
-        goals=list(snap.get("goals") or []),
-        plans=dict(snap.get("plans") or {}),
-        active_plan_id=snap.get("active_plan_id"),
-        active_dataset_id=snap.get("active_dataset_id"),
-        active_job_id=snap.get("active_job_id"),
-        active_goal=snap.get("active_goal"),
-        phase=str(snap.get("phase") or "idle"),
+    ws = WorldState.from_execution_snapshot(
+        snap,
+        user_id=state.get("user_id"),
     )
     new_snap = dict(snap)
     if isinstance(payload, dict) and not has_error:
@@ -252,18 +291,36 @@ async def plan_executor_node(state: AutoMLState) -> dict:
         new_snap = ws.to_dict()
 
     # Surprise via WM
+    surprise_obj: SurpriseResult | None = None
     surprise_dict = None
     surprise_level = "low"
     try:
         next_obs = wm_service.observation_from_snapshot(
-            new_snap, user_id=state.get("user_id"), goal=goal if isinstance(goal, dict) else None
+            new_snap,
+            user_id=state.get("user_id"),
+            goal=goal if isinstance(goal, dict) else None,
         )
-        _, _, _, surprise = await wm_service.update(obs, action, next_obs)
-        surprise_dict = surprise.to_dict()
-        surprise_level = surprise.level
+        _, _, _, surprise_obj = await wm_service.update(obs, action, next_obs)
+        surprise_dict = surprise_obj.to_dict()
+        surprise_level = surprise_obj.level
         new_snap["last_surprise"] = surprise_dict
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         logger.debug("Surprise update skipped: %s", exc)
+
+    # Multi-scale aggregate plan surprise
+    step_surprises = [
+        e["surprise"]
+        for e in events
+        if isinstance(e, dict) and e.get("type") == "step_end" and e.get("surprise")
+    ]
+    if surprise_dict:
+        step_surprises.append(surprise_dict)
+
+    surprise_cfg = (
+        wm_service.surprise_config if hasattr(wm_service, "surprise_config") else None
+    )
+    plan_surprise = compute_aggregate_plan_surprise(step_surprises, config=surprise_cfg)
+    new_snap["last_plan_surprise"] = plan_surprise.to_dict()
 
     log.append(
         {
@@ -272,6 +329,7 @@ async def plan_executor_node(state: AutoMLState) -> dict:
             "status": "error" if has_error else "ok",
             "error": payload.get("error") if has_error else None,
             "surprise": surprise_level,
+            "plan_surprise": plan_surprise.level,
         }
     )
     events.append(
@@ -281,6 +339,7 @@ async def plan_executor_node(state: AutoMLState) -> dict:
             "action": action.type,
             "ok": not has_error,
             "surprise": surprise_dict,
+            "plan_surprise": plan_surprise.to_dict(),
             "error": payload.get("error") if has_error else None,
         }
     )
@@ -305,14 +364,23 @@ async def plan_executor_node(state: AutoMLState) -> dict:
             "plan_step_index": idx,
         }
 
-    # High surprise → optional revise (skip expected large-delta actions)
-    if surprise_level == "high" and _revise_on_high_surprise(action.type):
+    # Surprise cao theo bước hoặc toàn plan có thể kích hoạt sửa plan.
+    needs_revision = should_trigger_plan_revision(
+        surprise_obj, plan_surprise, config=surprise_cfg
+    )
+    if needs_revision and _revise_on_high_surprise(action.type):
+        reason = (
+            f"high surprise after {action.type}"
+            if surprise_level == "high"
+            else f"high cumulative plan surprise ({plan_surprise.value:.2f})"
+        )
         return {
             "messages": [AIMessage(content=ai_summary + " (surprise cao → revise)")],
             "plan_status": "need_revise",
-            "last_step_error": f"high surprise after {action.type}",
+            "last_step_error": reason,
             "world_model": new_snap,
             "surprise": surprise_dict,
+            "plan_surprise": plan_surprise.to_dict(),
             "execution_log": log,
             "execution_events": events,
             "cost_metrics": cost,
@@ -321,7 +389,7 @@ async def plan_executor_node(state: AutoMLState) -> dict:
             "latent": None,
         }
 
-    # Success → next step
+    # Thành công thì chuyển sang bước tiếp theo.
     next_idx = idx + 1
     done = next_idx >= len(steps)
     return {
@@ -339,7 +407,7 @@ async def plan_executor_node(state: AutoMLState) -> dict:
 
 
 def plan_executor_route(state: AutoMLState) -> str:
-    """After executor: continue | revise | synthesize."""
+    """Sau khi thực thi: tiếp tục, sửa plan hoặc tổng hợp."""
     status = state.get("plan_status") or ""
     if status == "need_revise":
         return "reviser"

@@ -9,14 +9,13 @@ omits the table (tests / minimal YAML).
 from __future__ import annotations
 
 import math
-from typing import Any, Dict, List
+from typing import Any
 
 from hagent.world.schema import AutoMLAction, LatentState
 
-
 # Fallback deltas when YAML omits transitions (keyed by action type).
 # Values are per-index offsets applied after action fingerprint mix.
-_FALLBACK_TRANSITIONS: Dict[str, Dict[str, Any]] = {
+_FALLBACK_TRANSITIONS: dict[str, dict[str, Any]] = {
     "list_datasets": {"scale": 0.05, "slots": {"dataset_signal": 0.15}},
     "get_dataset_info": {"scale": 0.04, "slots": {"dataset_signal": 0.12}},
     "get_features": {"scale": 0.04, "slots": {"feature_signal": 0.2}},
@@ -31,7 +30,7 @@ _FALLBACK_TRANSITIONS: Dict[str, Dict[str, Any]] = {
 }
 
 # Fixed slot indices into latent vector (documented; overridable via config.slot_indices)
-_DEFAULT_SLOT_INDICES: Dict[str, int] = {
+_DEFAULT_SLOT_INDICES: dict[str, int] = {
     "dataset_signal": 0,
     "feature_signal": 1,
     "model_signal": 2,
@@ -41,7 +40,7 @@ _DEFAULT_SLOT_INDICES: Dict[str, int] = {
 }
 
 
-def _action_fingerprint(action: AutoMLAction, dim: int) -> List[float]:
+def _action_fingerprint(action: AutoMLAction, dim: int) -> list[float]:
     """Small deterministic perturbation from action type + param keys."""
     seed = action.type + "|" + ",".join(sorted(action.params.keys()))
     out = [0.0] * dim
@@ -58,11 +57,11 @@ class TabularTransitionV1Predictor:
     def __init__(self, config: dict | None = None):
         self.config = dict(config or {})
         transitions = self.config.get("transitions")
-        self.transitions: Dict[str, Dict[str, Any]] = (
+        self.transitions: dict[str, dict[str, Any]] = (
             dict(transitions) if isinstance(transitions, dict) else dict(_FALLBACK_TRANSITIONS)
         )
         slots = self.config.get("slot_indices")
-        self.slot_indices: Dict[str, int] = (
+        self.slot_indices: dict[str, int] = (
             dict(slots) if isinstance(slots, dict) else dict(_DEFAULT_SLOT_INDICES)
         )
         self.default_scale = float(self.config.get("default_scale", 0.03))
@@ -79,7 +78,7 @@ class TabularTransitionV1Predictor:
             "slots": {},
         }
         scale = float(spec.get("scale", self.default_scale))
-        slots: Dict[str, float] = dict(spec.get("slots") or {})
+        slots: dict[str, float] = dict(spec.get("slots") or {})
 
         fp = _action_fingerprint(action, dim)
         for i in range(dim):

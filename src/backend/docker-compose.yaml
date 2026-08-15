@@ -79,8 +79,8 @@ services:
       - "${TOOLKIT_HOST_PORT:-5370}:${TOOLKIT_PORT:-8585}"
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    # HAgent: LangGraph multi-agent via hagent.chat_router on app.py
-    # (command mặc định = CMD của dockerfile: python app.py — không override)
+    # HAgent: LangGraph multi-agent qua hagent.chat.router trong composition root.
+    # (command mặc định = CMD: python -m server.application — không override)
     environment:
       <<: *common-env
       HOST_BACK_END: 0.0.0.0
@@ -92,7 +92,7 @@ services:
       KAFKA_TOPIC: ${KAFKA_TOPIC:-example-topic}
       MINIO_ENDPOINT: minio:9000
       HAUTOML_BASE_URL: http://localhost:${TOOLKIT_PORT:-8585}
-      HAGENT_CONFIG: /app/hagent/hagent.yaml
+      HAGENT_CONFIG: /app/hagent/config/hagent.yaml
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:14b}
       LLM_DEFAULT_MODEL: ${LLM_DEFAULT_MODEL:-ollama-ci}
@@ -231,7 +231,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
-      - ./hagent/hagent.yaml:/tmp/hagent.yaml:ro
+      - ./hagent/config/hagent.yaml:/tmp/hagent.yaml:ro
     environment:
       <<: *common-env
       HAGENT_CONFIG: /tmp/hagent.yaml

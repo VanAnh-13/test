@@ -1,0 +1,67 @@
+# ══════════════════════════════════════════════════════════
+# HAgent — Cấu hình mặc định / hạ tầng
+#
+# Chứa: bridge, hautoml, mongodb, auth, memory,
+#        middlewares, logging, error_messages
+# ══════════════════════════════════════════════════════════
+
+# ── Dịch vụ Bridge ───────────────────────────────────────
+bridge:
+  host: "0.0.0.0"
+  port: 9900
+  cors_origins:
+    - "http://localhost:3000"
+    - "http://localhost:3001"
+    - "http://127.0.0.1:3000"
+    - "http://localhost:8080"
+    - "http://127.0.0.1:8080"
+
+# ── HAutoML Backend ─────────────────────────────────────
+hautoml:
+  base_url: "http://localhost:8585"
+
+# ── MongoDB ──────────────────────────────────────────────
+mongodb:
+  connect: "localhost:27017"
+  db_name: "hagent"
+  conversation_ttl_hours: 24
+
+# ── Xác thực JWT (dùng chung secret với HAutoML backend) ─
+auth:
+  secret_key: "${SECRET_KEY}"
+  algorithm: "HS256"
+
+# ── Bộ nhớ (Phase 3 — Context Engineering) ───────────────
+memory:
+  enabled: true
+  backend: "auto"            # auto | local | mongodb
+  collection: "memory_facts"
+  storage_dir: "./data/memory"
+  max_facts: 15              # Max facts inject vào prompt
+  extraction:
+    from_tools: true         # Rút trích facts từ tool outputs
+    from_responses: true     # Rút trích facts từ AI responses
+
+# ── Middleware Pipeline ──────────────────────────────────
+middlewares:
+  enabled: true
+  pipeline:
+    - "timing"
+    - "input_sanitizer"
+    - "world_model"
+    - "memory"
+
+# ── Ghi log ──────────────────────────────────────────────
+logging:
+  level: "info"
+  file: "./logs/hagent.log"
+
+# ── Thông báo lỗi ────────────────────────────────────────
+error_messages:
+  model_memory: "HAgent đã kết nối tới provider AI, nhưng model hiện tại không load được vì thiếu RAM. Model cần {required}, hệ thống hiện còn {available}. Hãy kiểm tra lại provider/model đang cấu hình rồi thử lại."
+  model_endpoint: "HAgent đã gọi provider AI nhưng endpoint trả về trang lỗi thay vì API response. Hãy kiểm tra lại cấu hình provider/model đang sử dụng."
+  timeout: "HAgent xử lý quá lâu và bị timeout. Vui lòng thử lại hoặc dùng yêu cầu ngắn hơn."
+  invalid_response: "HAgent chưa trả về phản hồi hợp lệ. Vui lòng thử lại sau."
+  generic: "HAgent đang gặp lỗi khi xử lý yêu cầu. Chi tiết đã được ghi trong log backend."
+  llm_auth: "API key cho LLM provider không hợp lệ hoặc chưa được cấu hình. Kiểm tra biến môi trường tương ứng."
+  llm_rate_limit: "Đã vượt quá giới hạn gọi API của LLM provider. Vui lòng thử lại sau ít phút."

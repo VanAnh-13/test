@@ -1,0 +1,161 @@
+# ══════════════════════════════════════════════════════════
+# HAgent — Cấu hình World Model
+# (LeWM-style: encode → predict → plan → surprise → trajectory)
+# ══════════════════════════════════════════════════════════
+
+# ── World State (legacy keys; world_model.state preferred) ─
+world_state:
+  collection_name: "world_states"
+  ttl_seconds: 86400  # 24 giờ
+  snapshot_size_limit: 16384 # 16KB
+
+# ── LeWM-style World Model (arXiv:2603.19312 paradigm) ───
+world_model:
+  enabled: true
+  encoder:
+    backend: "structured_v1"
+    dim: 64
+    feature_extractors:
+      - "dataset_counts"
+      - "job_status_histogram"
+      - "best_score_stats"
+      - "phase_one_hot"
+      - "focus_flags"
+      - "feature_coverage"
+      - "goal_type_one_hot"
+      - "active_dataset_hash"
+    phases: ["idle", "analyze", "select", "train", "evaluate", "respond"]
+    goal_types: ["train", "analyze", "evaluate", "list", "respond", "monitor", "unknown"]
+    job_statuses: ["pending", "starting", "running", "completed", "failed", "unknown"]
+  predictor:
+    # tabular_transition_v1 | neural_jepa_v1 | dynamics_ensemble
+    backend: "tabular_transition_v1"
+    default_scale: 0.03
+    # neural_jepa_v1 options (used when backend=neural_jepa_v1)
+    hidden_dim: 128
+    checkpoint_path: "./data/world_model/jepa_v1.npz"
+    fallback: "tabular_transition_v1"
+    # dynamics_ensemble options (backend=dynamics_ensemble) — meta.std per-dim
+    # kích hoạt surprise chuẩn hóa (normalized_thresholds, đơn vị z)
+    k: 5
+    checkpoint_dir: "./data/world_model/dynamics_ensemble"
+  outcome_head:
+    # Dự đoán phân phối best_score của job từ (variant config, dataset meta, z)
+    enabled: true
+    backend: "outcome_head_v1"
+    hidden_dim: 64
+    # use_latent=false: latent z KHÔNG có tại thời điểm build campaign —
+    # bật lên sẽ gây lệch phân phối train/serve (train có z, predict z=0)
+    use_latent: false
+    latent_dim: 64
+    checkpoint_path: "./data/world_model/outcome_head_v2.npz"
+    time_limit_norm: 600
+    search_algorithms:
+      - "grid_search"
+      - "bayesian_search"
+      - "genetic_algorithm"
+      - "random_search"
+      - "successive_halving"
+    problem_types:
+      - "classification"
+      - "regression"
+    # Multi-hot membership của params["models"] — đồng bộ campaign_planner.model_options
+    model_vocab:
+      - "DecisionTreeClassifier"
+      - "RandomForestClassifier"
+      - "KNeighborsClassifier"
+      - "SVC"
+      - "LogisticRegression"
+      - "GaussianNB"
+  outcome_ensemble:
+    # Deep ensemble K outcome heads — epistemic + aleatoric uncertainty
+    enabled: true
+    k: 5
+    hidden_dim: 64
+    # use_latent=false: đồng bộ với outcome_head (tránh train/serve skew)
+    use_latent: false
+    latent_dim: 64
+    model_vocab:
+      - "DecisionTreeClassifier"
+      - "RandomForestClassifier"
+      - "KNeighborsClassifier"
+      - "SVC"
+      - "LogisticRegression"
+      - "GaussianNB"
+    checkpoint_dir: "./data/world_model/outcome_ensemble_v2"
+    time_limit_norm: 600
+    # PHẢI đồng bộ outcome_head.search_algorithms — thiếu key này member
+    # ensemble rơi về default 3 thuật toán, lệch chiều feature với head v2
+    search_algorithms:
+      - "grid_search"
+      - "bayesian_search"
+      - "genetic_algorithm"
+      - "random_search"
+      - "successive_halving"
+  campaign_planner:
+    # CEM thật trên không gian config campaign (score bằng outcome model)
+    enabled: true
+    backend: "cem_config_v1"
+    n_candidates: 32
+    n_iterations: 8
+    elite_fraction: 0.25
+    smoothing: 0.25
+    exploration_weight: 0.1
+    seed: 0
+    # Chiều model-subset (Bernoulli-CEM) — tên theo assets/system_models/classification.yml
+    model_options:
+      - "DecisionTreeClassifier"
+      - "RandomForestClassifier"
+      - "KNeighborsClassifier"
+      - "SVC"
+      - "LogisticRegression"
+      - "GaussianNB"
+    min_models: 1
+  planner:
+    backend: "cem_lite"
+    horizon: 4
+    n_candidates: 8
+    n_return_plans: 2
+    elite_fraction: 0.25
+    distance_metric: "l2"
+    cost_weights:
+      latent_goal: 1.0
+      constraint_violation: 5.0
+      step_penalty: 0.05
+  surprise:
+    metric: "l2"
+    thresholds:
+      medium: 0.15
+      high: 0.40
+    # Outcome-space surprise (z-score theo σ của outcome model)
+    outcome_enabled: true
+    outcome_thresholds:
+      medium: 1.5
+      high: 3.0
+    # Latent surprise chuẩn hóa (tự kích hoạt khi predictor có meta.std)
+    normalized_thresholds:
+      medium: 1.5
+      high: 3.0
+    sigma_floor: 0.001
+  trajectory:
+    enabled: true
+    collection: "world_trajectories"
+    max_per_user: 5000
+  state:
+    collection_name: "world_states"
+    ttl_seconds: 86400
+    snapshot_size_limit: 16384
+  default_action_space:
+    - "list_datasets"
+    - "get_dataset_info"
+    - "get_features"
+    - "preview_data"
+    - "get_available_models"
+    - "get_metrics"
+    - "start_training"
+    - "get_job_info"
+    - "list_jobs"
+    - "check_system_health"
+    - "get_world_state"
+    - "cancel_job"
+    - "predict_batch"

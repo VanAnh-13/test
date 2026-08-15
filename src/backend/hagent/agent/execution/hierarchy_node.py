@@ -1,39 +1,42 @@
 """
-Live hierarchy controller node.
+Node điều khiển hierarchy đang hoạt động.
 
-One graph tick:
-  1. ensure hierarchy + smart-skip
-  2. execute / continue current leaf (analyze tools | campaign | evaluate)
-  3. advance when leaf complete
-  4. loop until hierarchy done → synthesize
+Mỗi tick của graph:
+  1. bảo đảm hierarchy tồn tại và áp dụng bỏ qua thông minh;
+  2. chạy hoặc tiếp tục leaf hiện tại (phân tích, campaign hoặc đánh giá);
+  3. chuyển sang leaf tiếp theo khi leaf hiện tại hoàn tất;
+  4. lặp đến khi hierarchy hoàn tất rồi tổng hợp kết quả.
 """
 
 from __future__ import annotations
 
-import logging
-from typing import Any, Dict, List
+from typing import Any
+
+import structlog
 
 try:
     from langchain_core.messages import AIMessage
 except ImportError:  # pragma: no cover
+
     class AIMessage:  # type: ignore[no-redef]
         def __init__(self, content: str = "", **kwargs):
             self.content = content
             self.type = "ai"
 
+
 from hagent.agent.campaign.runner import campaign_step, ensure_campaign
+from hagent.agent.campaign.settings import max_monitor_ticks
 from hagent.agent.execution.tool_runner import enrich_params, invoke_tool
+from hagent.agent.orchestration import AutoMLState
 from hagent.agent.planning.hierarchy import (
-    GoalHierarchy,
     apply_smart_skips,
     ensure_hierarchy,
     subgoal_as_goal,
 )
-from hagent.agent.state import AutoMLState
 from hagent.world.schema import WorldState
 from hagent.world.updater import apply_tool_output
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 def _append_events(state: AutoMLState, *events: dict) -> list:
@@ -46,17 +49,9 @@ def _merge_tool_into_wm(state: AutoMLState, tool_name: str, payload: dict) -> di
     snap = dict(state.get("world_model") or {"user_id": state.get("user_id") or ""})
     if not isinstance(payload, dict) or payload.get("error"):
         return snap
-    ws = WorldState(
-        user_id=str(state.get("user_id") or snap.get("user_id") or ""),
-        datasets=dict(snap.get("datasets") or {}),
-        jobs=dict(snap.get("jobs") or {}),
-        goals=list(snap.get("goals") or []),
-        plans=dict(snap.get("plans") or {}),
-        active_plan_id=snap.get("active_plan_id"),
-        active_dataset_id=snap.get("active_dataset_id"),
-        active_job_id=snap.get("active_job_id"),
-        active_goal=snap.get("active_goal"),
-        phase=str(snap.get("phase") or "idle"),
+    ws = WorldState.from_execution_snapshot(
+        snap,
+        user_id=state.get("user_id"),
     )
     patch = apply_tool_output(ws, tool_name, payload)
     for k, v in patch.items():
@@ -74,7 +69,7 @@ async def _wm_leaf_update(
     params: dict | None = None,
     goal: dict | None = None,
 ) -> tuple[dict | None, dict]:
-    """Optional LeWM surprise after hierarchy leaf tool."""
+    """Tính surprise LeWM tùy chọn sau khi công cụ của hierarchy leaf chạy."""
     try:
         from hagent.agent.campaign.wm_hooks import campaign_wm_step
 
@@ -88,12 +83,12 @@ async def _wm_leaf_update(
             next_world_model=after_wm,
         )
         return surprise, next_wm or after_wm
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - boundary World Model tùy chọn không được chặn luồng chính
         logger.debug("hierarchy WM update: %s", exc)
         return None, after_wm
 
 
-async def _run_analyze_leaf(state: AutoMLState, leaf_goal: dict) -> Dict[str, Any]:
+async def _run_analyze_leaf(state: AutoMLState, leaf_goal: dict) -> dict[str, Any]:
     user_id = state.get("user_id")
     token = state.get("user_token")
     wm = state.get("world_model")
@@ -137,7 +132,7 @@ async def _run_analyze_leaf(state: AutoMLState, leaf_goal: dict) -> Dict[str, An
     return out
 
 
-async def _run_select_leaf(state: AutoMLState, leaf_goal: dict) -> Dict[str, Any]:
+async def _run_select_leaf(state: AutoMLState, leaf_goal: dict) -> dict[str, Any]:
     ptype = leaf_goal.get("problem_type") or "classification"
     payload = await invoke_tool("get_available_models", {"problem_type": ptype})
     metrics = await invoke_tool("get_metrics", {"problem_type": ptype})
@@ -152,7 +147,7 @@ async def _run_select_leaf(state: AutoMLState, leaf_goal: dict) -> Dict[str, Any
     }
 
 
-async def _run_monitor_leaf(state: AutoMLState, leaf_goal: dict) -> Dict[str, Any]:
+async def _run_monitor_leaf(state: AutoMLState, leaf_goal: dict) -> dict[str, Any]:
     user_id = state.get("user_id")
     params = enrich_params(
         "list_jobs",
@@ -174,8 +169,8 @@ async def _run_monitor_leaf(state: AutoMLState, leaf_goal: dict) -> Dict[str, An
     }
 
 
-async def _run_evaluate_leaf(state: AutoMLState, leaf_goal: dict) -> Dict[str, Any]:
-    # Prefer existing campaign evaluation
+async def _run_evaluate_leaf(state: AutoMLState, leaf_goal: dict) -> dict[str, Any]:
+    # Ưu tiên kết quả đánh giá campaign đã có.
     evaluation = state.get("evaluation")
     if evaluation and evaluation.get("best_job_id"):
         return {
@@ -185,7 +180,7 @@ async def _run_evaluate_leaf(state: AutoMLState, leaf_goal: dict) -> Dict[str, A
             "tools": [],
         }
 
-    # Build lightweight comparison from WM jobs
+    # Tạo bảng so sánh gọn từ các job trong World Model.
     jobs = (state.get("world_model") or {}).get("jobs") or {}
     rows = []
     for jid, j in jobs.items():
@@ -200,7 +195,9 @@ async def _run_evaluate_leaf(state: AutoMLState, leaf_goal: dict) -> Dict[str, A
             }
         )
     rows.sort(
-        key=lambda r: float(r["best_score"]) if r.get("best_score") is not None else -1.0,
+        key=lambda r: (
+            float(r["best_score"]) if r.get("best_score") is not None else -1.0
+        ),
         reverse=True,
     )
     evaluation = {
@@ -218,10 +215,9 @@ async def _run_evaluate_leaf(state: AutoMLState, leaf_goal: dict) -> Dict[str, A
 
 
 def _train_active(state: AutoMLState) -> bool:
-    """Whether a train-leaf campaign is mid-flight (supports legacy underscore key)."""
+    """Kiểm tra campaign của leaf huấn luyện có đang chạy hay không, kể cả khóa cũ."""
     return bool(
-        state.get("hierarchy_train_active")
-        or state.get("_hierarchy_train_active")
+        state.get("hierarchy_train_active") or state.get("_hierarchy_train_active")
     )
 
 
@@ -230,24 +226,24 @@ def _max_hierarchy_ticks() -> int:
         from hagent.bridge.config import get_hierarchy_config
 
         return int(get_hierarchy_config().get("max_ticks", 40))
-    except Exception:
+    except Exception:  # noqa: BLE001 - boundary cấu hình giữ giá trị dự phòng cũ
         return 40
 
 
-async def _run_train_leaf(state: AutoMLState, leaf_goal: dict) -> Dict[str, Any]:
-    """Drive campaign ticks until train leaf completes."""
-    # Isolate leaf goal for campaign
+async def _run_train_leaf(state: AutoMLState, leaf_goal: dict) -> dict[str, Any]:
+    """Điều khiển các tick campaign đến khi leaf huấn luyện hoàn tất."""
+    # Tách riêng mục tiêu của leaf cho campaign.
     leaf_state = {
         **state,
         "goal": leaf_goal,
-        # Reset finished campaign when entering train leaf fresh
+        # Đặt lại campaign đã xong khi bắt đầu một leaf huấn luyện mới.
     }
     cstatus = state.get("campaign_status")
-    # If previous campaign done from earlier root, start fresh for this leaf
+    # Nếu campaign của root trước đã xong thì khởi tạo lại cho leaf này.
     if cstatus in ("done", "failed") and not _train_active(state):
         leaf_state = {**leaf_state, "campaign": None, "campaign_status": None}
 
-    # Safety cap inside train leaf (campaign_node has its own; hierarchy path needs this too)
+    # Giới hạn an toàn trong leaf huấn luyện; nhánh hierarchy cần giới hạn riêng.
     train_ticks = int(state.get("campaign_tick") or 0) + 1
     surp_events: list = []
     campaign = await ensure_campaign(leaf_state)
@@ -260,18 +256,15 @@ async def _run_train_leaf(state: AutoMLState, leaf_goal: dict) -> Dict[str, Any]
         surprise_events=surp_events,
     )
 
-    try:
-        from hagent.bridge.config import get_campaign_config
-
-        max_monitor = int(get_campaign_config().get("max_monitor_ticks", 50))
-    except Exception:
-        max_monitor = 50
+    max_monitor = max_monitor_ticks()
 
     if campaign.status == "monitoring" and train_ticks >= max_monitor:
         for v in campaign.variants:
             if v.status in ("pending", "submitted", "running"):
                 v.status = "failed"
-                v.error = v.error or f"hierarchy train timeout after {max_monitor} ticks"
+                v.error = (
+                    v.error or f"hierarchy train timeout after {max_monitor} ticks"
+                )
         more: list = []
         campaign = await campaign_step(
             campaign,
@@ -284,12 +277,12 @@ async def _run_train_leaf(state: AutoMLState, leaf_goal: dict) -> Dict[str, Any]
         surp_events.extend(more)
 
     train_active = campaign.status not in ("done", "failed")
-    update: Dict[str, Any] = {
+    update: dict[str, Any] = {
         "campaign": campaign.to_dict(),
         "campaign_status": campaign.status,
         "campaign_tick": train_ticks,
         "hierarchy_train_active": train_active,
-        "_hierarchy_train_active": train_active,  # back-compat for any readers
+        "_hierarchy_train_active": train_active,  # giữ tương thích với các bên đọc khóa cũ
         "surprise_events": surp_events,
     }
     if surp_events:
@@ -309,7 +302,7 @@ async def _run_train_leaf(state: AutoMLState, leaf_goal: dict) -> Dict[str, Any]
             "best_job_id": best.job_id if best else None,
             "recommendation": best.best_model if best else None,
         }
-        # Sync jobs into WM
+        # Đồng bộ các job vào World Model.
         wm = dict(
             getattr(campaign, "_world_model_snapshot", None)
             or state.get("world_model")
@@ -318,15 +311,7 @@ async def _run_train_leaf(state: AutoMLState, leaf_goal: dict) -> Dict[str, Any]
         jobs = dict(wm.get("jobs") or {})
         for v in campaign.variants:
             if v.job_id:
-                jobs[v.job_id] = {
-                    "id": v.job_id,
-                    "status": v.status,
-                    "best_model": v.best_model,
-                    "best_score": v.best_score,
-                    "metrics": v.metrics,
-                    "config": v.params,
-                    "dataset_id": v.params.get("dataset_id"),
-                }
+                jobs[v.job_id] = v.to_job_entry()
         wm["jobs"] = jobs
         update.update(
             {
@@ -363,13 +348,13 @@ async def _run_train_leaf(state: AutoMLState, leaf_goal: dict) -> Dict[str, Any]
 
 
 async def hierarchy_node(state: AutoMLState) -> dict:
-    """LangGraph node: adaptive hierarchical controller."""
+    """Node LangGraph điều khiển hierarchy thích ứng."""
     events = list(state.get("execution_events") or [])
     cost = dict(state.get("cost_metrics") or {})
     ticks = int(cost.get("hierarchy_ticks") or 0) + 1
     cost["hierarchy_ticks"] = ticks
 
-    # Global safety: never loop forever (LangGraph would hit recursion limit)
+    # Giới hạn an toàn toàn cục để tránh vòng lặp đến giới hạn đệ quy của LangGraph.
     max_ticks = _max_hierarchy_ticks()
     if ticks > max_ticks:
         events.append(
@@ -398,7 +383,7 @@ async def hierarchy_node(state: AutoMLState) -> dict:
         }
 
     hier = ensure_hierarchy(state)
-    # Re-apply skips with latest WM / evaluation each tick
+    # Áp dụng lại điều kiện bỏ qua theo World Model và đánh giá mới nhất ở mỗi tick.
     skip_events = apply_smart_skips(
         hier,
         world_model=state.get("world_model"),
@@ -445,7 +430,7 @@ async def hierarchy_node(state: AutoMLState) -> dict:
     )
 
     gtype = cur.goal_type.lower()
-    leaf_out: Dict[str, Any]
+    leaf_out: dict[str, Any]
     if gtype == "analyze":
         leaf_out = await _run_analyze_leaf(state, leaf_goal)
     elif gtype == "select":
@@ -457,7 +442,7 @@ async def hierarchy_node(state: AutoMLState) -> dict:
     elif gtype == "train":
         leaf_out = await _run_train_leaf(state, leaf_goal)
     else:
-        # Unknown leaf — skip
+        # Bỏ qua loại leaf không được hỗ trợ.
         leaf_out = {
             "done": True,
             "summary": f"unsupported leaf {gtype}, skipped",
@@ -466,10 +451,10 @@ async def hierarchy_node(state: AutoMLState) -> dict:
         cur.status = "skipped"
         cur.skip_reason = f"unsupported leaf type {gtype}"
 
-    update: Dict[str, Any] = {
+    update: dict[str, Any] = {
         "hierarchy": hier.to_dict(),
         "hierarchy_status": "running",
-        "goal": leaf_goal,  # expose active leaf
+        "goal": leaf_goal,  # công khai leaf đang hoạt động
         "execution_events": events,
         "cost_metrics": cost,
         "current_phase": gtype if gtype != "train" else "train",
@@ -502,14 +487,14 @@ async def hierarchy_node(state: AutoMLState) -> dict:
     if leaf_out.get("done"):
         if leaf_out.get("failed"):
             hier.advance(status="failed", summary=leaf_out.get("summary"))
-            # Continue hierarchy (evaluate may still run) unless config abort
+            # Tiếp tục hierarchy để có thể đánh giá, trừ khi cấu hình yêu cầu dừng.
             abort = False
             try:
                 from hagent.bridge.config import get_hierarchy_config
 
                 abort = bool(get_hierarchy_config().get("abort_on_leaf_fail", False))
-            except Exception:
-                pass
+            except Exception as exc:  # noqa: BLE001 - cấu hình này là tùy chọn
+                logger.debug("hierarchy abort config unavailable: %s", exc)
             events.append(
                 {
                     "type": "subgoal_failed",
@@ -521,9 +506,7 @@ async def hierarchy_node(state: AutoMLState) -> dict:
                 update.update(
                     {
                         "messages": [
-                            AIMessage(
-                                content=f"Hierarchy dừng: leaf `{gtype}` failed."
-                            )
+                            AIMessage(content=f"Hierarchy dừng: leaf `{gtype}` failed.")
                         ],
                         "hierarchy": hier.to_dict(),
                         "hierarchy_status": "failed",
@@ -542,7 +525,7 @@ async def hierarchy_node(state: AutoMLState) -> dict:
                 }
             )
 
-        # Smart-skip remaining after WM update
+        # Bỏ qua thông minh các leaf còn lại sau khi World Model được cập nhật.
         more_skips = apply_smart_skips(
             hier,
             world_model=update.get("world_model") or state.get("world_model"),
@@ -592,12 +575,12 @@ async def hierarchy_node(state: AutoMLState) -> dict:
             ]
             update["hierarchy_status"] = "running"
     else:
-        # Leaf still running (campaign monitoring)
+        # Leaf vẫn đang chạy trong giai đoạn theo dõi campaign.
         update["messages"] = [
             AIMessage(content=f"Hierarchy leaf `{gtype}`: {leaf_out.get('summary')}")
         ]
         update["hierarchy_status"] = "running"
-        # Persist hierarchy without advancing
+        # Lưu hierarchy nhưng chưa chuyển sang leaf tiếp theo.
         update["hierarchy"] = hier.to_dict()
         update["execution_events"] = events
 
@@ -609,7 +592,7 @@ def hierarchy_route(state: AutoMLState) -> str:
     if status in ("done", "failed"):
         return "synthesize"
 
-    # Fallback: if status was dropped, inspect hierarchy progress
+    # Nếu trạng thái bị mất, dùng tiến độ hierarchy làm phương án dự phòng.
     hier = state.get("hierarchy")
     if isinstance(hier, dict):
         try:
@@ -617,8 +600,8 @@ def hierarchy_route(state: AutoMLState) -> str:
             n = len(hier.get("subgoals") or [])
             if n and idx >= n:
                 return "synthesize"
-        except Exception:
-            pass
+        except (TypeError, ValueError):
+            logger.debug("invalid hierarchy progress payload", hierarchy=hier)
 
     if status == "running" or hier:
         return "hierarchy"

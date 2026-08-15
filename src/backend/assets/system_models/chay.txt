@@ -1,7 +1,7 @@
 Cd D:\ScientificResearch\2024-2025\AutoML\src\backend
 D:
 conda activate automl
-python app.py
+python -m server.application
 
 
 Cd D:\ScientificResearch\2024-2025\AutoML\src\backend

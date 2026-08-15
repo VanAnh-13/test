@@ -8,7 +8,7 @@ but tool-only against HAutoML-style actions — no code-gen.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 BASELINE_VERSION = "hagent-eval-v1"
 
@@ -18,8 +18,8 @@ class ToolExpectation:
     """Expected semantic tool call and the output fields that prove it happened."""
 
     name: str
-    arguments: Dict[str, Any] = field(default_factory=dict)
-    evidence_keys: List[str] = field(default_factory=list)
+    arguments: dict[str, Any] = field(default_factory=dict)
+    evidence_keys: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -29,34 +29,34 @@ class EvalScenario:
     id: str
     name: str
     message: str
-    goal: Dict[str, Any]
-    world_model: Dict[str, Any] = field(default_factory=dict)
+    goal: dict[str, Any]
+    world_model: dict[str, Any] = field(default_factory=dict)
     # Expected outcomes for success checks
     expect_goal_type: str = "train"
     expect_min_tools: int = 1
     expect_has_job: bool = True
-    expect_metric: Optional[str] = None
-    tags: List[str] = field(default_factory=list)
+    expect_metric: str | None = None
+    tags: list[str] = field(default_factory=list)
     baseline_version: str | None = None
-    turns: List[str] = field(default_factory=list)
-    expect_goal: Dict[str, Any] = field(default_factory=dict)
-    expect_tool_calls: List[ToolExpectation] = field(default_factory=list)
+    turns: list[str] = field(default_factory=list)
+    expect_goal: dict[str, Any] = field(default_factory=dict)
+    expect_tool_calls: list[ToolExpectation] = field(default_factory=list)
     expect_outcome: str = "succeeded"
     allow_mutations: bool = True
     max_latency_seconds: float | None = None
     max_tokens: int | None = None
-    mock_failures: Dict[str, str] = field(default_factory=dict)
+    mock_failures: dict[str, str] = field(default_factory=dict)
     legacy_expected_success: bool | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
-    def messages(self) -> List[str]:
+    def messages(self) -> list[str]:
         """Return the ordered user turns represented by this scenario."""
         return list(self.turns) if self.turns else [self.message]
 
 
-def default_scenarios() -> List[EvalScenario]:
+def default_scenarios() -> list[EvalScenario]:
     """Built-in tabular scenarios (no external datasets required for mock mode)."""
     glass_wm = {
         "user_id": "eval_user",
@@ -225,7 +225,7 @@ def default_scenarios() -> List[EvalScenario]:
     ]
 
 
-def baseline_scenarios() -> List[EvalScenario]:
+def baseline_scenarios() -> list[EvalScenario]:
     """Frozen behavior-rich cases for legacy/new runtime comparisons."""
     glass_world = {
         "user_id": "eval_user",
@@ -248,7 +248,7 @@ def baseline_scenarios() -> List[EvalScenario]:
         "metric": "f1",
         "constraints": {"time_limit": 300},
     }
-    def train_expectations(scenario_id: str) -> List[ToolExpectation]:
+    def train_expectations(scenario_id: str) -> list[ToolExpectation]:
         return [
             ToolExpectation(
                 name="start_training",
@@ -369,9 +369,9 @@ def baseline_scenarios() -> List[EvalScenario]:
 
 
 def scenarios_by_tags(
-    tags: List[str] | None = None,
-    scenario_ids: List[str] | None = None,
-) -> List[EvalScenario]:
+    tags: list[str] | None = None,
+    scenario_ids: list[str] | None = None,
+) -> list[EvalScenario]:
     all_s = default_scenarios()
     if scenario_ids:
         want = set(scenario_ids)

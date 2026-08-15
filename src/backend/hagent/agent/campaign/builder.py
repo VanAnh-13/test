@@ -8,7 +8,7 @@ call-site magic beyond YAML defaults.
 from __future__ import annotations
 
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from hagent.agent.campaign.schema import Campaign, CampaignVariant
 from hagent.agent.campaign.warm_start import collect_warm_start_configs
@@ -19,7 +19,7 @@ def _campaign_config() -> dict:
         from hagent.bridge.config import get_campaign_config
 
         return get_campaign_config()
-    except Exception:
+    except Exception:  # noqa: BLE001
         return {
             "enabled": True,
             "n_job_candidates": 3,
@@ -37,9 +37,11 @@ def _campaign_config() -> dict:
         }
 
 
-def _base_train_params(goal: dict, user_id: str | None) -> Dict[str, Any]:
-    constraints = goal.get("constraints") if isinstance(goal.get("constraints"), dict) else {}
-    params: Dict[str, Any] = {
+def _base_train_params(goal: dict, user_id: str | None) -> dict[str, Any]:
+    constraints = (
+        goal.get("constraints") if isinstance(goal.get("constraints"), dict) else {}
+    )
+    params: dict[str, Any] = {
         "dataset_id": goal.get("dataset_id"),
         "problem_type": goal.get("problem_type") or "classification",
         "target_column": goal.get("target_column"),
@@ -75,7 +77,7 @@ def _resolve_outcome_model(outcome_model: Any) -> Any | None:
             from hagent.agent.campaign.wm_hooks import _default_outcome_model
 
             return _default_outcome_model()
-        except Exception:
+        except Exception:  # noqa: BLE001
             return None
     return outcome_model if getattr(outcome_model, "is_ready", False) else None
 
@@ -91,15 +93,30 @@ def _campaign_planner(cfg: dict) -> Any | None:
         # Không gian tìm kiếm của planner đồng bộ với campaign config;
         # campaign config có key (kể cả []) thì THẮNG yaml — caller (benchmark)
         # phải kiểm soát được không gian theo từng dataset/điều kiện
-        for key in ("search_algorithms", "time_limit_options", "model_options"):
+        for key in (
+            "search_algorithms",
+            "time_limit_options",
+            "model_options",
+            "n_candidates",
+            "population_size",
+            "n_iterations",
+            "max_iterations",
+            "elite_fraction",
+            "smoothing",
+            "noise_std",
+            "exploration_weight",
+            "convergence_threshold",
+            "patience",
+            "seed",
+        ):
             if cfg.get(key) is not None:
                 planner_cfg[key] = cfg.get(key)
         return create_campaign_planner(planner_cfg)
-    except Exception:
+    except Exception:  # noqa: BLE001
         return None
 
 
-def _variant_signature(params: Dict[str, Any]) -> tuple:
+def _variant_signature(params: dict[str, Any]) -> tuple:
     return (
         params.get("search_algorithm"),
         tuple(params.get("models") or []),
@@ -117,7 +134,7 @@ def propose_extension_variants(
     n_extra: int = 2,
     exploration_weight: float = 0.5,
     config: dict | None = None,
-) -> List[CampaignVariant]:
+) -> list[CampaignVariant]:
     """
     Đề xuất variant MỞ RỘNG sau outcome surprise cao: model vừa bị bất ngờ
     → dự đoán quanh vùng đó không đáng tin → tăng mạnh exploration_weight
@@ -142,7 +159,7 @@ def propose_extension_variants(
     higher = metric not in _LOWER_IS_BETTER_METRICS
 
     existing = {_variant_signature(v.params) for v in campaign.variants}
-    proposals: List[Dict[str, Any]] = []
+    proposals: list[dict[str, Any]] = []
 
     model = _resolve_outcome_model(outcome_model)
     planner = _campaign_planner(cfg) if model is not None else None
@@ -182,7 +199,7 @@ def propose_extension_variants(
             for algo in algorithms
         ]
 
-    out: List[CampaignVariant] = []
+    out: list[CampaignVariant] = []
     for prop in proposals:
         if len(out) >= n_extra:
             break
@@ -220,7 +237,7 @@ async def build_campaign(
     n = max(1, int(cfg.get("n_job_candidates", 3)))
     max_conc = max(1, int(cfg.get("max_concurrent_jobs", 2)))
     top_k = int(cfg.get("warm_start_top_k", 3))
-    algorithms: List[str] = list(
+    algorithms: list[str] = list(
         cfg.get("search_algorithms")
         or [
             "grid_search",
@@ -230,7 +247,7 @@ async def build_campaign(
             "successive_halving",
         ]
     )
-    time_opts: List[int] = list(cfg.get("time_limit_options") or [180, 300, 600])
+    time_opts: list[int] = list(cfg.get("time_limit_options") or [180, 300, 600])
 
     base = _base_train_params(goal, user_id)
     problem_type = base.get("problem_type")
@@ -243,11 +260,10 @@ async def build_campaign(
         fact_store=fact_store,
     )
     warm_labels = [
-        str(w.get("_source_job_id") or w.get("_memory_key") or "warm")
-        for w in warm
+        str(w.get("_source_job_id") or w.get("_memory_key") or "warm") for w in warm
     ]
 
-    variants: List[CampaignVariant] = []
+    variants: list[CampaignVariant] = []
 
     # 0) User yêu cầu thuật toán đích danh (goal_parser → constraints) →
     #    GHIM variant đầu tiên đúng yêu cầu. Không ghim thì vòng diversify
@@ -417,10 +433,12 @@ async def build_campaign(
                     higher_is_better=metric not in _LOWER_IS_BETTER_METRICS,
                 )
                 variants = [v for v, _ in ranked]
-            except Exception:
+            except Exception:  # noqa: BLE001, S110
                 pass
 
-    constraints = goal.get("constraints") if isinstance(goal.get("constraints"), dict) else {}
+    constraints = (
+        goal.get("constraints") if isinstance(goal.get("constraints"), dict) else {}
+    )
     try:
         total_budget = int(constraints.get("max_jobs") or 0) or n * 2
     except (TypeError, ValueError):

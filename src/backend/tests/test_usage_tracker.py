@@ -100,9 +100,7 @@ class TestCallback:
             },
             response_metadata={"model_name": "qwen2.5:14b"},
         )
-        result = LLMResult(
-            generations=[[ChatGeneration(message=msg)]], llm_output={}
-        )
+        result = LLMResult(generations=[[ChatGeneration(message=msg)]], llm_output={})
         cb.on_llm_end(result)
         s = t.summary()
         assert s["by_model"]["qwen2.5:14b"]["input_tokens"] == 15

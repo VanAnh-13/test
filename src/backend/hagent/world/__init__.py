@@ -1,7 +1,7 @@
 """
-HAgent World Model package (LeWM-inspired).
+Package World Model của HAgent lấy cảm hứng từ LeWM.
 
-Public API — prefer WorldModelService for agents.
+API công khai ưu tiên WorldModelService cho các agent.
 """
 
 from hagent.world.schema import (
@@ -26,13 +26,13 @@ __all__ = [
     "LatentState",
     "PlanResult",
     "SurpriseResult",
-    "WorldState",
-    "WorldModelService",
-    "WorldStateStore",
-    "create_world_state_store",
     "TrajectoryStore",
-    "create_trajectory_store",
-    "apply_tool_output",
+    "WorldModelService",
+    "WorldState",
+    "WorldStateStore",
     "apply_plan_event",
+    "apply_tool_output",
+    "create_trajectory_store",
+    "create_world_state_store",
     "utc_now",
 ]

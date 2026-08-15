@@ -1,18 +1,17 @@
 """
 Structured encoder v1 — deterministic feature vector from AutoMLObservation.
-
-Feature extractors are selected by name from config (no hard-coded set in call sites).
 """
 
 from __future__ import annotations
 
 import hashlib
 import math
-from typing import Any, Callable, Dict, List
+from collections.abc import Callable
+from typing import Any
 
 from hagent.world.schema import AutoMLObservation, GoalSpec, LatentState
 
-# Default phase labels if config omits them (config should override)
+# Nhãn phase mặc định khi cấu hình bỏ trống; cấu hình nên ghi đè các giá trị này.
 _DEFAULT_PHASES = ("idle", "analyze", "select", "train", "evaluate", "respond")
 _DEFAULT_GOAL_TYPES = (
     "train",
@@ -40,13 +39,13 @@ def _clamp01(x: float) -> float:
 # ── Named feature extractors (registry) ──────────────────
 
 
-def _dataset_counts(obs: AutoMLObservation, _cfg: dict) -> List[float]:
+def _dataset_counts(obs: AutoMLObservation, _cfg: dict) -> list[float]:
     n = float(len(obs.datasets))
     return [_clamp01(n / 50.0), math.log1p(n) / 5.0]
 
 
-def _job_status_histogram(obs: AutoMLObservation, cfg: dict) -> List[float]:
-    statuses: List[str] = list(
+def _job_status_histogram(obs: AutoMLObservation, cfg: dict) -> list[float]:
+    statuses: list[str] = list(
         cfg.get(
             "job_statuses",
             ["pending", "starting", "running", "completed", "failed", "unknown"],
@@ -64,8 +63,8 @@ def _job_status_histogram(obs: AutoMLObservation, cfg: dict) -> List[float]:
     return [counts.get(s, 0) / total for s in statuses]
 
 
-def _best_score_stats(obs: AutoMLObservation, _cfg: dict) -> List[float]:
-    scores: List[float] = []
+def _best_score_stats(obs: AutoMLObservation, _cfg: dict) -> list[float]:
+    scores: list[float] = []
     for job in obs.jobs.values():
         s = job.get("best_score")
         if s is None:
@@ -89,13 +88,13 @@ def _best_score_stats(obs: AutoMLObservation, _cfg: dict) -> List[float]:
     ]
 
 
-def _phase_one_hot(obs: AutoMLObservation, cfg: dict) -> List[float]:
-    phases: List[str] = list(cfg.get("phases", _DEFAULT_PHASES))
+def _phase_one_hot(obs: AutoMLObservation, cfg: dict) -> list[float]:
+    phases: list[str] = list(cfg.get("phases", _DEFAULT_PHASES))
     phase = (obs.phase or "idle").lower()
     return [1.0 if phase == p else 0.0 for p in phases]
 
 
-def _focus_flags(obs: AutoMLObservation, _cfg: dict) -> List[float]:
+def _focus_flags(obs: AutoMLObservation, _cfg: dict) -> list[float]:
     focus = obs.focus or {}
     return [
         1.0 if focus.get("dataset_id") else 0.0,
@@ -104,7 +103,7 @@ def _focus_flags(obs: AutoMLObservation, _cfg: dict) -> List[float]:
     ]
 
 
-def _feature_coverage(obs: AutoMLObservation, _cfg: dict) -> List[float]:
+def _feature_coverage(obs: AutoMLObservation, _cfg: dict) -> list[float]:
     """How many datasets have features / target known."""
     if not obs.datasets:
         return [0.0, 0.0]
@@ -114,8 +113,8 @@ def _feature_coverage(obs: AutoMLObservation, _cfg: dict) -> List[float]:
     return [with_feat / n, with_target / n]
 
 
-def _goal_type_one_hot(obs: AutoMLObservation, cfg: dict) -> List[float]:
-    types: List[str] = list(cfg.get("goal_types", _DEFAULT_GOAL_TYPES))
+def _goal_type_one_hot(obs: AutoMLObservation, cfg: dict) -> list[float]:
+    types: list[str] = list(cfg.get("goal_types", _DEFAULT_GOAL_TYPES))
     gtype = "unknown"
     if obs.goal and obs.goal.get("goal_type"):
         gtype = str(obs.goal["goal_type"]).lower()
@@ -124,14 +123,14 @@ def _goal_type_one_hot(obs: AutoMLObservation, cfg: dict) -> List[float]:
     return [1.0 if gtype == t else 0.0 for t in types]
 
 
-def _active_dataset_hash(obs: AutoMLObservation, _cfg: dict) -> List[float]:
+def _active_dataset_hash(obs: AutoMLObservation, _cfg: dict) -> list[float]:
     ds_id = (obs.focus or {}).get("dataset_id") or ""
     if not ds_id and obs.datasets:
         ds_id = next(iter(obs.datasets.keys()))
     return [_stable_unit(ds_id) if ds_id else 0.0]
 
 
-EXTRACTORS: Dict[str, Callable[[AutoMLObservation, dict], List[float]]] = {
+EXTRACTORS: dict[str, Callable[[AutoMLObservation, dict], list[float]]] = {
     "dataset_counts": _dataset_counts,
     "job_status_histogram": _job_status_histogram,
     "best_score_stats": _best_score_stats,
@@ -164,26 +163,23 @@ class StructuredV1Encoder:
         unknown = [n for n in names if n not in EXTRACTORS]
         if unknown:
             raise ValueError(
-                f"Unknown feature_extractors: {unknown}. "
-                f"Known: {sorted(EXTRACTORS)}"
+                f"Unknown feature_extractors: {unknown}. Known: {sorted(EXTRACTORS)}"
             )
-        self.extractor_names: List[str] = list(names)
+        self.extractor_names: list[str] = list(names)
 
-    def _raw_features(self, observation: AutoMLObservation) -> List[float]:
-        parts: List[float] = []
+    def _raw_features(self, observation: AutoMLObservation) -> list[float]:
+        parts: list[float] = []
         for name in self.extractor_names:
             parts.extend(EXTRACTORS[name](observation, self.config))
         return parts
 
-    def _to_latent(
-        self, features: List[float], meta: Dict[str, Any]
-    ) -> LatentState:
+    def _to_latent(self, features: list[float], meta: dict[str, Any]) -> LatentState:
         vec = list(features)
         if len(vec) < self.dim:
             vec = vec + [0.0] * (self.dim - len(vec))
         elif len(vec) > self.dim:
             vec = vec[: self.dim]
-        # L2 normalize (avoid collapse to zero vector)
+        # Chuẩn hóa L2 để tránh co về vector không.
         norm = math.sqrt(sum(v * v for v in vec)) or 1.0
         vec = [v / norm for v in vec]
         meta = {**meta, "raw_feature_len": len(features), "l2_norm": norm}
@@ -204,7 +200,7 @@ class StructuredV1Encoder:
     def encode_goal(
         self, goal: GoalSpec, observation: AutoMLObservation
     ) -> LatentState:
-        # Encode observation with goal injected so goal_type_one_hot activates
+        # Mã hóa observation đã chèn goal để kích hoạt goal_type_one_hot.
         obs_with_goal = AutoMLObservation(
             user_id=observation.user_id,
             datasets=observation.datasets,
@@ -215,7 +211,7 @@ class StructuredV1Encoder:
             history_digest=observation.history_digest,
         )
         z = self.encode(obs_with_goal)
-        # Bias latent toward goal descriptors for planning distance
+        # Điều chỉnh latent về phía mô tả goal để tính khoảng cách lập kế hoạch.
         gtype = str(goal.get("goal_type") or "unknown")
         metric = str(goal.get("metric") or "")
         target = float(goal.get("target_score") or 0.0)

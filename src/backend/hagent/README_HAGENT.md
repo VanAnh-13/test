@@ -6,7 +6,7 @@
 Chat UI → Bridge (FastAPI :9900)
             │  JWT + Mongo conversations + WorldState
             ▼
-         toolkit app.py (:8585)
+         server.application (:8585)
             │  POST /api/v1/chat/agent-run
             ▼
          LangGraph multi-agent
@@ -18,7 +18,7 @@ Chat UI → Bridge (FastAPI :9900)
 | Env | Default | Meaning |
 |---|---|---|
 | `HAGENT_AGENT_RUN_URL` | `{HAUTOML}/api/v1/chat/agent-run` | Bridge → toolkit agent |
-| `HAGENT_CONFIG` | `hagent/hagent.yaml` | Central YAML |
+| `HAGENT_CONFIG` | `hagent/config/hagent.yaml` | YAML trung tâm |
 | `OLLAMA_BASE_URL` | host gateway | Local LLM |
 
 ## Docker

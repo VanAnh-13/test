@@ -11,7 +11,7 @@ import AddUserForm from "@/components/addUserForm/AddUserForm";
 import { Plus } from "lucide-react";
 import UserTable from "./UserTable";
 
-import UserForm from "./UserForm";
+import UserForm, { type FormData as UserFormData } from "./UserForm";
 import { User } from "@/hooks/useUsers";
 import useUsers from "@/hooks/useUsers";
 import DialogForm from "../../../components/dialog";
@@ -24,7 +24,8 @@ const UserManagementPage = () => {
   // const [users, setUsers] = useState<User[]>([]);
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [pendingFormData, setPendingFormData] = useState<FormData | null>(null);
+  const [pendingFormData, setPendingFormData] =
+    useState<UserFormData | null>(null);
   const [isConfirmDialogOpen, setIsConfirmDialogOpen] = useState(false);
   const [userToDelete, setUserToDelete] = useState<User | null>(null);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
@@ -48,7 +49,7 @@ const UserManagementPage = () => {
     setIsDialogOpen(false);
   };
 
-  const onSubmit = (data: FormData) => {
+  const onSubmit = (data: UserFormData) => {
     setPendingFormData(data);
     setIsConfirmDialogOpen(true);
   };

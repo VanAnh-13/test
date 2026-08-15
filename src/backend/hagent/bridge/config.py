@@ -1,26 +1,32 @@
 """
 HAgent Bridge — Cấu hình hệ thống
 
-Tải TẤT CẢ cấu hình từ file hagent.yaml.
-KHÔNG có giá trị nào bị hard-code trong mã nguồn Python.
-Biến môi trường có thể ghi đè giá trị trong YAML.
+Backward-compatible facade trên hagent.config.loader.
+
+Toàn bộ các hàm public (`get_bridge_config`, `get_hautoml_config`, ...)
+giữ nguyên signature và hành vi. Consumer code không cần thay đổi.
+
+Implementation detail:
+    `load_config()` nay delegate sang `hagent.config.loader.load_raw_config()`
+    thay vì tải trực tiếp hagent.yaml — cho phép sử dụng đồng thời các file
+    YAML dạng module trong config/ và config/hagent.yaml (module ưu tiên hơn).
 """
 
 import os
-from pathlib import Path
 from functools import lru_cache
-from typing import Any
+from pathlib import Path
 
-import yaml
-
+from hagent.config.loader import load_raw_config as _load_raw_config
 
 # ── Đường dẫn ────────────────────────────────────────────
 
-# Tìm file hagent.yaml — ưu tiên biến môi trường, sau đó tìm tự động
+# Tìm file hagent.yaml — ưu tiên biến môi trường, sau đó tìm tự động.
+_PACKAGE_DIR = Path(__file__).parent.parent
 _DEFAULT_CONFIG_PATHS = [
-    Path(__file__).parent.parent / "hagent.yaml",            # hagent/hagent.yaml
-    Path(__file__).parent.parent.parent / "hagent.yaml",     # backend/hagent.yaml
-    Path.home() / ".hagent" / "hagent.yaml",               # ~/.hagent/hagent.yaml
+    _PACKAGE_DIR / "config" / "hagent.yaml",  # vị trí chuẩn trong package
+    _PACKAGE_DIR / "hagent.yaml",  # vị trí cũ hagent/hagent.yaml
+    Path(__file__).parent.parent.parent / "hagent.yaml",  # backend/hagent.yaml
+    Path.home() / ".hagent" / "hagent.yaml",  # ~/.hagent/hagent.yaml
 ]
 
 
@@ -46,44 +52,19 @@ def _find_config_path() -> Path:
     )
 
 
-def _resolve_env_vars(value: Any) -> Any:
-    """
-    Thay thế chuỗi dạng ${VAR_NAME} bằng giá trị biến môi trường.
-    Hỗ trợ cả giá trị mặc định: ${VAR_NAME:-default}.
-    """
-    if isinstance(value, str) and value.startswith("${") and value.endswith("}"):
-        inner = value[2:-1]
-        if ":-" in inner:
-            var_name, default = inner.split(":-", 1)
-            return os.getenv(var_name, default)
-        return os.getenv(inner, "")
-    return value
-
-
-def _deep_resolve(data: Any) -> Any:
-    """Đệ quy thay thế tất cả biến môi trường trong cấu trúc dữ liệu."""
-    if isinstance(data, dict):
-        return {k: _deep_resolve(v) for k, v in data.items()}
-    elif isinstance(data, list):
-        return [_deep_resolve(item) for item in data]
-    else:
-        return _resolve_env_vars(data)
-
-
 # ── Tải cấu hình ────────────────────────────────────────
 
-@lru_cache()
+
+@lru_cache
 def load_config() -> dict:
     """
-    Tải và cache cấu hình từ hagent.yaml.
-    Tự động resolve các biến môi trường dạng ${VAR}.
+    Tải và cache cấu hình.
+
+    Chuyển tiếp sang ``hagent.config.loader.load_raw_config()`` để tải các file
+    YAML dạng module và/hoặc config/hagent.yaml, sau đó phân giải biến môi
+    trường. Chữ ký được giữ nguyên để tương thích ngược.
     """
-    config_path = _find_config_path()
-
-    with open(config_path, "r", encoding="utf-8") as f:
-        raw = yaml.safe_load(f)
-
-    return _deep_resolve(raw)
+    return _load_raw_config()
 
 
 # ── Các hàm truy xuất cấu hình ──────────────────────────
@@ -104,7 +85,9 @@ def get_hautoml_config() -> dict:
     """Lấy cấu hình HAutoML backend."""
     cfg = load_config()
     h = cfg.get("hautoml", {})
-    h["base_url"] = os.getenv("HAUTOML_BASE_URL", h.get("base_url", "http://localhost:8080"))
+    h["base_url"] = os.getenv(
+        "HAUTOML_BASE_URL", h.get("base_url", "http://localhost:8080")
+    )
     return h
 
 
@@ -324,9 +307,15 @@ def get_cache_config() -> dict:
     """Lấy cấu hình cache cho tool results."""
     agent = get_agent_config()
     cache = agent.get("cache", {}) or {}
-    cache["enabled"] = os.getenv("AGENT_CACHE_ENABLED", str(cache.get("enabled", True))).lower() in ("true", "1", "yes")
-    cache["ttl_seconds"] = int(os.getenv("AGENT_CACHE_TTL", cache.get("ttl_seconds", 300)))
-    cache["max_entries"] = int(os.getenv("AGENT_CACHE_MAX_ENTRIES", cache.get("max_entries", 100)))
+    cache["enabled"] = os.getenv(
+        "AGENT_CACHE_ENABLED", str(cache.get("enabled", True))
+    ).lower() in ("true", "1", "yes")
+    cache["ttl_seconds"] = int(
+        os.getenv("AGENT_CACHE_TTL", cache.get("ttl_seconds", 300))
+    )
+    cache["max_entries"] = int(
+        os.getenv("AGENT_CACHE_MAX_ENTRIES", cache.get("max_entries", 100))
+    )
     return cache
 
 
@@ -351,9 +340,13 @@ def load_prompt_file(relative_path: str | None = None) -> str:
         agent = get_agent_config()
         relative_path = agent.get("system_prompt_path", "./prompts/coordinator.md")
 
-    # Resolve đường dẫn tương đối so với thư mục chứa config
+    # Ưu tiên prompt cạnh file cấu hình ngoài; cấu hình đóng gói dùng hagent/prompts.
     config_dir = _find_config_path().parent
-    prompt_path = config_dir / relative_path
+    prompt_candidates = (config_dir / relative_path, _PACKAGE_DIR / relative_path)
+    prompt_path = next(
+        (candidate for candidate in prompt_candidates if candidate.exists()),
+        prompt_candidates[0],
+    )
 
     if not prompt_path.exists():
         raise FileNotFoundError(
@@ -362,4 +355,3 @@ def load_prompt_file(relative_path: str | None = None) -> str:
         )
 
     return prompt_path.read_text(encoding="utf-8")
-

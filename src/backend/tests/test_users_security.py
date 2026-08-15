@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from http.cookies import SimpleCookie
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -9,6 +10,7 @@ from bson import ObjectId
 from fastapi import BackgroundTasks, HTTPException, Response
 from pydantic import ValidationError
 
+from config.server_runtime import ServerRuntimeConfigError
 from users import engine, routers, schema
 from users.schema import UserLoginRequest, UserRegisterRequest, VerifyOtp
 from users.utils.authentication import JWTService
@@ -89,7 +91,9 @@ async def test_login_nang_cap_password_plaintext_cu(monkeypatch):
     )
     db = _database(tbl_User=users, linked_accounts=linked_accounts)
     monkeypatch.setattr(routers.jwt_service, "create_access_token", lambda _: "access")
-    monkeypatch.setattr(routers.jwt_service, "create_refresh_token", lambda _: "refresh")
+    monkeypatch.setattr(
+        routers.jwt_service, "create_refresh_token", lambda _: "refresh"
+    )
 
     token = await routers.login(
         UserLoginRequest(username="legacy-user", password="legacy-password"),
@@ -122,7 +126,9 @@ async def test_login_nang_cap_ca_hai_ban_ghi_plaintext_cu(monkeypatch):
     linked_accounts = SimpleNamespace(update_one=AsyncMock())
     db = _database(tbl_User=users, linked_accounts=linked_accounts)
     monkeypatch.setattr(routers.jwt_service, "create_access_token", lambda _: "access")
-    monkeypatch.setattr(routers.jwt_service, "create_refresh_token", lambda _: "refresh")
+    monkeypatch.setattr(
+        routers.jwt_service, "create_refresh_token", lambda _: "refresh"
+    )
 
     await routers.login(
         UserLoginRequest(username="dual-legacy-user", password="legacy-password"),
@@ -156,7 +162,9 @@ async def test_login_don_ban_ghi_linked_plaintext_sau_migration_do(monkeypatch):
     linked_accounts = SimpleNamespace(update_one=AsyncMock())
     db = _database(tbl_User=users, linked_accounts=linked_accounts)
     monkeypatch.setattr(routers.jwt_service, "create_access_token", lambda _: "access")
-    monkeypatch.setattr(routers.jwt_service, "create_refresh_token", lambda _: "refresh")
+    monkeypatch.setattr(
+        routers.jwt_service, "create_refresh_token", lambda _: "refresh"
+    )
 
     await routers.login(
         UserLoginRequest(
@@ -169,6 +177,100 @@ async def test_login_don_ban_ghi_linked_plaintext_sau_migration_do(monkeypatch):
     users.update_one.assert_not_awaited()
     linked_hash = linked_accounts.update_one.await_args.args[1]["$set"]["password"]
     assert linked_hash == canonical_hash
+
+
+def _assert_refresh_cookie_policy(header: str, *, secure: bool) -> None:
+    cookie = SimpleCookie()
+    cookie.load(header)
+
+    assert set(cookie) == {"refresh_token"}
+    refresh_token = cookie["refresh_token"]
+    assert refresh_token["path"] == "/"
+    assert refresh_token["httponly"] is True
+    assert refresh_token["samesite"] == "lax"
+    assert bool(refresh_token["secure"]) is secure
+
+
+def _configure_cookie_runtime(monkeypatch, *, secure: bool) -> None:
+    environment = {
+        "DEPLOY_MODE": "public" if secure else "private",
+        "APP_ORIGIN": ("https://hagent.acme.vn" if secure else "http://localhost:8080"),
+        "SUPER_SECRET_KEY": "hAgent9-server-cookie-policy-7f4c2b8d1a6e",
+        "SESSION_HTTPS_ONLY": "true" if secure else "false",
+        "BACKEND_RELOAD": "false",
+    }
+    for key, value in environment.items():
+        monkeypatch.setenv(key, value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("secure", [False, True], ids=("private", "public"))
+async def test_refresh_cookie_dung_runtime_policy(monkeypatch, secure):
+    user_id = ObjectId()
+    users = SimpleNamespace(
+        find_one=AsyncMock(
+            return_value={
+                "_id": user_id,
+                "email": "cookie@example.com",
+                "role": "user",
+            }
+        )
+    )
+    db = _database(tbl_User=users)
+    _configure_cookie_runtime(monkeypatch, secure=secure)
+    monkeypatch.setattr(
+        routers.jwt_service,
+        "verify_token",
+        lambda _: {"type": "refresh", "sub": str(user_id)},
+    )
+    monkeypatch.setattr(routers.jwt_service, "create_access_token", lambda _: "access")
+    monkeypatch.setattr(
+        routers.jwt_service, "create_refresh_token", lambda _: "refresh"
+    )
+    response = Response()
+
+    await routers.refresh_token(
+        response,
+        schema.RefreshRequest(refresh_token="old-refresh"),
+        db,
+    )
+
+    _assert_refresh_cookie_policy(response.headers["set-cookie"], secure=secure)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("secure", [False, True], ids=("private", "public"))
+async def test_logout_cookie_dung_runtime_policy(monkeypatch, secure):
+    _configure_cookie_runtime(monkeypatch, secure=secure)
+    response = Response()
+
+    await routers.logout(response, {"_id": "user-1"})
+
+    header = response.headers["set-cookie"]
+    _assert_refresh_cookie_policy(header, secure=secure)
+    assert "Max-Age=0" in header
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("endpoint", ["refresh_cookie", "logout_cookie"])
+async def test_runtime_config_loi_khong_ghi_cookie(monkeypatch, endpoint):
+    def fail_closed():
+        raise ServerRuntimeConfigError("Cấu hình cookie không hợp lệ.")
+
+    monkeypatch.setattr(routers, "load_cookie_runtime_policy", fail_closed)
+    response = Response()
+
+    with pytest.raises(ServerRuntimeConfigError, match="không hợp lệ"):
+        if endpoint == "refresh_cookie":
+            await routers.refresh_token(
+                response,
+                schema.RefreshRequest(refresh_token="invalid"),
+                _database(tbl_User=SimpleNamespace(find_one=AsyncMock())),
+            )
+        else:
+            await routers.logout(response, {"_id": "user-1"})
+
+    assert "set-cookie" not in response.headers
 
 
 @pytest.mark.asyncio
@@ -283,7 +385,7 @@ async def test_reset_password_hash_va_tu_choi_replay(monkeypatch):
         },
         raising=False,
     )
-    request_type = getattr(schema, "PasswordResetRequest")
+    request_type = schema.PasswordResetRequest
     payload = request_type(
         reset_token="short-lived-reset-token",
         new_password="new-password-123",
@@ -335,7 +437,9 @@ async def test_doi_password_xac_thuc_va_ghi_hash(stored_password):
         db=db,
     )
 
-    target = users.update_one if stored_password is not None else linked_accounts.update_one
+    target = (
+        users.update_one if stored_password is not None else linked_accounts.update_one
+    )
     password_hash = target.await_args.args[1]["$set"]["password"]
     assert password_hash != "new-password-123"
     assert HashHelper.verify_password("new-password-123", password_hash)

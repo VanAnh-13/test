@@ -13,13 +13,13 @@ BACKEND_DIR = Path(__file__).parent.parent
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-from hagent.world.schema import AutoMLAction, AutoMLObservation, LatentState
-from hagent.world.service import WorldModelService
+from hagent.world.predictor.factory import create_predictor
 from hagent.world.predictor.neural_jepa_v1 import (
     NeuralJepaV1Predictor,
     train_neural_jepa,
 )
-from hagent.world.predictor.factory import create_predictor
+from hagent.world.schema import AutoMLAction, AutoMLObservation, LatentState
+from hagent.world.service import WorldModelService
 from hagent.world.trajectory_store import TrajectoryStore, create_trajectory_store
 
 
@@ -72,7 +72,12 @@ class TestNeuralPredictor:
             }
         )
         docs = []
-        for at in ("list_datasets", "get_dataset_info", "start_training", "get_job_info"):
+        for at in (
+            "list_datasets",
+            "get_dataset_info",
+            "start_training",
+            "get_job_info",
+        ):
             obs = _obs()
             next_obs = _obs()
             next_obs.jobs = {
@@ -104,7 +109,7 @@ class TestNeuralPredictor:
                 "fallback": "tabular_transition_v1",
             }
         )
-        assert loaded._loaded
+        assert loaded.loaded
         z = LatentState(vector=[0.05] * 32, dim=32)
         out = loaded.predict(z, AutoMLAction(type="list_datasets", params={}))
         assert out.meta.get("predictor") == "neural_jepa_v1"
@@ -125,7 +130,9 @@ class TestTrajectoryFactory:
         action = AutoMLAction(type="list_datasets", params={})
         z = LatentState(vector=[0.1, 0.2], dim=2)
         z2 = LatentState(vector=[0.2, 0.1], dim=2)
-        s = compute_surprise(z, z2, {"metric": "l2", "thresholds": {"medium": 0.1, "high": 0.5}})
+        s = compute_surprise(
+            z, z2, {"metric": "l2", "thresholds": {"medium": 0.1, "high": 0.5}}
+        )
         await store.append(
             user_id="u1",
             observation=obs,
@@ -145,7 +152,10 @@ class TestTrajectoryFactory:
 class TestWmHooks:
     @pytest.mark.asyncio
     async def test_campaign_wm_step(self):
-        from hagent.agent.campaign.wm_hooks import campaign_wm_step, blend_score_with_surprise
+        from hagent.agent.campaign.wm_hooks import (
+            blend_score_with_surprise,
+            campaign_wm_step,
+        )
 
         wm = WorldModelService.from_config(
             {

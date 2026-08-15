@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
+
+import structlog
 
 from hagent.agent.harness.loader import load_all_scenarios
 from hagent.agent.harness.reporter import build_report
@@ -12,21 +13,21 @@ from hagent.agent.harness.runners.graph import run_graph_scenario
 from hagent.agent.harness.runners.offline import run_offline_scenario
 from hagent.agent.harness.schema import AgentRunResult
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 OFFLINE_MODES = ("single_shot", "plan_executor", "campaign", "hierarchical")
 
 
 async def run_harness_suite(
     *,
-    layers: Optional[List[str]] = None,
-    offline_modes: Optional[List[str]] = None,
-    tags: Optional[List[str]] = None,
-    scenario_ids: Optional[List[str]] = None,
-    api_base_url: Optional[str] = None,
-    api_token: Optional[str] = None,
+    layers: list[str] | None = None,
+    offline_modes: list[str] | None = None,
+    tags: list[str] | None = None,
+    scenario_ids: list[str] | None = None,
+    api_base_url: str | None = None,
+    api_token: str | None = None,
     require_live: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     layers = [x.strip().lower() for x in (layers or ["offline", "graph"])]
     if "all" in layers:
         layers = ["offline", "graph", "api"]
@@ -35,7 +36,7 @@ async def run_harness_suite(
         for m in (offline_modes or list(OFFLINE_MODES))
     ]
     scenarios = load_all_scenarios(tags=tags, scenario_ids=scenario_ids)
-    results: List[AgentRunResult] = []
+    results: list[AgentRunResult] = []
 
     for scenario in scenarios:
         if "offline" in layers:

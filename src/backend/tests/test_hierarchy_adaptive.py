@@ -62,18 +62,14 @@ class TestSmartSkip:
         h = decompose_goal(GOAL)
         analyze = h.subgoals[0]
         assert analyze.goal_type == "analyze"
-        skip, reason = should_skip_subgoal(
-            analyze, root_goal=GOAL, world_model=RICH_WM
-        )
+        skip, reason = should_skip_subgoal(analyze, root_goal=GOAL, world_model=RICH_WM)
         assert skip is True
         assert "features" in reason.lower() or "known" in reason.lower()
 
     def test_skip_select_when_metric_ready(self):
         h = decompose_goal(GOAL)
         select = next(s for s in h.subgoals if s.goal_type == "select")
-        skip, reason = should_skip_subgoal(
-            select, root_goal=GOAL, world_model=RICH_WM
-        )
+        skip, reason = should_skip_subgoal(select, root_goal=GOAL, world_model=RICH_WM)
         assert skip is True
 
     def test_do_not_skip_train(self):
@@ -148,7 +144,7 @@ class TestLiveHierarchy:
             "hierarchy_status": "running",
         }
         # Build hierarchy with smart skip via first tick
-        from hagent.agent.planning.hierarchy import decompose_goal, apply_smart_skips
+        from hagent.agent.planning.hierarchy import apply_smart_skips, decompose_goal
 
         hier = decompose_goal(GOAL)
         apply_smart_skips(hier, world_model=RICH_WM)
@@ -164,10 +160,7 @@ class TestLiveHierarchy:
         assert state["hierarchy_status"] == "done"
         assert state.get("evaluation", {}).get("best_job_id")
         # analyze/select should be skipped
-        statuses = {
-            s["goal_type"]: s["status"]
-            for s in state["hierarchy"]["subgoals"]
-        }
+        statuses = {s["goal_type"]: s["status"] for s in state["hierarchy"]["subgoals"]}
         assert statuses.get("analyze") == "skipped"
         assert statuses.get("select") == "skipped"
         assert statuses.get("train") == "done"

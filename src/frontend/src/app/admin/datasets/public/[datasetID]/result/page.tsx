@@ -9,7 +9,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState } from "react";
 import { LoaderCircle } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
@@ -28,7 +28,7 @@ type Props = {
 };
 
 const ResultPage = ({ params }: Props) => {
-  const { post } = useApi();
+  const { postIdempotent } = useApi();
 
   const [datasetID, setDatasetID] = useState<string | null>(null);
   const [config, setConfig] = useState<any>(null);
@@ -107,17 +107,20 @@ const ResultPage = ({ params }: Props) => {
 
       setIsLoading(true);
       try {
-        const resultData = await post(`/v2/auto/jobs/training`, requestBody);
+        const resultData = await postIdempotent(
+          `/v2/auto/jobs/training`,
+          requestBody,
+        );
         setResult(resultData);
-      } catch (err) {
-        console.error("Lỗi khi gọi API train:", err);
+      } catch {
+        setError("Không thể bắt đầu huấn luyện. Vui lòng thử lại.");
       } finally {
         setIsLoading(false);
       }
     };
 
     trainModel();
-  }, [config]);
+  }, [config, datasetID, postIdempotent, session?.user?.id]);
 
   if (error) {
     return <div>{error}</div>;

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 @dataclass
@@ -11,26 +11,26 @@ class ExpectSpec:
     """Declarative expectations for a scenario run."""
 
     success: bool = True
-    goal_type: Optional[str] = None
-    route_in: List[str] = field(default_factory=list)
+    goal_type: str | None = None
+    route_in: list[str] = field(default_factory=list)
     tools_called_min: int = 0
-    tools_called_max: Optional[int] = None
-    tools_include: List[str] = field(default_factory=list)
-    tools_order: List[str] = field(default_factory=list)
-    has_job: Optional[bool] = None
-    hierarchy_status: Optional[str] = None
-    campaign_status: Optional[str] = None
-    plan_status: Optional[str] = None
-    wm_has_job: Optional[bool] = None
-    event_types_include: List[str] = field(default_factory=list)
-    max_elapsed_seconds: Optional[float] = None
-    max_tools: Optional[int] = None
+    tools_called_max: int | None = None
+    tools_include: list[str] = field(default_factory=list)
+    tools_order: list[str] = field(default_factory=list)
+    has_job: bool | None = None
+    hierarchy_status: str | None = None
+    campaign_status: str | None = None
+    plan_status: str | None = None
+    wm_has_job: bool | None = None
+    event_types_include: list[str] = field(default_factory=list)
+    max_elapsed_seconds: float | None = None
+    max_tools: int | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any] | None) -> "ExpectSpec":
+    def from_dict(cls, data: dict[str, Any] | None) -> ExpectSpec:
         data = dict(data or {})
         # aliases
         if "max_tools" in data and "tools_called_max" not in data:
@@ -46,25 +46,25 @@ class AgentScenario:
     id: str
     name: str
     message: str
-    tags: List[str] = field(default_factory=list)
+    tags: list[str] = field(default_factory=list)
     user_id: str = "eval_user"
-    world_model: Dict[str, Any] = field(default_factory=dict)
-    goal: Dict[str, Any] = field(default_factory=dict)
-    turns: List[Dict[str, str]] = field(default_factory=list)
+    world_model: dict[str, Any] = field(default_factory=dict)
+    goal: dict[str, Any] = field(default_factory=dict)
+    turns: list[dict[str, str]] = field(default_factory=list)
     expect: ExpectSpec = field(default_factory=ExpectSpec)
     # Offline mode hints (legacy Phase 7)
-    expect_goal_type: Optional[str] = None
+    expect_goal_type: str | None = None
     expect_min_tools: int = 0
     expect_has_job: bool = False
-    expect_metric: Optional[str] = None
+    expect_metric: str | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
         d["expect"] = self.expect.to_dict()
         return d
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "AgentScenario":
+    def from_dict(cls, data: dict[str, Any]) -> AgentScenario:
         raw = dict(data)
         expect = ExpectSpec.from_dict(raw.pop("expect", None))
         # Bridge legacy fields into expect when not set
@@ -90,25 +90,25 @@ class AgentRunResult:
     layer: str  # offline | graph | api
     mode: str
     success: bool
-    reasons: List[str] = field(default_factory=list)
+    reasons: list[str] = field(default_factory=list)
     elapsed_seconds: float = 0.0
     tools_called: int = 0
-    tool_names: List[str] = field(default_factory=list)
+    tool_names: list[str] = field(default_factory=list)
     steps_executed: int = 0
     revisions: int = 0
     campaign_variants: int = 0
     campaign_completed: int = 0
-    best_score: Optional[float] = None
-    best_job_id: Optional[str] = None
-    plan_status: Optional[str] = None
-    campaign_status: Optional[str] = None
-    hierarchy_status: Optional[str] = None
+    best_score: float | None = None
+    best_job_id: str | None = None
+    plan_status: str | None = None
+    campaign_status: str | None = None
+    hierarchy_status: str | None = None
     hierarchy_depth: int = 0
-    route: Optional[str] = None
-    event_types: List[str] = field(default_factory=list)
-    cost_metrics: Dict[str, Any] = field(default_factory=dict)
+    route: str | None = None
+    event_types: list[str] = field(default_factory=list)
+    cost_metrics: dict[str, Any] = field(default_factory=dict)
     response: str = ""
-    extra: Dict[str, Any] = field(default_factory=dict)
+    extra: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)

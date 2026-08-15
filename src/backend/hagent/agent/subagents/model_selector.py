@@ -9,20 +9,19 @@ SRP: Chỉ xử lý domain model selection/recommendation.
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
+import structlog
 from langchain_core.messages import AIMessage
 
-from hagent.agent.state import AutoMLState
+from hagent.agent.orchestration import AutoMLState
 from hagent.agent.subagents import SubAgent
 from hagent.agent.tools.automl_tools import MODEL_TOOLS, get_dataset_info
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class ModelSelectorAgent(SubAgent):
-
     @property
     def name(self) -> str:
         return "model_selector"

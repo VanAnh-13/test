@@ -9,24 +9,23 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
-# ─── Chat ────────────────────────────────────────────────
-
 
 class ChatRequest(BaseModel):
-    """Canonical chat request accepted by both sync and stream endpoints."""
+    """Request chat chuẩn dùng cho cả điểm vào đồng bộ và streaming."""
 
     model_config = ConfigDict(extra="forbid")
 
     message: str = Field(..., description="Nội dung tin nhắn")
     conversation_id: str | None = Field(
-        None, description="ID cuộc hội thoại (tạo mới nếu null)"
+        None,
+        description="ID cuộc hội thoại (tạo mới nếu null)",
     )
     context: dict | None = Field(None, description="Ngữ cảnh bổ sung")
     model: str | None = Field(None, description="Model cụ thể — xem hagent.yaml")
 
 
 class ChatResponse(BaseModel):
-    """Schema cho response chat."""
+    """Response chuẩn được trả về từ trình xử lý chat của Bridge và toolkit."""
 
     message: str
     conversation_id: str
@@ -36,7 +35,6 @@ class ChatResponse(BaseModel):
     model: str = ""
     route: str = ""
     tool_outputs: list[dict] = Field(default_factory=list)
-    # World Model / planning surface
     plan_status: str | None = None
     selected_plan: dict | None = None
     planning: dict | None = None
@@ -53,11 +51,11 @@ class ChatResponse(BaseModel):
     evaluation: dict | None = None
 
 
-# ─── Health ──────────────────────────────────────────────
+# ─── Trạng thái hệ thống ─────────────────────────────────
 
 
 class HealthResponse(BaseModel):
-    """Schema cho health check — tất cả giá trị từ YAML."""
+    """Schema kiểm tra trạng thái; tất cả giá trị được lấy từ YAML."""
 
     hagent_url: str
     connected: bool
@@ -68,7 +66,7 @@ class HealthResponse(BaseModel):
     available_providers: list[str]
 
 
-# ─── Suggestions ─────────────────────────────────────────
+# ─── Gợi ý ───────────────────────────────────────────────
 
 
 class SuggestionsResponse(BaseModel):
@@ -77,11 +75,11 @@ class SuggestionsResponse(BaseModel):
     suggestions: list[str]
 
 
-# ─── Providers ───────────────────────────────────────────
+# ─── Nhà cung cấp model ──────────────────────────────────
 
 
 class ProviderInfo(BaseModel):
-    """Thông tin một provider — dữ liệu từ YAML."""
+    """Thông tin một nhà cung cấp model được lấy từ YAML."""
 
     name: str
     provider_id: str
@@ -91,14 +89,14 @@ class ProviderInfo(BaseModel):
 
 
 class ProvidersResponse(BaseModel):
-    """Danh sách tất cả providers — dữ liệu từ YAML."""
+    """Danh sách tất cả nhà cung cấp model được lấy từ YAML."""
 
     default_provider: str
     default_model: str
     providers: list[ProviderInfo]
 
 
-# ─── Conversation (MongoDB) ─────────────────────────────
+# ─── Hội thoại (MongoDB) ────────────────────────────────
 
 
 class ConversationMessage(BaseModel):

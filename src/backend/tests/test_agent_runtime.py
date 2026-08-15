@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import asdict
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -43,23 +43,38 @@ async def _collect(iterator):
 
 @pytest.mark.asyncio
 async def test_tool_call_scope_injection_is_authoritative_and_concurrency_safe():
-    from hagent.agent.graph import _inject_request_scope_into_tool_call
+    from types import SimpleNamespace
+
+    from hagent.agent.orchestration.graph import _inject_request_scope_into_tool_call
+    from hagent.agent.runtime.context import GraphRequestContext
 
     class _Tool:
-        args = {"token": {}, "user_id": {}, "dataset_id": {}}
+        def __init__(self):
+            self.args = {"token": {}, "user_id": {}, "dataset_id": {}}
 
     class _Request:
-        def __init__(self, *, state, tool_call):
+        def __init__(self, *, state, runtime, tool_call):
             self.state = state
+            self.runtime = runtime
             self.tool = _Tool()
             self.tool_call = tool_call
 
         def override(self, *, tool_call):
-            return _Request(state=self.state, tool_call=tool_call)
+            return _Request(
+                state=self.state,
+                runtime=self.runtime,
+                tool_call=tool_call,
+            )
 
     async def invoke(owner, token):
         request = _Request(
-            state={"user_id": owner, "user_token": token},
+            state={"user_id": "state-spoofed", "user_token": "state-token"},
+            runtime=SimpleNamespace(
+                context=GraphRequestContext(
+                    principal_id=owner,
+                    credential=token,
+                )
+            ),
             tool_call={
                 "name": "get_dataset_info",
                 "id": owner,
@@ -97,23 +112,37 @@ async def test_tool_call_scope_injection_is_authoritative_and_concurrency_safe()
 
 @pytest.mark.asyncio
 async def test_missing_scope_credential_cannot_inherit_ambient_token(monkeypatch):
-    from hagent.agent.graph import _inject_request_scope_into_tool_call
+    from types import SimpleNamespace
+
+    from hagent.agent.orchestration.graph import _inject_request_scope_into_tool_call
+    from hagent.agent.runtime.context import GraphRequestContext
 
     class _Tool:
-        args = {"token": {}, "dataset_id": {}}
+        def __init__(self):
+            self.args = {"token": {}, "dataset_id": {}}
 
     class _Request:
-        tool = _Tool()
-        state = {"user_id": "owner", "user_token": None}
-        tool_call = {
-            "name": "get_dataset_info",
-            "id": "call-1",
-            "type": "tool_call",
-            "args": {
-                "dataset_id": "dataset",
-                "token": "model-supplied-token",
-            },
-        }
+        def __init__(self):
+            self.tool = _Tool()
+            self.state = {
+                "user_id": "state-spoofed",
+                "user_token": "state-secret",
+            }
+            self.runtime = SimpleNamespace(
+                context=GraphRequestContext(
+                    principal_id="owner",
+                    credential=None,
+                )
+            )
+            self.tool_call = {
+                "name": "get_dataset_info",
+                "id": "call-1",
+                "type": "tool_call",
+                "args": {
+                    "dataset_id": "dataset",
+                    "token": "model-supplied-token",
+                },
+            }
 
         def override(self, *, tool_call):
             raise AssertionError("unauthenticated tool request must not execute")
@@ -190,10 +219,13 @@ async def test_dispatch_is_typed_monotonic_idempotent_and_replayable():
     assert any(isinstance(event, ArtifactProduced) for event in events)
     assert any(isinstance(event, EvidenceAdded) for event in events)
     assert isinstance(events[-1], RunCompleted)
-    assert sum(
-        isinstance(event, (RunCompleted, RunFailed, RunCancelled))
-        for event in events
-    ) == 1
+    assert (
+        sum(
+            isinstance(event, (RunCompleted, RunFailed, RunCancelled))
+            for event in events
+        )
+        == 1
+    )
 
     serialized = str([runtime_event_to_dict(event) for event in events])
     assert "runtime-secret" not in serialized
@@ -351,9 +383,7 @@ async def test_active_run_capacity_fails_closed():
     await asyncio.wait_for(source_started.wait(), timeout=1)
 
     with pytest.raises(RuntimeCapacityExceeded):
-        await _collect(
-            runtime.dispatch(StartTurn(message="overflow"), scope=scope)
-        )
+        await _collect(runtime.dispatch(StartTurn(message="overflow"), scope=scope))
 
     active.cancel()
     with pytest.raises(asyncio.CancelledError):
@@ -429,7 +459,7 @@ async def test_future_deadline_cancels_blocked_source_and_records_terminal():
             StartTurn(message="deadline"),
             scope=RequestScope(
                 principal_id="owner",
-                deadline=datetime.now(timezone.utc) + timedelta(milliseconds=20),
+                deadline=datetime.now(UTC) + timedelta(milliseconds=20),
             ),
         )
     )
@@ -653,7 +683,9 @@ async def test_cancelled_dispatch_is_recorded_for_owner_replay():
             yield {}
 
     runtime = LegacyGraphRuntime(event_source=source)
-    command = StartTurn(command_id="cancel-command", run_id="cancel-run", message="wait")
+    command = StartTurn(
+        command_id="cancel-command", run_id="cancel-run", message="wait"
+    )
     scope = RequestScope(principal_id="owner")
     task = asyncio.create_task(_collect(runtime.dispatch(command, scope=scope)))
 
@@ -662,7 +694,9 @@ async def test_cancelled_dispatch_is_recorded_for_owner_replay():
     with pytest.raises(asyncio.CancelledError):
         await task
 
-    replayed = await _collect(runtime.replay("cancel-run", after_sequence=0, scope=scope))
+    replayed = await _collect(
+        runtime.replay("cancel-run", after_sequence=0, scope=scope)
+    )
     repeated = await asyncio.wait_for(
         _collect(runtime.dispatch(command, scope=scope)),
         timeout=1,
@@ -689,9 +723,7 @@ async def test_unsupported_approval_and_cancel_commands_are_explicit_failures():
             )
         )
     with pytest.raises(UnsupportedRuntimeCommand):
-        await _collect(
-            runtime.dispatch(CancelRun(run_id="run"), scope=scope)
-        )
+        await _collect(runtime.dispatch(CancelRun(run_id="run"), scope=scope))
 
 
 @pytest.mark.asyncio

@@ -58,14 +58,17 @@ def _make_docs(n=30, seed=0):
         for i in range(n)
     ]
 
+
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
 
 def _canonical_sha256(value) -> str:
     payload = json.dumps(
         value, sort_keys=True, separators=(",", ":"), ensure_ascii=False
     ).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
+
 
 def _rewrite_npz(path: Path, **updates) -> None:
     with np.load(path, allow_pickle=False) as archive:
@@ -74,14 +77,11 @@ def _rewrite_npz(path: Path, **updates) -> None:
     np.savez(path, **values)
 
 
-
 class TestJsonlLoading:
     def test_roundtrip(self, tmp_path):
         docs = _make_docs(5)
         p = tmp_path / "traj.jsonl"
-        p.write_text(
-            "\n".join(json.dumps(d) for d in docs), encoding="utf-8"
-        )
+        p.write_text("\n".join(json.dumps(d) for d in docs), encoding="utf-8")
         loaded = tom.load_docs_jsonl(str(p))
         assert len(loaded) == 5
         assert loaded[0]["z_next"]["dim"] == 64
@@ -114,9 +114,10 @@ class TestTrainAndSave:
         assert "checkpoint_path" not in manifest["config"]["outcome_head"]
         assert "checkpoint_dir" not in manifest["config"]["outcome_ensemble"]
         with np.load(head_path, allow_pickle=False) as checkpoint:
-            assert checkpoint["search_algorithms"].tolist() == manifest[
-                "vocabulary"
-            ]["outcome_head"]["search_algorithms"]
+            assert (
+                checkpoint["search_algorithms"].tolist()
+                == manifest["vocabulary"]["outcome_head"]["search_algorithms"]
+            )
         assert manifest["training"] == {
             "epochs": 5,
             "seed": 7,
@@ -176,9 +177,7 @@ class TestTrainAndSave:
             ("vocabulary_sha256", "f" * 64),
         ],
     )
-    def test_validator_rejects_invalid_manifest_metadata(
-        self, tmp_path, field, value
-    ):
+    def test_validator_rejects_invalid_manifest_metadata(self, tmp_path, field, value):
         head_path = tmp_path / "outcome_head.npz"
         ens_dir = tmp_path / "ensemble"
         tom.train_from_docs(
@@ -196,9 +195,7 @@ class TestTrainAndSave:
         with pytest.raises(ValueError, match="Invalid checkpoint manifest"):
             tom.validate_checkpoint_manifest(head_path, ens_dir, expected_k=2)
 
-    def test_validator_rejects_rehashed_vocabulary_checkpoint_mismatch(
-        self, tmp_path
-    ):
+    def test_validator_rejects_rehashed_vocabulary_checkpoint_mismatch(self, tmp_path):
         head_path = tmp_path / "outcome_head.npz"
         ens_dir = tmp_path / "ensemble"
         tom.train_from_docs(
@@ -213,9 +210,7 @@ class TestTrainAndSave:
         manifest["vocabulary"]["outcome_head"]["search_algorithms"] = [
             "forged_algorithm"
         ]
-        manifest["vocabulary_sha256"] = _canonical_sha256(
-            manifest["vocabulary"]
-        )
+        manifest["vocabulary_sha256"] = _canonical_sha256(manifest["vocabulary"])
         manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 
         with pytest.raises(ValueError, match="checkpoint vocabulary mismatch"):
@@ -252,6 +247,7 @@ class TestTrainAndSave:
 
         with pytest.raises(ValueError, match=error):
             tom.validate_checkpoint_manifest(head_path, ens_dir, expected_k=2)
+
     def test_validator_rejects_incomplete_training_metadata(self, tmp_path):
         head_path = tmp_path / "outcome_head.npz"
         ens_dir = tmp_path / "ensemble"
@@ -437,14 +433,20 @@ class TestTrainAndSave:
             k=2,
         )
 
-        import hagent.agent.campaign.wm_hooks as wm_hooks
+        from hagent.agent.campaign import wm_hooks
 
         monkeypatch.setattr(
             wm_hooks,
             "get_world_model_config",
             lambda: {
-                "outcome_head": {"checkpoint_path": str(head_path), "use_latent": False},
-                "outcome_ensemble": {"checkpoint_dir": str(ens_dir), "use_latent": False},
+                "outcome_head": {
+                    "checkpoint_path": str(head_path),
+                    "use_latent": False,
+                },
+                "outcome_ensemble": {
+                    "checkpoint_dir": str(ens_dir),
+                    "use_latent": False,
+                },
             },
             raising=False,
         )
@@ -455,8 +457,14 @@ class TestTrainAndSave:
             bridge_config,
             "get_world_model_config",
             lambda: {
-                "outcome_head": {"checkpoint_path": str(head_path), "use_latent": False},
-                "outcome_ensemble": {"checkpoint_dir": str(ens_dir), "use_latent": False},
+                "outcome_head": {
+                    "checkpoint_path": str(head_path),
+                    "use_latent": False,
+                },
+                "outcome_ensemble": {
+                    "checkpoint_dir": str(ens_dir),
+                    "use_latent": False,
+                },
             },
         )
         wm_hooks._outcome_model_cache["fingerprint"] = None  # xóa memo cũ
@@ -464,8 +472,12 @@ class TestTrainAndSave:
         model = wm_hooks._default_outcome_model()
         assert model is not None and model.is_ready
         pred = model.predict(
-            {"search_algorithm": "grid_search", "problem_type": "classification",
-             "metric": "accuracy", "time_limit": 180},
+            {
+                "search_algorithm": "grid_search",
+                "problem_type": "classification",
+                "metric": "accuracy",
+                "time_limit": 180,
+            },
             {"n_rows": 500, "n_cols": 8},
         )
         assert pred is not None and np.isfinite(pred.mean)
@@ -485,10 +497,13 @@ class TestMemoization:
         head_path = tmp_path / "h.npz"
         ens_dir = tmp_path / "e"
         tom.train_and_save(
-            _make_docs(30), head_path=str(head_path), ensemble_dir=str(ens_dir),
-            epochs=10, k=2,
+            _make_docs(30),
+            head_path=str(head_path),
+            ensemble_dir=str(ens_dir),
+            epochs=10,
+            k=2,
         )
-        import hagent.agent.campaign.wm_hooks as wm_hooks
+        from hagent.agent.campaign import wm_hooks
 
         self._patch_cfg(monkeypatch, head_path, ens_dir)
         wm_hooks._outcome_model_cache["fingerprint"] = None
@@ -500,16 +515,20 @@ class TestMemoization:
         # Retrain (mtime đổi) → nạp model mới
         time.sleep(0.05)
         tom.train_and_save(
-            _make_docs(30, seed=1), head_path=str(head_path),
-            ensemble_dir=str(ens_dir), epochs=10, k=2,
+            _make_docs(30, seed=1),
+            head_path=str(head_path),
+            ensemble_dir=str(ens_dir),
+            epochs=10,
+            k=2,
         )
         import os
+
         os.utime(head_path)
         m3 = wm_hooks._default_outcome_model()
         assert m3 is not m1
 
     def test_missing_checkpoints_memoized_none(self, tmp_path, monkeypatch):
-        import hagent.agent.campaign.wm_hooks as wm_hooks
+        from hagent.agent.campaign import wm_hooks
 
         self._patch_cfg(monkeypatch, tmp_path / "nope.npz", tmp_path / "noe")
         wm_hooks._outcome_model_cache["fingerprint"] = None

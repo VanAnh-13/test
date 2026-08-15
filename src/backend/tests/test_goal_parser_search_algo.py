@@ -88,7 +88,9 @@ class TestBuilderPinsRequested:
             "constraints": {"search_algorithm": "successive_halving"},
         }
         camp = run(
-            build_campaign(goal, user_id="t8_no_mem", config=BUILD_CFG, outcome_model=None)
+            build_campaign(
+                goal, user_id="t8_no_mem", config=BUILD_CFG, outcome_model=None
+            )
         )
         assert camp.variants[0].source == "requested"
         assert camp.variants[0].params["search_algorithm"] == "successive_halving"
@@ -104,6 +106,8 @@ class TestBuilderPinsRequested:
             "target_column": "target",
         }
         camp = run(
-            build_campaign(goal, user_id="t8_no_mem", config=BUILD_CFG, outcome_model=None)
+            build_campaign(
+                goal, user_id="t8_no_mem", config=BUILD_CFG, outcome_model=None
+            )
         )
         assert all(v.source != "requested" for v in camp.variants)

@@ -11,11 +11,12 @@ factory backend "dynamics_ensemble".
 
 from __future__ import annotations
 
-import logging
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Dict, List, Sequence
+from typing import Any
 
 import numpy as np
+import structlog
 
 from hagent.world.predictor.neural_jepa_v1 import (
     NeuralJepaV1Predictor,
@@ -23,7 +24,7 @@ from hagent.world.predictor.neural_jepa_v1 import (
 )
 from hagent.world.schema import AutoMLAction, LatentState
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 _MEMBER_PREFIX = "member_"
 
@@ -35,14 +36,14 @@ class DynamicsEnsemble:
         self.config = dict(config or {})
         self.k = max(1, int(self.config.get("k", 5)))
         self.checkpoint_dir = self.config.get("checkpoint_dir")
-        self.members: List[NeuralJepaV1Predictor] = []
+        self.members: list[NeuralJepaV1Predictor] = []
 
         if self.checkpoint_dir:
             self._try_load(str(self.checkpoint_dir))
 
     @property
     def is_ready(self) -> bool:
-        return any(m._loaded and m._W1 is not None for m in self.members)
+        return any(m.loaded and m.W1 is not None for m in self.members)
 
     def _member_config(self) -> dict:
         cfg = dict(self.config)
@@ -56,12 +57,12 @@ class DynamicsEnsemble:
         if not d.is_dir():
             logger.info("Dynamics ensemble checkpoint dir missing: %s", directory)
             return
-        loaded: List[NeuralJepaV1Predictor] = []
+        loaded: list[NeuralJepaV1Predictor] = []
         for p in sorted(d.glob(f"{_MEMBER_PREFIX}*.npz")):
             cfg = self._member_config()
             cfg["checkpoint_path"] = str(p)
             member = NeuralJepaV1Predictor(cfg)
-            if member._loaded and member._W1 is not None:
+            if member.loaded and member.W1 is not None:
                 loaded.append(member)
         if loaded:
             self.members = loaded
@@ -70,16 +71,16 @@ class DynamicsEnsemble:
             )
 
     def save(self, directory: str) -> None:
-        ready = [m for m in self.members if m._loaded and m._W1 is not None]
+        ready = [m for m in self.members if m.loaded and m.W1 is not None]
         if not ready:
             raise RuntimeError("No dynamics ensemble members to save")
         d = Path(directory)
         d.mkdir(parents=True, exist_ok=True)
         for i, m in enumerate(ready):
-            m.save(str(d / f"{_MEMBER_PREFIX}{i}.npz"), latent_dim=m._latent_dim or 0)
+            m.save(str(d / f"{_MEMBER_PREFIX}{i}.npz"), latent_dim=m.latent_dim or 0)
 
     def predict(self, z: LatentState, action: AutoMLAction) -> LatentState:
-        ready = [m for m in self.members if m._loaded and m._W1 is not None]
+        ready = [m for m in self.members if m.loaded and m.W1 is not None]
         if not ready:
             # Chưa train → identity kèm cờ mode (không bịa uncertainty)
             return LatentState(
@@ -108,7 +109,7 @@ class DynamicsEnsemble:
 
 
 def train_dynamics_ensemble(
-    trajectories: List[Dict[str, Any]],
+    trajectories: list[dict[str, Any]],
     *,
     latent_dim: int,
     k: int = 5,

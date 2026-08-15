@@ -72,8 +72,11 @@ def _patch_campaign_cfg(monkeypatch, ext):
         "max_concurrent_jobs": 4,
         "warm_start_top_k": 0,
         "search_algorithms": [
-            "grid_search", "bayesian_search", "genetic_algorithm",
-            "random_search", "successive_halving",
+            "grid_search",
+            "bayesian_search",
+            "genetic_algorithm",
+            "random_search",
+            "successive_halving",
         ],
         "time_limit_options": [180, 300, 600],
         "surprise_extension": ext,
@@ -128,9 +131,14 @@ class TestExtensionRound:
 
         camp = run(
             build_campaign(
-                GOAL, user_id="t5",
-                config={"n_job_candidates": 2, "warm_start_top_k": 0,
-                        "wm_variant_proposal": False, "wm_rank_variants": False},
+                GOAL,
+                user_id="t5",
+                config={
+                    "n_job_candidates": 2,
+                    "warm_start_top_k": 0,
+                    "wm_variant_proposal": False,
+                    "wm_rank_variants": False,
+                },
                 outcome_model=None,
             )
         )
@@ -155,9 +163,14 @@ class TestExtensionRound:
         set_tool_invoker(_fake_tools(score=0.2))
         camp = run(
             build_campaign(
-                GOAL, user_id="t5", config={"n_job_candidates": 2, "warm_start_top_k": 0,
-                                            "wm_variant_proposal": False,
-                                            "wm_rank_variants": False},
+                GOAL,
+                user_id="t5",
+                config={
+                    "n_job_candidates": 2,
+                    "warm_start_top_k": 0,
+                    "wm_variant_proposal": False,
+                    "wm_rank_variants": False,
+                },
                 outcome_model=None,
             )
         )
@@ -172,9 +185,14 @@ class TestExtensionRound:
         set_tool_invoker(_fake_tools(score=0.2))
         camp = run(
             build_campaign(
-                GOAL, user_id="t5", config={"n_job_candidates": 2, "warm_start_top_k": 0,
-                                            "wm_variant_proposal": False,
-                                            "wm_rank_variants": False},
+                GOAL,
+                user_id="t5",
+                config={
+                    "n_job_candidates": 2,
+                    "warm_start_top_k": 0,
+                    "wm_variant_proposal": False,
+                    "wm_rank_variants": False,
+                },
                 outcome_model=None,
             )
         )
@@ -189,9 +207,14 @@ class TestExtensionRound:
         set_tool_invoker(_fake_tools(score=0.85))
         camp = run(
             build_campaign(
-                GOAL, user_id="t5", config={"n_job_candidates": 2, "warm_start_top_k": 0,
-                                            "wm_variant_proposal": False,
-                                            "wm_rank_variants": False},
+                GOAL,
+                user_id="t5",
+                config={
+                    "n_job_candidates": 2,
+                    "warm_start_top_k": 0,
+                    "wm_variant_proposal": False,
+                    "wm_rank_variants": False,
+                },
                 outcome_model=None,
             )
         )
@@ -204,9 +227,14 @@ class TestExtensionRound:
         set_tool_invoker(_fake_tools(score=0.2))
         camp = run(
             build_campaign(
-                GOAL, user_id="t5", config={"n_job_candidates": 2, "warm_start_top_k": 0,
-                                            "wm_variant_proposal": False,
-                                            "wm_rank_variants": False},
+                GOAL,
+                user_id="t5",
+                config={
+                    "n_job_candidates": 2,
+                    "warm_start_top_k": 0,
+                    "wm_variant_proposal": False,
+                    "wm_rank_variants": False,
+                },
                 outcome_model=None,
             )
         )
@@ -217,9 +245,12 @@ class TestExtensionRound:
             ticks = 0
             while c.status not in ("done", "failed") and ticks < 10:
                 c = await campaign_step(
-                    c, user_id="t5", user_token=None,
+                    c,
+                    user_id="t5",
+                    user_token=None,
                     world_model={"datasets": {"ds1": dict(DATASET_META)}},
-                    surprise_events=events, outcome_model=None,
+                    surprise_events=events,
+                    outcome_model=None,
                 )
                 ticks += 1
             return c
@@ -229,8 +260,9 @@ class TestExtensionRound:
         assert c.status == "done"
 
     def test_extension_rounds_survives_dict_roundtrip(self):
-        camp = Campaign(campaign_id="c1", goal=dict(GOAL), variants=[],
-                        extension_rounds=1)
+        camp = Campaign(
+            campaign_id="c1", goal=dict(GOAL), variants=[], extension_rounds=1
+        )
         assert Campaign.from_dict(camp.to_dict()).extension_rounds == 1
 
 
@@ -240,28 +272,41 @@ class TestProposeExtensionVariants:
 
         async def make():
             return await build_campaign(
-                GOAL, user_id="t5", config={"n_job_candidates": 3, "warm_start_top_k": 0,
-                                            "wm_variant_proposal": False,
-                                            "wm_rank_variants": False},
+                GOAL,
+                user_id="t5",
+                config={
+                    "n_job_candidates": 3,
+                    "warm_start_top_k": 0,
+                    "wm_variant_proposal": False,
+                    "wm_rank_variants": False,
+                },
                 outcome_model=None,
             )
 
         camp = run(make())
         head = _trained_head()
         new = propose_extension_variants(
-            camp, GOAL, dataset_meta=DATASET_META, outcome_model=head, n_extra=2,
+            camp,
+            GOAL,
+            dataset_meta=DATASET_META,
+            outcome_model=head,
+            n_extra=2,
         )
         assert 1 <= len(new) <= 2
         sigs = {
-            (v.params.get("search_algorithm"), v.params.get("time_limit"),
-             tuple(v.params.get("models") or []))
+            (
+                v.params.get("search_algorithm"),
+                v.params.get("time_limit"),
+                tuple(v.params.get("models") or []),
+            )
             for v in camp.variants
         }
         for v in new:
             assert v.source == "surprise_extension"
             assert v.label.startswith("ext1_")
             assert (
-                v.params.get("search_algorithm"), v.params.get("time_limit"),
+                v.params.get("search_algorithm"),
+                v.params.get("time_limit"),
                 tuple(v.params.get("models") or []),
             ) not in sigs
 
@@ -270,16 +315,25 @@ class TestProposeExtensionVariants:
 
         async def make():
             return await build_campaign(
-                GOAL, user_id="t5", config={"n_job_candidates": 2, "warm_start_top_k": 0,
-                                            "wm_variant_proposal": False,
-                                            "wm_rank_variants": False},
+                GOAL,
+                user_id="t5",
+                config={
+                    "n_job_candidates": 2,
+                    "warm_start_top_k": 0,
+                    "wm_variant_proposal": False,
+                    "wm_rank_variants": False,
+                },
                 outcome_model=None,
             )
 
         camp = run(make())
         tried = {v.params.get("search_algorithm") for v in camp.variants}
         new = propose_extension_variants(
-            camp, GOAL, dataset_meta=DATASET_META, outcome_model=None, n_extra=2,
+            camp,
+            GOAL,
+            dataset_meta=DATASET_META,
+            outcome_model=None,
+            n_extra=2,
         )
         assert new
         for v in new:
@@ -290,8 +344,14 @@ class TestSelectSurprise:
     def test_prefers_outcome_highest_zscore(self):
         buf = [
             {"type": "campaign_surprise", "surprise": {"value": 0.5, "level": "high"}},
-            {"type": "campaign_outcome_surprise", "outcome": {"zscore": 2.0, "level": "medium"}},
-            {"type": "campaign_outcome_surprise", "outcome": {"zscore": 5.0, "level": "high"}},
+            {
+                "type": "campaign_outcome_surprise",
+                "outcome": {"zscore": 2.0, "level": "medium"},
+            },
+            {
+                "type": "campaign_outcome_surprise",
+                "outcome": {"zscore": 5.0, "level": "high"},
+            },
         ]
         picked = _select_surprise(buf)
         assert picked["kind"] == "outcome"

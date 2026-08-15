@@ -107,9 +107,7 @@ class TestDynamicsEnsemble:
 
 class TestNormalizedSurprise:
     def _pred_with_std(self, vec, std):
-        return LatentState(
-            vector=list(vec), dim=len(vec), meta={"std": list(std)}
-        )
+        return LatentState(vector=list(vec), dim=len(vec), meta={"std": list(std)})
 
     def test_zscore_math(self):
         pred = self._pred_with_std([0.0, 0.0], [0.1, 0.1])
@@ -132,7 +130,9 @@ class TestNormalizedSurprise:
     def test_thresholds_from_config(self):
         pred = self._pred_with_std([0.0], [0.1])
         cfg = {"normalized_thresholds": {"medium": 0.5, "high": 1.0}}
-        assert compute_normalized_latent_surprise(pred, _z([0.06]), cfg).level == "medium"
+        assert (
+            compute_normalized_latent_surprise(pred, _z([0.06]), cfg).level == "medium"
+        )
         assert compute_normalized_latent_surprise(pred, _z([0.2]), cfg).level == "high"
 
     def test_compute_surprise_autodetects_std(self):

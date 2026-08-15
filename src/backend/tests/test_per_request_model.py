@@ -9,7 +9,7 @@ import asyncio
 import pytest
 from langchain_core.messages import AIMessage
 
-from hagent.agent.llm_config import (
+from hagent.agent.llm import (
     create_chat_model,
     get_current_model_name,
     require_model_config,
@@ -69,7 +69,7 @@ class TestContextvarModelSelection:
 
 class TestRunAgentModelName:
     def test_bad_model_raises_before_graph(self, monkeypatch):
-        import hagent.agent.graph as graph_mod
+        import hagent.agent.orchestration.graph as graph_mod
 
         invoked = {"n": 0}
 
@@ -89,7 +89,7 @@ class TestRunAgentModelName:
         assert invoked["n"] == 0  # nổ TRƯỚC khi chạy graph
 
     def test_model_name_visible_inside_run_and_in_result(self, monkeypatch):
-        import hagent.agent.graph as graph_mod
+        import hagent.agent.orchestration.graph as graph_mod
 
         seen = {}
 
@@ -108,14 +108,12 @@ class TestRunAgentModelName:
                 }
 
         monkeypatch.setattr(graph_mod, "get_automl_graph", lambda: _StubGraph())
-        result = run(
-            graph_mod.run_agent("hi", user_id="t12", model_name="ci-mock")
-        )
+        result = run(graph_mod.run_agent("hi", user_id="t12", model_name="ci-mock"))
         assert seen["model"] == "ci-mock"  # subagent/coordinator sẽ dùng đúng model
         assert result["model"] == "ci-mock"
 
     def test_no_model_keeps_default_behavior(self, monkeypatch):
-        import hagent.agent.graph as graph_mod
+        import hagent.agent.orchestration.graph as graph_mod
 
         class _StubGraph:
             async def astream_events(self, state, version="v2"):

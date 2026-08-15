@@ -1,13 +1,15 @@
 """
-WorldModelService — single facade agents use (LeWM-style pipeline).
+WorldModelService là facade duy nhất các agent sử dụng theo pipeline kiểu LeWM.
 
   encode → predict → plan → step(update with surprise)
 """
 
 from __future__ import annotations
 
-import logging
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from collections.abc import Callable, Sequence
+from typing import Any
+
+import structlog
 
 from hagent.world.encoder.factory import create_encoder
 from hagent.world.planner.factory import create_planner
@@ -24,14 +26,14 @@ from hagent.world.schema import (
 from hagent.world.surprise import compute_surprise
 from hagent.world.trajectory_store import TrajectoryStore
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class WorldModelService:
     """
-    Facade: Encoder + Predictor + Planner + Surprise + optional trajectory log.
+    Facade gồm Encoder, Predictor, Planner, Surprise và log trajectory tùy chọn.
 
-    Construct via WorldModelService.from_config(...).
+    Khởi tạo qua WorldModelService.from_config(...).
     """
 
     def __init__(
@@ -41,6 +43,7 @@ class WorldModelService:
         predictor: Any,
         planner: Any,
         surprise_config: dict | None = None,
+        adaptive_config: dict | None = None,
         trajectory_store: TrajectoryStore | None = None,
         action_space: Sequence[str] | None = None,
         enabled: bool = True,
@@ -49,9 +52,11 @@ class WorldModelService:
         self.predictor = predictor
         self.planner = planner
         self.surprise_config = dict(surprise_config or {})
+        self.adaptive_config = dict(adaptive_config or {})
         self.trajectory_store = trajectory_store
-        self.action_space: List[str] = list(action_space or [])
+        self.action_space: list[str] = list(action_space or [])
         self.enabled = enabled
+        self._user_adaptive_state: dict[str, dict[str, Any]] = {}
 
     @classmethod
     def from_config(
@@ -62,19 +67,19 @@ class WorldModelService:
         action_space: Sequence[str] | None = None,
         mongo_client: Any | None = None,
         db_name: str | None = None,
-    ) -> "WorldModelService":
+    ) -> WorldModelService:
         """
-        Build service from world_model config section.
+        Tạo dịch vụ từ phần cấu hình world_model.
 
-        If config is None, load from hagent.yaml via bridge.config.
-        When mongo_client is provided, trajectories persist to Mongo.
+        Nếu config là None, tải từ hagent.yaml qua bridge.config.
+        Khi có mongo_client, các trajectory được lưu bền vững vào Mongo.
         """
         if config is None:
             try:
                 from hagent.bridge.config import get_world_model_config
 
                 config = get_world_model_config()
-            except Exception:
+            except (ImportError, KeyError, ValueError, RuntimeError, OSError):
                 config = {}
 
         cfg = dict(config or {})
@@ -83,6 +88,7 @@ class WorldModelService:
         predictor = create_predictor(cfg.get("predictor") or {})
         planner = create_planner(predictor, cfg.get("planner") or {})
         surprise_cfg = cfg.get("surprise") or {}
+        adaptive_cfg = cfg.get("adaptive_update") or {}
 
         traj_cfg = cfg.get("trajectory") or {}
         if trajectory_store is None and traj_cfg.get("enabled", True):
@@ -98,7 +104,7 @@ class WorldModelService:
 
         space = list(action_space or cfg.get("action_space") or [])
         if not space:
-            # Default closed action space from known tools (overridable in YAML)
+            # Không gian action đóng mặc định từ công cụ đã biết và có thể ghi đè bằng YAML.
             space = list(
                 cfg.get("default_action_space")
                 or [
@@ -123,6 +129,7 @@ class WorldModelService:
             predictor=predictor,
             planner=planner,
             surprise_config=surprise_cfg,
+            adaptive_config=adaptive_cfg,
             trajectory_store=trajectory_store,
             action_space=space,
             enabled=enabled,
@@ -147,7 +154,7 @@ class WorldModelService:
         goal: GoalSpec,
         *,
         action_space: Sequence[str] | None = None,
-    ) -> List[PlanResult]:
+    ) -> list[PlanResult]:
         z0 = self.encode(observation)
         z_goal = self.encode_goal(goal, observation)
         space = list(action_space or self.action_space)
@@ -175,9 +182,9 @@ class WorldModelService:
         observation: AutoMLObservation,
         action: AutoMLAction,
         next_observation: AutoMLObservation,
-    ) -> Tuple[LatentState, LatentState, LatentState, SurpriseResult]:
+    ) -> tuple[LatentState, LatentState, LatentState, SurpriseResult]:
         """
-        After env step: encode o, predict ẑ', encode o', surprise, log trajectory.
+        Sau bước môi trường: mã hóa o, dự đoán ẑ', mã hóa o', tính surprise và ghi trajectory.
         """
         z = self.encode(observation)
         z_hat = self.predict(z, action)
@@ -206,12 +213,12 @@ class WorldModelService:
         apply_result: Callable[
             [AutoMLObservation, AutoMLAction, Any], AutoMLObservation
         ],
-    ) -> Tuple[AutoMLObservation, SurpriseResult]:
+    ) -> tuple[AutoMLObservation, SurpriseResult]:
         """
-        Full env step: action → env → next obs → surprise update.
+        Bước môi trường đầy đủ: action → môi trường → observation kế tiếp → cập nhật surprise.
 
-        env: sync or async callable(action) -> tool payload
-        apply_result: merge payload into next observation
+        env là callable đồng bộ hoặc bất đồng bộ nhận action và trả payload công cụ.
+        apply_result gộp payload vào observation kế tiếp.
         """
         import inspect
 
@@ -252,3 +259,124 @@ class WorldModelService:
             phase=str(snapshot.get("phase") or "idle"),
             goal=goal or snapshot.get("active_goal"),
         )
+
+    # ── Adaptive Update Scheduling ───────────────────────
+
+    def should_update_adaptive(
+        self,
+        user_id: str,
+        current_surprise: float | SurpriseResult | None = None,
+        *,
+        force: bool = False,
+    ) -> bool:
+        """
+        Xác định có nên cập nhật trạng thái và động lực học World Model ở bước này hay không.
+
+        - Nếu surprise hoặc momentum cao, cập nhật ở mọi bước với interval tối thiểu bằng 1.
+        - Nếu surprise liên tục thấp, giảm tần suất đến interval tối đa.
+        - Nếu force là True, trả về True ngay và đặt lại bộ đếm.
+        """
+        if force or not self.adaptive_config.get("enabled", True):
+            if user_id in self._user_adaptive_state:
+                self._user_adaptive_state[user_id]["steps_since_update"] = 0
+            return True
+
+        min_interval = int(self.adaptive_config.get("min_update_interval", 1))
+        max_interval = int(self.adaptive_config.get("max_update_interval", 5))
+        decay = float(self.adaptive_config.get("surprise_decay", 0.8))
+
+        state = self._user_adaptive_state.setdefault(
+            user_id,
+            {
+                "steps_since_update": 0,
+                "momentum": 0.0,
+                "current_interval": min_interval,
+            },
+        )
+
+        s_val = 0.0
+        is_high = False
+        if current_surprise is not None:
+            if isinstance(current_surprise, SurpriseResult):
+                s_val = float(current_surprise.value)
+                is_high = current_surprise.level == "high"
+            else:
+                s_val = float(current_surprise)
+                is_high = s_val >= 0.40
+
+            state["momentum"] = decay * state["momentum"] + (1.0 - decay) * s_val
+
+        # Kích hoạt ngay khi surprise hoặc momentum tăng cao.
+        if is_high or state["momentum"] >= 0.30:
+            state["current_interval"] = min_interval
+            state["steps_since_update"] = 0
+            return True
+
+        state["steps_since_update"] += 1
+        should_update = state["steps_since_update"] >= state["current_interval"]
+        if should_update:
+            state["steps_since_update"] = 0
+
+        # Điều chỉnh interval cho các bước sau nếu surprise vẫn thấp.
+        if current_surprise is not None and s_val < 0.15 and state["momentum"] < 0.20:
+            state["current_interval"] = min(max_interval, state["current_interval"] + 1)
+
+        return should_update
+
+    def record_step_surprise(
+        self,
+        user_id: str,
+        surprise: SurpriseResult | float,
+    ) -> tuple[float, float]:
+        """
+        Ghi nhận surprise đã quan sát và trả về surprise_momentum cùng update_frequency mới.
+        """
+        min_interval = int(self.adaptive_config.get("min_update_interval", 1))
+        max_interval = int(self.adaptive_config.get("max_update_interval", 5))
+        decay = float(self.adaptive_config.get("surprise_decay", 0.8))
+
+        state = self._user_adaptive_state.setdefault(
+            user_id,
+            {
+                "steps_since_update": 0,
+                "momentum": 0.0,
+                "current_interval": min_interval,
+            },
+        )
+
+        if isinstance(surprise, SurpriseResult):
+            s_val = float(surprise.value)
+            is_high = surprise.level == "high"
+        else:
+            s_val = float(surprise)
+            is_high = s_val >= 0.40
+
+        state["momentum"] = decay * state["momentum"] + (1.0 - decay) * s_val
+
+        if is_high or state["momentum"] >= 0.30:
+            state["current_interval"] = min_interval
+        elif s_val < 0.15 and state["momentum"] < 0.20:
+            state["current_interval"] = min(max_interval, state["current_interval"] + 1)
+
+        update_freq = 1.0 / max(state["current_interval"], 1)
+        return float(state["momentum"]), float(update_freq)
+
+    def get_adaptive_state(self, user_id: str) -> dict[str, Any]:
+        return dict(
+            self._user_adaptive_state.get(
+                user_id,
+                {
+                    "steps_since_update": 0,
+                    "momentum": 0.0,
+                    "current_interval": int(
+                        self.adaptive_config.get("min_update_interval", 1)
+                    ),
+                },
+            )
+        )
+
+    def reset_adaptive_state(self, user_id: str | None = None) -> None:
+        if user_id is not None:
+            self._user_adaptive_state.pop(user_id, None)
+        else:
+            self._user_adaptive_state.clear()

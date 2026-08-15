@@ -1,13 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 
 type RouteContext = {
-  params:
-    | {
-        path?: string[];
-      }
-    | Promise<{
-        path?: string[];
-      }>;
+  params: Promise<{
+    path?: string[];
+  }>;
 };
 
 const HOP_BY_HOP_HEADERS = new Set([

@@ -26,14 +26,15 @@ import argparse
 import json
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Dict, List
+from typing import Any
 
 BACKEND = Path(__file__).resolve().parent.parent
 if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
 
-import numpy as np  # noqa: E402
+import numpy as np
 
 # 6 bộ eval của agent_matrix_config.yaml — generator này KHÔNG ĐƯỢC đụng tới
 EVAL_DATASETS = frozenset(
@@ -44,7 +45,7 @@ DEFAULT_OUT = BACKEND / "data" / "world_model" / "warmup_trajectories.jsonl"
 
 # Cùng job config với ma trận (agent_matrix_config.yaml) — outcome phân bố
 # giống môi trường serve
-JOB_CFG: Dict[str, Any] = {
+JOB_CFG: dict[str, Any] = {
     "cv": 3,
     "time_limit": 60,
     "param_grid": {
@@ -55,7 +56,7 @@ JOB_CFG: Dict[str, Any] = {
 }
 
 
-def build_profiles() -> List[Dict[str, Any]]:
+def build_profiles() -> list[dict[str, Any]]:
     """Lưới 24 profile phủ meta-space: rows × classes × frac categorical."""
     profiles = []
     for n_rows in (300, 1000, 3000, 10000):
@@ -76,7 +77,7 @@ def build_profiles() -> List[Dict[str, Any]]:
     return profiles
 
 
-def make_dataset(profile: Dict[str, Any], seed: int) -> Dict[str, Any]:
+def make_dataset(profile: dict[str, Any], seed: int) -> dict[str, Any]:
     """Synthetic dataset + meta tính bằng ĐÚNG meta_features_from_frame."""
     import pandas as pd
     from sklearn.datasets import make_classification
@@ -111,7 +112,7 @@ def make_dataset(profile: Dict[str, Any], seed: int) -> Dict[str, Any]:
 
     frame = pd.DataFrame(X, columns=[f"f{i}" for i in range(n_features)])
     n_cat = int(round(float(profile["frac_cat"]) * n_features))
-    for col in frame.columns[n_features - n_cat:] if n_cat else []:
+    for col in frame.columns[n_features - n_cat :] if n_cat else []:
         # binning phân vị → dtype category: meta thấy categorical thật,
         # X cho model dùng mã số (RF nhận numeric)
         binned = pd.qcut(frame[col], q=5, duplicates="drop")
@@ -129,7 +130,7 @@ def make_dataset(profile: Dict[str, Any], seed: int) -> Dict[str, Any]:
 
 def run_search(
     algo: str, X: np.ndarray, y: np.ndarray, job_cfg: dict, seed: int
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Search THẬT — cùng cấu hình với RealJobEnv của ma trận."""
     from sklearn.ensemble import RandomForestClassifier
     from sklearn.model_selection import StratifiedKFold
@@ -169,10 +170,10 @@ def run_search(
 def make_doc(
     profile_name: str,
     algo: str,
-    meta: Dict[str, float],
-    outcome: Dict[str, Any],
+    meta: dict[str, float],
+    outcome: dict[str, Any],
     job_cfg: dict,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Trajectory doc đúng schema extract_outcome_samples; params khớp shape
     variant serve của builder (search_algorithm/problem_type/metric/time_limit)."""
     job_id = f"warmup:{profile_name}:{algo}"
@@ -201,7 +202,7 @@ def make_doc(
     }
 
 
-def load_algos() -> List[str]:
+def load_algos() -> list[str]:
     """Vocab thuật toán từ hagent.yaml (một nguồn sự thật với checkpoint)."""
     from hagent.bridge.config import get_world_model_config
 
@@ -218,8 +219,8 @@ def generate(
     seed: int = 0,
     limit: int | None = None,
     dry_run: bool = False,
-    search_fn: Callable[..., Dict[str, Any]] = run_search,
-) -> Dict[str, Any]:
+    search_fn: Callable[..., dict[str, Any]] = run_search,
+) -> dict[str, Any]:
     profiles = build_profiles()
     algos = load_algos()
 
@@ -234,10 +235,7 @@ def generate(
                 continue
 
     todo = [
-        (p, a)
-        for p in profiles
-        for a in algos
-        if f"warmup:{p['name']}:{a}" not in done
+        (p, a) for p in profiles for a in algos if f"warmup:{p['name']}:{a}" not in done
     ]
     if limit:
         todo = todo[:limit]
@@ -252,7 +250,7 @@ def generate(
         return report
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    ds_cache: Dict[str, Dict[str, Any]] = {}
+    ds_cache: dict[str, dict[str, Any]] = {}
     with open(out_path, "a", encoding="utf-8") as fh:
         for i, (profile, algo) in enumerate(todo, 1):
             name = str(profile["name"])

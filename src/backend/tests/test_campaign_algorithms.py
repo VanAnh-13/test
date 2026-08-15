@@ -71,14 +71,20 @@ class TestValidatorNoDrift:
     def _obs(self):
         return AutoMLObservation(
             user_id="u1",
-            datasets={"ds1": {"id": "ds1", "features": ["a", "target"], "target": "target"}},
+            datasets={
+                "ds1": {"id": "ds1", "features": ["a", "target"], "target": "target"}
+            },
         )
 
     def test_accepts_successive_halving(self):
         action = AutoMLAction(
             type="start_training",
-            params={"dataset_id": "ds1", "search_algorithm": "successive_halving",
-                    "problem_type": "classification", "target_column": "target"},
+            params={
+                "dataset_id": "ds1",
+                "search_algorithm": "successive_halving",
+                "problem_type": "classification",
+                "target_column": "target",
+            },
         )
         result = validate_action(action, self._obs(), goal=GOAL)
         assert not any("search_algorithm" in r for r in result.reasons)
@@ -86,8 +92,12 @@ class TestValidatorNoDrift:
     def test_rejects_unknown_algorithm(self):
         action = AutoMLAction(
             type="start_training",
-            params={"dataset_id": "ds1", "search_algorithm": "quantum_annealing",
-                    "problem_type": "classification", "target_column": "target"},
+            params={
+                "dataset_id": "ds1",
+                "search_algorithm": "quantum_annealing",
+                "problem_type": "classification",
+                "target_column": "target",
+            },
         )
         result = validate_action(action, self._obs(), goal=GOAL)
         assert any("search_algorithm" in r for r in result.reasons)

@@ -12,7 +12,7 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 from starlette.datastructures import UploadFile
 
-from hagent import chat_router
+from hagent.chat import router as chat_router
 
 try:
     import motor.motor_asyncio  # noqa: F401
@@ -381,7 +381,7 @@ async def test_provider_discovery_uses_configured_model_registry(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_provider_discovery_matches_real_toolkit_registry():
-    from hagent.agent.llm_config import (
+    from hagent.agent.llm import (
         get_default_model_config,
         list_available_models,
     )

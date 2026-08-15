@@ -8,7 +8,6 @@ from io import BytesIO
 from pathlib import Path
 
 # Third party Libraries
-from dotenv import load_dotenv
 import qrcode
 from email.mime.text import MIMEText
 from email.mime.image import MIMEImage
@@ -24,8 +23,6 @@ if not logger.handlers:
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
 
-# Loads env
-load_dotenv()
 
 class GmailService:
     def __init__(self) -> None:

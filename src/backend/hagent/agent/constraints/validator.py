@@ -7,7 +7,7 @@ Rules use world.query + goal/action — no free-text Pass/Fail only.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from hagent.world.query import features_of, get_dataset
 from hagent.world.schema import AutoMLAction, AutoMLObservation, GoalSpec
@@ -16,9 +16,9 @@ from hagent.world.schema import AutoMLAction, AutoMLObservation, GoalSpec
 @dataclass
 class ValidationResult:
     ok: bool
-    reasons: List[str] = field(default_factory=list)
+    reasons: list[str] = field(default_factory=list)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {"ok": self.ok, "pass": self.ok, "reasons": list(self.reasons)}
 
 
@@ -27,11 +27,11 @@ def validate_action(
     observation: AutoMLObservation,
     *,
     goal: GoalSpec | None = None,
-    allowed_search: Optional[List[str]] = None,
-    allowed_problem_types: Optional[List[str]] = None,
+    allowed_search: list[str] | None = None,
+    allowed_problem_types: list[str] | None = None,
 ) -> ValidationResult:
     """Validate a single action against observation + goal."""
-    reasons: List[str] = []
+    reasons: list[str] = []
     goal = goal or observation.goal or {}
     if allowed_search is None:
         # Đọc từ campaign config để không drift với hagent.yaml; fallback
@@ -110,13 +110,13 @@ def validate_action(
 
 
 def validate_plan_steps(
-    steps: List[Dict[str, Any]] | List[Any],
+    steps: list[dict[str, Any]] | list[Any],
     observation: AutoMLObservation,
     *,
     goal: GoalSpec | None = None,
 ) -> ValidationResult:
     """Validate all steps; aggregate reasons."""
-    all_reasons: List[str] = []
+    all_reasons: list[str] = []
     for i, step in enumerate(steps):
         if hasattr(step, "action"):
             action = step.action

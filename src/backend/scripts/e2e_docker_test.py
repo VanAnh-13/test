@@ -1,337 +1,564 @@
-"""
-HAgent — Full System Docker E2E Test.
+"""Docker smoke for the public HAgent sync and SSE chat contracts.
 
-Flow:
-  1. Register + login (JWT)
-  2. Upload Online Shoppers Intention dataset
-  3. Send train prompt via HAgent Bridge (agent-run)
-  4. Poll conversation / jobs until training is accepted or jobs exist
-  5. Assert ≥1 job for the user
-
-Exit 0 on success, 1 on failure.
+The smoke uses real signup/login endpoints and the local OpenAI-compatible CI
+mock. It never calls a paid model and never prints credentials.
 """
 
 from __future__ import annotations
 
 import asyncio
-import base64
 import json
 import os
-import sys
-import time
-from pathlib import Path
+import uuid
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
+from typing import Any
 
 import httpx
 
-# URLs
-BASE_URL = os.environ.get("BASE_URL", "http://localhost:5370").rstrip("/")
-HAGENT_URL = os.environ.get("HAGENT_URL", "http://localhost:5360").rstrip("/")
-DATASET_PATH = os.environ.get(
-    "HAGENT_TEST_DATASET",
-    str(
-        Path(__file__).parent.parent
-        / "assets"
-        / "online_shoppers"
-        / "online_shoppers_intention.csv"
-    ),
+ALLOWED_EVENTS = frozenset(
+    {
+        "meta",
+        "route",
+        "phase",
+        "plan",
+        "plan_event",
+        "surprise",
+        "token",
+        "tool_call",
+        "tool_result",
+        "done",
+        "error",
+    }
 )
-
-# Polling
-MAX_RETRIES = int(os.environ.get("E2E_MAX_RETRIES", "36"))  # ~6 min default
-RETRY_INTERVAL = float(os.environ.get("E2E_RETRY_INTERVAL", "10"))
-
-
-def _jwt_user_id(token: str) -> str:
-    token_parts = token.split(".")
-    payload_b64 = token_parts[1]
-    payload_b64 += "=" * (4 - len(payload_b64) % 4)
-    payload = json.loads(base64.b64decode(payload_b64).decode("utf-8"))
-    return str(payload.get("sub") or "")
-
-
-def _agent_response_is_error(msg: str) -> bool:
-    lower = (msg or "").lower()
-    markers = (
-        "đang gặp lỗi",
-        "gặp lỗi khi xử lý",
-        "mất kết nối",
-        "lỗi hagent",
-        "provider\": \"error",
-        "runtime error",
-    )
-    return any(m in lower for m in markers) or (
-        msg.strip().startswith("⚠️") and "job" not in lower and "train" not in lower
-    )
-
-
-def _messages_indicate_success(messages: list) -> bool:
-    success_markers = (
-        "job training đã hoàn tất",
-        "✅ job training",
-        "best_model",
-        "best model",
-        "job_id",
-        "đã bắt đầu training",
-        "training đã",
+TERMINAL_EVENTS = frozenset({"done", "error"})
+ROUTED_EVENTS = frozenset(
+    {
+        "phase",
+        "plan",
+        "plan_event",
+        "surprise",
+        "token",
+        "tool_call",
+        "tool_result",
+    }
+)
+CHAT_RESPONSE_KEYS = frozenset(
+    {
+        "message",
+        "conversation_id",
+        "provider",
+        "model",
+        "route",
+        "tool_outputs",
+        "planning",
         "campaign",
         "hierarchy",
-        "start_training",
-    )
-    for msg in messages:
-        if not isinstance(msg, dict):
-            continue
-        if msg.get("role") != "assistant":
-            continue
-        content = str(msg.get("content") or "").lower()
-        if any(m in content for m in success_markers):
-            return True
-    return False
+        "world_model",
+        "evaluation",
+        "execution_events",
+        "execution_log",
+        "revision_count",
+        "cost_metrics",
+    }
+)
 
 
-async def _list_jobs(client: httpx.AsyncClient, token: str, user_id: str) -> list:
-    r = await client.post(
-        f"{BASE_URL}/get-list-job-by-userId?user_id={user_id}",
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    if r.status_code != 200:
-        print(f"  ! List jobs HTTP {r.status_code}: {r.text[:200]}")
-        return []
-    data = r.json()
-    if isinstance(data, list):
-        return data
-    if isinstance(data, dict):
-        jobs = data.get("jobs") or data.get("data") or []
-        return jobs if isinstance(jobs, list) else []
-    return []
+class E2EFailure(RuntimeError):
+    """A contract assertion failed without exposing request credentials."""
 
 
-async def test_e2e_docker() -> int:
-    print("=" * 60)
-    print("  🚀 HAgent — Full System Docker E2E Test")
-    print("=" * 60)
-    print(f"  HAutoML Toolkit URL: {BASE_URL}")
-    print(f"  HAgent Bridge URL:   {HAGENT_URL}")
-    print(f"  Dataset path:        {DATASET_PATH}")
-    print("=" * 60)
+@dataclass(frozen=True)
+class E2EConfig:
+    base_url: str = "http://localhost:5370"
+    hagent_url: str = "http://localhost:5360"
+    model: str = "ci-mock"
+    request_timeout_seconds: float = 60.0
+    abort_settle_seconds: float = 5.0
 
-    username = f"ci_test_{int(time.time())}"
-    email = f"{username}@example.com"
-    password = "password123"
+    @classmethod
+    def from_env(cls) -> E2EConfig:
+        return cls(
+            base_url=os.getenv("BASE_URL", cls.base_url).rstrip("/"),
+            hagent_url=os.getenv("HAGENT_URL", cls.hagent_url).rstrip("/"),
+            model=os.getenv("E2E_MODEL", cls.model).strip(),
+            request_timeout_seconds=_positive_env_float(
+                "E2E_REQUEST_TIMEOUT_SECONDS", cls.request_timeout_seconds
+            ),
+            abort_settle_seconds=_nonnegative_env_float(
+                "E2E_ABORT_SETTLE_SECONDS", cls.abort_settle_seconds
+            ),
+        )
 
-    # 1. Register
-    print("\n[1/6] Registering test user...")
-    async with httpx.AsyncClient(timeout=30) as client:
-        signup_payload = {
+
+@dataclass(frozen=True)
+class SSEEvent:
+    event: str
+    event_id: int
+    data: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class SmokeReport:
+    run_id: str
+    model: str
+    conversation_id: str
+    event_types: tuple[str, ...]
+    cleanup_count: int
+
+
+def _positive_env_float(name: str, default: float) -> float:
+    value = _nonnegative_env_float(name, default)
+    if value <= 0:
+        raise E2EFailure(f"{name} must be greater than zero")
+    return value
+
+
+def _nonnegative_env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise E2EFailure(f"{name} must be numeric") from exc
+    if value < 0:
+        raise E2EFailure(f"{name} must not be negative")
+    return value
+
+
+def _require(condition: bool, message: str) -> None:
+    if not condition:
+        raise E2EFailure(message)
+
+
+def _json_object(response: httpx.Response, stage: str) -> dict[str, Any]:
+    try:
+        payload = response.json()
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise E2EFailure(f"{stage} returned invalid JSON") from exc
+    if not isinstance(payload, dict):
+        raise E2EFailure(f"{stage} returned a non-object JSON value")
+    return payload
+
+
+def _expect_status(
+    response: httpx.Response,
+    expected: set[int],
+    stage: str,
+) -> None:
+    if response.status_code not in expected:
+        raise E2EFailure(f"{stage} returned HTTP {response.status_code}")
+
+
+def _auth_headers(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _chat_payload(
+    message: str,
+    model: str,
+    conversation_id: str | None,
+) -> dict[str, Any]:
+    return {
+        "message": message,
+        "conversation_id": conversation_id,
+        "context": {},
+        "model": model,
+    }
+
+
+def _validate_chat_response(
+    payload: dict[str, Any],
+    *,
+    model: str,
+    marker: str,
+    conversation_id: str | None = None,
+) -> str:
+    missing = sorted(CHAT_RESPONSE_KEYS - payload.keys())
+    _require(not missing, f"chat response misses fields: {', '.join(missing)}")
+    actual_id = payload.get("conversation_id")
+    _require(isinstance(actual_id, str) and actual_id, "missing conversation_id")
+    if conversation_id is not None:
+        _require(actual_id == conversation_id, "conversation_id changed between turns")
+    _require(payload.get("model") == model, "requested model was not preserved")
+    _require(marker in str(payload.get("message") or ""), "response marker missing")
+    return actual_id
+
+
+async def _register_and_login(
+    client: httpx.AsyncClient,
+    config: E2EConfig,
+    run_id: str,
+    label: str,
+) -> str:
+    username = f"e2e_{label}_{run_id}".lower()
+    password = f"ci-only-{uuid.uuid4().hex}"
+    signup = await client.post(
+        f"{config.base_url}/signup",
+        json={
             "username": username,
-            "email": email,
-            "gender": "male",
+            "email": f"{username}@example.com",
+            "gender": "other",
             "date": "01/01/2026",
-            "number": "0123456789",
-            "fullName": "CI Test User",
+            "number": "0900000000",
+            "fullName": f"CI E2E {label}",
             "password": password,
-        }
-        try:
-            r = await client.post(f"{BASE_URL}/signup", json=signup_payload)
-            if r.status_code == 200:
-                print("  ✓ User registered successfully!")
-            elif r.status_code == 409:
-                print("  ! User already exists, proceeding to login...")
-            else:
-                print(f"  ✗ Signup failed (HTTP {r.status_code}): {r.text}")
-                return 1
-        except Exception as e:
-            print(f"  ✗ Connection to master failed: {e}")
-            return 1
-
-    # 2. Login
-    print("\n[2/6] Logging in to retrieve JWT token...")
-    async with httpx.AsyncClient(timeout=30) as client:
-        r = await client.post(
-            f"{BASE_URL}/login",
-            json={"username": username, "password": password},
-        )
-        if r.status_code != 200:
-            print(f"  ✗ Login failed (HTTP {r.status_code}): {r.text}")
-            return 1
-        token = r.json()["access_token"]
-        user_id = _jwt_user_id(token)
-        print("  ✓ Login success!")
-        print(f"  👤 User ID: {user_id}")
-
-    headers = {"Authorization": f"Bearer {token}"}
-
-    # 3. Upload dataset
-    print("\n[3/6] Uploading Online Shoppers Intention dataset...")
-    if not os.path.exists(DATASET_PATH):
-        print(f"  ✗ Dataset file not found at: {DATASET_PATH}")
-        return 1
-
-    async with httpx.AsyncClient(timeout=60) as client:
-        with open(DATASET_PATH, "rb") as f:
-            files = {
-                "file_data": (
-                    "online_shoppers_intention.csv",
-                    f,
-                    "text/csv",
-                )
-            }
-            data = {
-                "data_name": "online_shoppers_intention_ci",
-                "data_type": "csv",
-            }
-            r = await client.post(
-                f"{BASE_URL}/upload-dataset?user_id={user_id}",
-                data=data,
-                files=files,
-                headers=headers,
-            )
-            if r.status_code != 200:
-                print(f"  ✗ Dataset upload failed (HTTP {r.status_code}): {r.text}")
-                return 1
-            ds_result = r.json()
-            dataset_id = ds_result.get("_id") or ds_result.get("id")
-            print("  ✓ Dataset uploaded successfully!")
-            print(f"    Dataset ID: {dataset_id}")
-
-    # 4. Train via HAgent Bridge — prompt uses patterns goal_parser must catch
-    print("\n[4/6] Sending training prompt to HAgent Bridge...")
-    chat_prompt = (
-        f"Hãy train một model classification trên dataset ID {dataset_id} "
-        f"với target column là 'Revenue', dùng 3 thuật toán: "
-        f"RandomForestClassifier, XGBClassifier, SVC. "
-        f"Dùng metric là accuracy. Hãy cấu hình và bắt đầu training giúp tôi."
+        },
     )
-    print(f'  Prompt: "{chat_prompt}"')
+    _expect_status(signup, {200}, f"{label} signup")
 
-    conversation_id = None
-    response_msg = ""
-    async with httpx.AsyncClient(timeout=300) as client:
-        # Preflight health
-        try:
-            hr = await client.get(f"{HAGENT_URL}/api/v1/chat/health")
-            print(f"  Bridge health: HTTP {hr.status_code} {hr.text[:200]}")
-        except Exception as exc:
-            print(f"  ! Bridge health check failed: {exc}")
+    login = await client.post(
+        f"{config.base_url}/login",
+        json={"username": username, "password": password},
+    )
+    _expect_status(login, {200}, f"{label} login")
+    token = _json_object(login, f"{label} login").get("access_token")
+    _require(isinstance(token, str) and token, f"{label} login returned no token")
+    return token
 
-        r = await client.post(
-            f"{HAGENT_URL}/api/v1/chat/",
-            json={
-                "message": chat_prompt,
-                "conversation_id": None,
-                "context": {
-                    "dataset_id": dataset_id,
-                    "target_column": "Revenue",
-                    "problem_type": "classification",
-                    "metric": "accuracy",
-                    "models": [
-                        "RandomForestClassifier",
-                        "XGBClassifier",
-                        "SVC",
-                    ],
-                },
-            },
-            headers=headers,
+
+async def _assert_model_registered(
+    client: httpx.AsyncClient,
+    config: E2EConfig,
+) -> None:
+    response = await client.get(f"{config.hagent_url}/api/v1/chat/providers")
+    _expect_status(response, {200}, "provider registry")
+    payload = _json_object(response, "provider registry")
+    models = {str(payload.get("default_model") or "")}
+    providers = payload.get("providers")
+    _require(isinstance(providers, list), "provider registry has no providers list")
+    for provider in providers:
+        if isinstance(provider, dict) and isinstance(provider.get("models"), list):
+            models.update(str(model) for model in provider["models"])
+    _require(config.model in models, f"model {config.model!r} is not registered")
+
+
+async def _post_chat(
+    client: httpx.AsyncClient,
+    config: E2EConfig,
+    token: str,
+    message: str,
+    conversation_id: str | None,
+) -> dict[str, Any]:
+    response = await client.post(
+        f"{config.hagent_url}/api/v1/chat/",
+        headers=_auth_headers(token),
+        json=_chat_payload(message, config.model, conversation_id),
+    )
+    _expect_status(response, {200}, "sync chat")
+    return _json_object(response, "sync chat")
+
+
+def _parse_sse_frame(lines: list[str]) -> SSEEvent:
+    fields: dict[str, str] = {}
+    for line in lines:
+        if line.startswith(":"):
+            continue
+        if ":" not in line:
+            raise E2EFailure("malformed SSE field")
+        key, raw_value = line.split(":", 1)
+        if key not in {"event", "id", "data"} or key in fields:
+            raise E2EFailure("SSE frame has unsupported or duplicate fields")
+        fields[key] = raw_value.lstrip()
+    _require(set(fields) == {"event", "id", "data"}, "incomplete SSE frame")
+    _require(fields["data"] != "[DONE]", "legacy SSE sentinel is forbidden")
+    try:
+        event_id = int(fields["id"])
+    except ValueError as exc:
+        raise E2EFailure("SSE id is not an integer") from exc
+    _require(event_id > 0, "SSE id must be positive")
+    try:
+        data = json.loads(fields["data"])
+    except json.JSONDecodeError as exc:
+        raise E2EFailure("SSE data is not JSON") from exc
+    _require(isinstance(data, dict), "SSE data must be an object")
+    event = fields["event"]
+    _require(event in ALLOWED_EVENTS, f"unsupported SSE event {event!r}")
+    _require(data.get("type") == event, "SSE event and data.type differ")
+    return SSEEvent(event=event, event_id=event_id, data=data)
+
+
+async def iter_sse_events(response: httpx.Response) -> AsyncIterator[SSEEvent]:
+    frame_lines: list[str] = []
+    async for line in response.aiter_lines():
+        if line == "":
+            if frame_lines:
+                yield _parse_sse_frame(frame_lines)
+                frame_lines = []
+            continue
+        frame_lines.append(line)
+    if frame_lines:
+        yield _parse_sse_frame(frame_lines)
+
+
+def validate_sse_sequence(events: list[SSEEvent]) -> dict[str, Any]:
+    _require(bool(events), "SSE stream emitted no events")
+    previous_id = 0
+    terminals = 0
+    route_seen = False
+    for index, event in enumerate(events):
+        _require(event.event_id > previous_id, "SSE ids are not strictly increasing")
+        previous_id = event.event_id
+        if event.event == "route":
+            route_seen = True
+        elif event.event in ROUTED_EVENTS:
+            _require(route_seen, "SSE work event occurred before route")
+        if event.event in TERMINAL_EVENTS:
+            terminals += 1
+            _require(index == len(events) - 1, "SSE terminal event is not last")
+    _require(route_seen, "SSE stream emitted no route event")
+    _require(terminals == 1, "SSE stream must contain exactly one terminal")
+    terminal = events[-1]
+    _require(terminal.event == "done", "SSE stream ended with error")
+    response = terminal.data.get("response")
+    _require(isinstance(response, dict), "done.response is not an object")
+    return response
+
+
+async def _complete_stream(
+    client: httpx.AsyncClient,
+    config: E2EConfig,
+    token: str,
+    conversation_id: str,
+    message: str,
+) -> tuple[list[SSEEvent], dict[str, Any]]:
+    async with client.stream(
+        "POST",
+        f"{config.hagent_url}/api/v1/chat/stream",
+        headers=_auth_headers(token),
+        json=_chat_payload(message, config.model, conversation_id),
+    ) as response:
+        _expect_status(response, {200}, "SSE chat")
+        _require(
+            "text/event-stream" in response.headers.get("content-type", ""),
+            "SSE content type missing",
         )
-        if r.status_code != 200:
-            print(f"  ✗ Chat request failed (HTTP {r.status_code}): {r.text}")
-            return 1
+        _require(
+            response.headers.get("x-conversation-id") == conversation_id,
+            "SSE conversation header mismatch",
+        )
+        events = [event async for event in iter_sse_events(response)]
+    return events, validate_sse_sequence(events)
 
-        chat_res = r.json()
-        conversation_id = chat_res.get("conversation_id")
-        response_msg = str(chat_res.get("message") or "")
-        provider = chat_res.get("provider", "")
-        print("  ✓ Prompt accepted by agent!")
-        print(f"    Conversation ID: {conversation_id}")
-        print(f"    Provider:         {provider}")
-        print(f"    Agent Response:   {response_msg[:500]}")
 
-        if _agent_response_is_error(response_msg) or provider == "error":
-            print("  ✗ Agent returned an error response (see toolkit/bridge logs).")
-            # Still poll jobs briefly in case training was side-effected
-        else:
-            print("  ✓ Agent response is not an error envelope")
-
-    # 5. Poll conversation + jobs
-    print("\n[5/6] Polling conversation history / jobs for training...")
-    print("  (AutoML worker will pick up the task and train models...)")
-
-    training_success = False
-    jobs_found: list = []
-    final_messages: list = []
-
-    for attempt in range(1, MAX_RETRIES + 1):
-        print(f"  [{attempt}/{MAX_RETRIES}] Polling messages + jobs...")
-        async with httpx.AsyncClient(timeout=30) as client:
-            if conversation_id:
-                r = await client.get(
-                    f"{HAGENT_URL}/api/v1/chat/conversation/{conversation_id}",
-                    headers=headers,
-                )
-                if r.status_code == 200:
-                    history = r.json()
-                    messages = history.get("messages", [])
-                    final_messages = messages
-                    if _messages_indicate_success(messages):
-                        print("\n  🎉 Training signal found in conversation history!")
-                        for msg in messages:
-                            if msg.get("role") == "assistant":
-                                print(f"  {'-' * 60}")
-                                print(msg.get("content", "")[:800])
-                                print(f"  {'-' * 60}")
-                        training_success = True
-
-            jobs_found = await _list_jobs(client, token, user_id)
-            if jobs_found:
-                print(f"  ✓ Jobs visible: {len(jobs_found)}")
-                training_success = True
-
-        if training_success:
+async def _abort_stream(
+    client: httpx.AsyncClient,
+    config: E2EConfig,
+    token: str,
+    conversation_id: str,
+    message: str,
+) -> tuple[str, SSEEvent]:
+    async with client.stream(
+        "POST",
+        f"{config.hagent_url}/api/v1/chat/stream",
+        headers=_auth_headers(token),
+        json=_chat_payload(message, config.model, conversation_id),
+    ) as response:
+        _expect_status(response, {200}, "abort SSE chat")
+        response_conversation_id = response.headers.get("x-conversation-id", "")
+        _require(
+            response_conversation_id == conversation_id,
+            "abort stream conversation header mismatch",
+        )
+        first_event: SSEEvent | None = None
+        async for event in iter_sse_events(response):
+            first_event = event
             break
-        await asyncio.sleep(RETRY_INTERVAL)
-
-    # 6. Final job listing
-    print("\n[6/6] Checking training jobs status from AutoML Master...")
-    async with httpx.AsyncClient(timeout=30) as client:
-        jobs_found = await _list_jobs(client, token, user_id)
-        print(f"  ✓ Found {len(jobs_found)} job(s) for user {user_id}:")
-        for job in jobs_found[:10]:
-            if not isinstance(job, dict):
-                continue
-            jid = job.get("_id") or job.get("id") or job.get("job_id")
-            status = job.get("status")
-            best_model = (
-                job.get("best_model_name")
-                or job.get("best_model")
-                or "N/A"
-            )
-            best_score = job.get("best_score", "N/A")
-            print(
-                f"    - Job ID: {jid} | Status: {status} | "
-                f"Best Model: {best_model} | Score: {best_score}"
-            )
-
-    # Hard success criterion: at least one training job in AutoML Master.
-    # "Plan status: done" alone is NOT enough (agent may finish hierarchy without jobs).
-    if jobs_found:
-        print("\n" + "=" * 60)
-        print("  ✅ DOCKER FULL SYSTEM E2E TEST PASSED SUCCESSFULLY!")
-        print("     (Training job(s) created via HAgent agent path)")
-        print("=" * 60)
-        return 0
-
-    print("\n" + "=" * 60)
-    print("  ❌ DOCKER FULL SYSTEM E2E TEST FAILED OR TIMED OUT!")
-    print(f"     Last agent response: {response_msg[:300]}")
-    print(f"     Conversation messages: {len(final_messages)}")
-    print(f"     Jobs found: {len(jobs_found)}")
-    if "plan status: done" in response_msg.lower() and not jobs_found:
-        print(
-            "     Hint: agent completed planning but start_training did not "
-            "persist a job — check toolkit logs for /v2/auto/jobs/training."
+        _require(first_event is not None, "abort stream emitted no initial event")
+        _require(
+            first_event.event not in TERMINAL_EVENTS, "abort stream finished too early"
         )
-    print("=" * 60)
-    return 1
+        return response_conversation_id, first_event
+
+
+async def _get_history(
+    client: httpx.AsyncClient,
+    config: E2EConfig,
+    token: str,
+    conversation_id: str,
+) -> dict[str, Any]:
+    response = await client.get(
+        f"{config.hagent_url}/api/v1/chat/conversation/{conversation_id}",
+        headers=_auth_headers(token),
+    )
+    _expect_status(response, {200}, "conversation history")
+    return _json_object(response, "conversation history")
+
+
+def _message_contents(history: dict[str, Any], role: str | None = None) -> list[str]:
+    messages = history.get("messages")
+    _require(isinstance(messages, list), "history has no messages list")
+    return [
+        str(message.get("content") or "")
+        for message in messages
+        if isinstance(message, dict) and (role is None or message.get("role") == role)
+    ]
+
+
+async def run_smoke(
+    config: E2EConfig | None = None,
+    *,
+    transport: httpx.AsyncBaseTransport | None = None,
+    run_id: str | None = None,
+) -> SmokeReport:
+    config = config or E2EConfig.from_env()
+    _require(bool(config.model), "E2E model must not be empty")
+    run_id = run_id or uuid.uuid4().hex[:12]
+    cleanup_targets: dict[tuple[str, str], None] = {}
+    report: SmokeReport | None = None
+    failure: BaseException | None = None
+
+    timeout = httpx.Timeout(config.request_timeout_seconds)
+    async with httpx.AsyncClient(timeout=timeout, transport=transport) as client:
+        try:
+            await _assert_model_registered(client, config)
+            owner_token = await _register_and_login(client, config, run_id, "owner")
+            other_token = await _register_and_login(client, config, run_id, "other")
+
+            seed_request = f"E2E_HISTORY_MARKER:{run_id}"
+            seed_ack = f"E2E_HISTORY_SEEDED:{run_id}"
+            conversation_id = f"e2e-owner-{run_id}"
+            cleanup_targets[(owner_token, conversation_id)] = None
+            first = await _post_chat(
+                client, config, owner_token, seed_request, conversation_id
+            )
+            _validate_chat_response(
+                first,
+                model=config.model,
+                marker=seed_ack,
+                conversation_id=conversation_id,
+            )
+
+            probe_request = f"E2E_HISTORY_PROBE:{run_id}"
+            owner_probe = await _post_chat(
+                client, config, owner_token, probe_request, conversation_id
+            )
+            _validate_chat_response(
+                owner_probe,
+                model=config.model,
+                marker=f"E2E_HISTORY_OK:{run_id}",
+                conversation_id=conversation_id,
+            )
+
+            cleanup_targets[(other_token, conversation_id)] = None
+            other_probe = await _post_chat(
+                client, config, other_token, probe_request, conversation_id
+            )
+            _validate_chat_response(
+                other_probe,
+                model=config.model,
+                marker=f"E2E_HISTORY_NONE:{run_id}",
+                conversation_id=conversation_id,
+            )
+            other_history = await _get_history(
+                client, config, other_token, conversation_id
+            )
+            _require(
+                not any(
+                    seed_request in item for item in _message_contents(other_history)
+                ),
+                "owner history leaked to another user",
+            )
+
+            stream_request = f"E2E_STREAM_TURN:{run_id}"
+            stream_ack = f"E2E_STREAM_ACK:{run_id}"
+            events, done_response = await _complete_stream(
+                client,
+                config,
+                owner_token,
+                conversation_id,
+                stream_request,
+            )
+            _validate_chat_response(
+                done_response,
+                model=config.model,
+                marker=stream_ack,
+                conversation_id=conversation_id,
+            )
+            owner_history = await _get_history(
+                client, config, owner_token, conversation_id
+            )
+            assistant_contents = _message_contents(owner_history, role="assistant")
+            _require(
+                sum(stream_ack in item for item in assistant_contents) == 1,
+                "stream final assistant was not persisted exactly once",
+            )
+
+            abort_request = f"E2E_ABORT_TURN:{run_id}"
+            abort_id = f"e2e-abort-{run_id}"
+            cleanup_targets[(owner_token, abort_id)] = None
+            abort_id, _ = await _abort_stream(
+                client,
+                config,
+                owner_token,
+                abort_id,
+                abort_request,
+            )
+            await asyncio.sleep(config.abort_settle_seconds)
+            abort_history = await _get_history(client, config, owner_token, abort_id)
+            _require(
+                any(
+                    abort_request in item
+                    for item in _message_contents(abort_history, "user")
+                ),
+                "aborted turn did not persist the user message",
+            )
+            _require(
+                not _message_contents(abort_history, "assistant"),
+                "aborted turn persisted an assistant response",
+            )
+
+            report = SmokeReport(
+                run_id=run_id,
+                model=config.model,
+                conversation_id=conversation_id,
+                event_types=tuple(event.event for event in events),
+                cleanup_count=len(cleanup_targets),
+            )
+        except (Exception, asyncio.CancelledError) as exc:  # noqa: BLE001
+            failure = exc
+
+        cleanup_errors = []
+        for token, conversation_id in cleanup_targets:
+            try:
+                response = await client.delete(
+                    f"{config.hagent_url}/api/v1/chat/conversation/{conversation_id}",
+                    headers=_auth_headers(token),
+                )
+                if response.status_code not in {200, 404}:
+                    cleanup_errors.append(response.status_code)
+            except httpx.HTTPError:
+                cleanup_errors.append(-1)
+
+        if failure is not None:
+            raise failure.with_traceback(failure.__traceback__)
+        if cleanup_errors:
+            raise E2EFailure(
+                f"conversation cleanup failed ({len(cleanup_errors)} target(s))"
+            )
+
+    _require(report is not None, "smoke ended without a report")
+    return report
+
+
+async def _main() -> int:
+    config = E2EConfig.from_env()
+    print("HAgent Docker contract smoke")
+    print(f"toolkit={config.base_url} bridge={config.hagent_url} model={config.model}")
+    try:
+        report = await run_smoke(config)
+    except (E2EFailure, httpx.HTTPError) as exc:
+        detail = str(exc).replace("\n", " ")[:300]
+        print(f"FAILED {type(exc).__name__}: {detail}")
+        return 1
+    print(
+        "PASSED "
+        f"run={report.run_id} events={','.join(report.event_types)} "
+        f"cleaned={report.cleanup_count}"
+    )
+    return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(asyncio.run(test_e2e_docker()))
+    raise SystemExit(asyncio.run(_main()))

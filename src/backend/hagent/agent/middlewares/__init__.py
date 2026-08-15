@@ -4,21 +4,17 @@ HAgent — Middleware Stack (Phase 3).
 Pipeline pre/post processing cho agent graph:
 - Pre: World model loading, memory injection, input validation
 - Post: Fact extraction, world state update, response audit
-
-SOLID:
-  S — Mỗi middleware chỉ 1 trách nhiệm
-  O — Thêm middleware mới qua YAML config
-  D — Middleware chain inject, không hardcode
 """
 
 from __future__ import annotations
 
 import abc
-import logging
 import time
 from typing import Any
 
-logger = logging.getLogger(__name__)
+import structlog
+
+logger = structlog.get_logger(__name__)
 
 
 # ── Base Middleware ───────────────────────────────────────

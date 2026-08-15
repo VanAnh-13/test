@@ -19,7 +19,11 @@ from hagent.world.predictor.outcome_head_v1 import train_outcome_head
 
 SCENARIO_PATH = (
     Path(__file__).parent.parent
-    / "hagent" / "agent" / "harness" / "scenarios" / "wm_campaign.yaml"
+    / "hagent"
+    / "agent"
+    / "harness"
+    / "scenarios"
+    / "wm_campaign.yaml"
 )
 
 
@@ -56,8 +60,8 @@ def _overconfident_head():
 @pytest.fixture
 def wm_ext_env(monkeypatch):
     """Bật gate + inject outcome model — hai điều kiện live của scenario."""
-    import hagent.agent.campaign.wm_hooks as wm_hooks
     import hagent.bridge.config as bridge_config
+    from hagent.agent.campaign import wm_hooks
 
     head = _overconfident_head()
     monkeypatch.setattr(wm_hooks, "_default_outcome_model", lambda: head)
@@ -108,7 +112,7 @@ class TestGraphLayerEventChain:
     def test_without_gate_no_extension_event(self, monkeypatch):
         """Không bật gate (mặc định) → scenario này PHẢI fail assertion —
         chứng minh guard thật sự canh cơ chế chứ không pass rỗng."""
-        import hagent.agent.campaign.wm_hooks as wm_hooks
+        from hagent.agent.campaign import wm_hooks
 
         head = _overconfident_head()
         monkeypatch.setattr(wm_hooks, "_default_outcome_model", lambda: head)

@@ -27,7 +27,7 @@ const PaginationCustom: React.FC<PaginationCustomProps> = ({
     const pages: React.ReactElement[] = [];
     const maxVisible = 5;
     let startPage = Math.max(1, currentPage - 2);
-    let endPage = Math.min(totalPages, startPage + maxVisible - 1);
+    const endPage = Math.min(totalPages, startPage + maxVisible - 1);
 
     if (endPage - startPage < maxVisible - 1) {
       startPage = Math.max(1, endPage - maxVisible + 1);
@@ -112,7 +112,7 @@ const PaginationCustom: React.FC<PaginationCustomProps> = ({
   return (
     <Pagination className="mt-4 justify-center">
       <PaginationContent>
-        {/* Prev Button */}
+        {/* Nút về trang trước */}
         <PaginationItem>
           <PaginationPrevious
             onClick={() => onPageChange(Math.max(currentPage - 1, 1))}
@@ -124,7 +124,7 @@ const PaginationCustom: React.FC<PaginationCustomProps> = ({
 
         {renderPages()}
 
-        {/* Next Button */}
+        {/* Nút tới trang sau */}
         <PaginationItem>
           <PaginationNext
             onClick={() => onPageChange(Math.min(currentPage + 1, totalPages))}

@@ -2,7 +2,6 @@
 
 import React, { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import EditDatasetDialog from "@/components/crudDataset/EditDatasetDialog";
 import { useToast } from "@/hooks/use-toast";
@@ -22,17 +21,10 @@ type Dataset = {
   username: string;
 };
 
-const formatDate = (timestamp?: number): string => {
-  if (!timestamp) return "Không có dữ liệu";
-  return new Date(timestamp * 1000).toLocaleDateString("vi-VN");
-};
-
 const Page = () => {
   const { get, remove } = useApi();
 
   const { data: session } = useSession();
-  const router = useRouter();
-
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [loading, setLoading] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);

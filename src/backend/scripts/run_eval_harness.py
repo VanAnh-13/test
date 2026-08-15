@@ -39,9 +39,7 @@ async def _main() -> int:
     args = parser.parse_args()
 
     modes = (
-        [x.strip() for x in args.modes.split(",") if x.strip()]
-        if args.modes
-        else None
+        [x.strip() for x in args.modes.split(",") if x.strip()] if args.modes else None
     )
     tags = [x.strip() for x in args.tags.split(",") if x.strip()] if args.tags else None
     ids = [x.strip() for x in args.ids.split(",") if x.strip()] if args.ids else None

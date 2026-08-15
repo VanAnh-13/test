@@ -125,10 +125,7 @@ class TestCrossDatasetTransfer:
         out = run_transfer_loo(k=6, heldout_index=0, budget_jobs=9, seed=0)
         assert out["pretrained"]["wm_trained_after_jobs"] == 0
         assert out["scratch"]["wm_trained_after_jobs"] not in (None, 0)
-        assert (
-            out["pretrained"]["final_best"]
-            >= out["scratch"]["final_best"] - 1e-9
-        )
+        assert out["pretrained"]["final_best"] >= out["scratch"]["final_best"] - 1e-9
 
     def test_loo_result_serializable(self):
         import json

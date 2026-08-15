@@ -38,7 +38,7 @@ HAgent tóm tắt kết quả cho người dùng
 | Next proxy | `frontend/src/app/api/hagent/[...path]/route.ts` | Forward frontend → HAgent Bridge |
 | HAgent Bridge | `backend/hagent/bridge/app.py` | Auth JWT, lưu hội thoại, forward tới agent runtime |
 | Conversation store | `backend/hagent/bridge/conversation.py` | Lịch sử chat trong MongoDB |
-| Chat router | `backend/hagent/chat_router.py` | Endpoint `/api/v1/chat/*` + `/agent-run` trên toolkit |
+| Chat router | `backend/hagent/chat/router.py` | Endpoint `/api/v1/chat/*` + `/agent-run` trên toolkit |
 | Agent graph | `backend/hagent/agent/graph.py` | LangGraph StateGraph — điều phối multi-agent |
 | Tools | `backend/hagent/agent/tools/automl_tools.py` | HAutoML API wrappers (source of truth) |
 | LLM config | `backend/hagent/agent/llm_config.py` | Đa provider, resolve strict, per-request model |
@@ -51,7 +51,7 @@ HAgent tóm tắt kết quả cho người dùng
    proxy tới **Bridge** (`:9900`).
 2. Bridge xác thực JWT, lưu tin nhắn vào MongoDB, rồi POST tới toolkit
    `POST /api/v1/chat/agent-run` (URL override bằng `HAGENT_AGENT_RUN_URL`).
-3. `chat_router` trên toolkit validate model theo request (`{"model": ...}`
+3. `hagent.chat.router` trên toolkit kiểm tra model theo request (`{"model": ...}`
    — tên sai trả HTTP 400) rồi chạy **LangGraph graph**: coordinator phân
    loại ý định → hierarchy phân rã mục tiêu → campaign/plan executor chạy
    tool → synthesizer viết câu trả lời.
@@ -82,12 +82,12 @@ HAgent tóm tắt kết quả cho người dùng
 
 ## 5. Cấu hình
 
-Tất cả từ `backend/hagent/hagent.yaml` (env `HAGENT_CONFIG` trỏ file khác
+Tất cả từ `backend/hagent/config/hagent.yaml` (env `HAGENT_CONFIG` trỏ file khác
 khi cần). Không hard-code trong Python.
 
 | Env | Mặc định | Ý nghĩa |
 |---|---|---|
-| `HAGENT_CONFIG` | `hagent/hagent.yaml` | File cấu hình trung tâm |
+| `HAGENT_CONFIG` | `hagent/config/hagent.yaml` | File cấu hình trung tâm |
 | `HAGENT_AGENT_RUN_URL` | `{HAUTOML}/api/v1/chat/agent-run` | Bridge → toolkit |
 | `LLM_DEFAULT_MODEL` | (yaml) | Model mặc định — resolve strict, sai tên là lỗi ngay |
 | `OLLAMA_BASE_URL` | host gateway | LLM local |

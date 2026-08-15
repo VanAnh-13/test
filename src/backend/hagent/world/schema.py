@@ -1,22 +1,24 @@
 """
-World Model schemas — structured observation / action / latent / persisted state.
+Schema World Model cho observation, action, latent và trạng thái lưu bền vững.
 
 LeWM mapping (arXiv:2603.19312):
   o_t  -> AutoMLObservation
   a_t  -> AutoMLAction
   z_t  -> LatentState
-  WorldState is the durable document behind observations.
+  WorldState là tài liệu bền vững đứng sau các observation.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Literal, Optional, TypedDict
+from datetime import UTC, datetime
+from enum import Enum
+from typing import Any, TypedDict
 
 
 def utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _json_ready(value: Any) -> Any:
@@ -31,7 +33,7 @@ def _json_ready(value: Any) -> Any:
     return value
 
 
-# ── Persisted entries ────────────────────────────────────
+# ── Các bản ghi lưu bền vững ─────────────────────────────
 
 
 class DatasetEntry(TypedDict, total=False):
@@ -39,34 +41,34 @@ class DatasetEntry(TypedDict, total=False):
     name: str
     n_rows: int
     n_cols: int
-    features: List[str]
-    target: Optional[str]
-    problem_type_inferred: Optional[str]
+    features: list[str]
+    target: str | None
+    problem_type_inferred: str | None
     last_seen: datetime
 
 
 class JobEntry(TypedDict, total=False):
     id: str
     dataset_id: str
-    config: Dict[str, Any]
+    config: dict[str, Any]
     status: str
-    metrics: Dict[str, float]
-    best_model: Optional[str]
-    best_score: Optional[float]
-    started_at: Optional[datetime]
-    finished_at: Optional[datetime]
+    metrics: dict[str, float]
+    best_model: str | None
+    best_score: float | None
+    started_at: datetime | None
+    finished_at: datetime | None
 
 
 class PlanEntry(TypedDict, total=False):
     plan_id: str
     title: str
     status: str
-    requirements: Dict[str, Any]
-    steps: List[Dict[str, Any]]
-    constraints: Dict[str, Any]
-    score_estimate: Optional[float]
-    verification: Optional[Dict[str, Any]]
-    world_refs: Dict[str, Any]
+    requirements: dict[str, Any]
+    steps: list[dict[str, Any]]
+    constraints: dict[str, Any]
+    score_estimate: float | None
+    verification: dict[str, Any] | None
+    world_refs: dict[str, Any]
     created_at: Any
     updated_at: Any
 
@@ -76,57 +78,62 @@ class GoalEntry(TypedDict, total=False):
     description: str
     status: str
     goal_type: str
-    metric: Optional[str]
-    problem_type: Optional[str]
-    linked_plan_id: Optional[str]
-    linked_job_ids: List[str]
+    metric: str | None
+    problem_type: str | None
+    linked_plan_id: str | None
+    linked_job_ids: list[str]
 
 
-# ── LeWM-style runtime types ─────────────────────────────
+CURRENT_SCHEMA_VERSION = "1.0"
+
+
+# ── Các kiểu runtime theo LeWM ───────────────────────────
 
 
 class FocusSpec(TypedDict, total=False):
-    dataset_id: Optional[str]
-    job_id: Optional[str]
-    plan_id: Optional[str]
+    dataset_id: str | None
+    job_id: str | None
+    plan_id: str | None
 
 
 class GoalSpec(TypedDict, total=False):
-    """Goal for latent planning (encode_goal target)."""
-    goal_type: str  # e.g. train | analyze | evaluate | list | respond
+    """Mục tiêu cho quá trình lập kế hoạch latent, dùng làm đích của encode_goal."""
+
+    goal_type: str  # ví dụ: train | analyze | evaluate | list | respond
     description: str
-    metric: Optional[str]
-    target_score: Optional[float]
-    problem_type: Optional[str]
-    dataset_id: Optional[str]
-    target_column: Optional[str]
-    constraints: Dict[str, Any]
+    metric: str | None
+    target_score: float | None
+    problem_type: str | None
+    dataset_id: str | None
+    target_column: str | None
+    constraints: dict[str, Any]
 
 
 @dataclass
 class AutoMLObservation:
-    """Structured observation o_t — encoder input only (not chat text)."""
+    """Observation o_t có cấu trúc, chỉ dùng làm đầu vào encoder, không phải nội dung chat."""
 
     user_id: str
-    datasets: Dict[str, DatasetEntry] = field(default_factory=dict)
-    jobs: Dict[str, JobEntry] = field(default_factory=dict)
+    datasets: dict[str, DatasetEntry] = field(default_factory=dict)
+    jobs: dict[str, JobEntry] = field(default_factory=dict)
     focus: FocusSpec = field(default_factory=dict)
     phase: str = "idle"
-    goal: Optional[GoalSpec] = None
-    history_digest: Optional[str] = None
+    goal: GoalSpec | None = None
+    history_digest: str | None = None
+    schema_version: str = CURRENT_SCHEMA_VERSION
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return _json_ready(asdict(self))
 
     @classmethod
     def from_world_state(
         cls,
-        state: "WorldState",
+        state: WorldState,
         *,
         phase: str | None = None,
         goal: GoalSpec | None = None,
         history_digest: str | None = None,
-    ) -> "AutoMLObservation":
+    ) -> AutoMLObservation:
         focus: FocusSpec = {}
         if state.active_dataset_id:
             focus["dataset_id"] = state.active_dataset_id
@@ -142,30 +149,42 @@ class AutoMLObservation:
             phase=phase or state.phase or "idle",
             goal=goal or state.active_goal,
             history_digest=history_digest,
+            schema_version=state.schema_version,
         )
 
 
 @dataclass
 class AutoMLAction:
-    """Closed action space — maps 1:1 to registered tools."""
+    """Không gian action đóng, ánh xạ 1:1 với các công cụ đã đăng ký."""
 
     type: str
-    params: Dict[str, Any] = field(default_factory=dict)
+    params: dict[str, Any] = field(default_factory=dict)
+    schema_version: str = CURRENT_SCHEMA_VERSION
 
-    def to_dict(self) -> Dict[str, Any]:
-        return {"type": self.type, "params": dict(self.params)}
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "type": self.type,
+            "params": dict(self.params),
+            "schema_version": self.schema_version,
+        }
 
 
 @dataclass
 class LatentState:
-    """Compact latent z_t."""
+    """Biểu diễn latent z_t gọn."""
 
-    vector: List[float]
+    vector: list[float]
     dim: int
-    meta: Dict[str, Any] = field(default_factory=dict)
+    meta: dict[str, Any] = field(default_factory=dict)
+    schema_version: str = CURRENT_SCHEMA_VERSION
 
-    def to_dict(self) -> Dict[str, Any]:
-        return {"vector": list(self.vector), "dim": self.dim, "meta": dict(self.meta)}
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "vector": list(self.vector),
+            "dim": self.dim,
+            "meta": dict(self.meta),
+            "schema_version": self.schema_version,
+        }
 
 
 @dataclass
@@ -174,35 +193,64 @@ class SurpriseResult:
     level: str  # low | medium | high
     predicted_dim: int
     actual_dim: int
+    schema_version: str = CURRENT_SCHEMA_VERSION
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+class DistributionType(str, Enum):
+    GAUSSIAN = "gaussian"
+    BETA = "beta"
+    CATEGORICAL = "categorical"
+    DIRICHLET = "dirichlet"
+
+
+@dataclass
+class DistributionSpec:
+    """Đặc tả phân phối tham số cho kết quả và niềm tin của model."""
+
+    dist_type: str  # "gaussian" | "beta" | "categorical" | "dirichlet"
+    params: dict[str, Any] = field(default_factory=dict)
+    meta: dict[str, Any] = field(default_factory=dict)
+    schema_version: str = CURRENT_SCHEMA_VERSION
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "dist_type": self.dist_type,
+            "params": dict(self.params),
+            "meta": dict(self.meta),
+            "schema_version": self.schema_version,
+        }
 
 
 @dataclass
 class PlanStep:
     action: AutoMLAction
-    agent: Optional[str] = None
+    agent: str | None = None
+    schema_version: str = CURRENT_SCHEMA_VERSION
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "action": self.action.to_dict(),
             "agent": self.agent,
+            "schema_version": self.schema_version,
         }
 
 
 @dataclass
 class PlanResult:
-    """Output of latent planner (CEM-lite)."""
+    """Kết quả của bộ lập kế hoạch latent CEM-lite."""
 
     plan_id: str
-    steps: List[PlanStep]
+    steps: list[PlanStep]
     cost: float
-    score_estimate: Optional[float] = None
+    score_estimate: float | None = None
     title: str = ""
-    meta: Dict[str, Any] = field(default_factory=dict)
+    meta: dict[str, Any] = field(default_factory=dict)
+    schema_version: str = CURRENT_SCHEMA_VERSION
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "plan_id": self.plan_id,
             "title": self.title,
@@ -210,31 +258,56 @@ class PlanResult:
             "score_estimate": self.score_estimate,
             "steps": [s.to_dict() for s in self.steps],
             "meta": dict(self.meta),
+            "schema_version": self.schema_version,
         }
 
 
-# ── Durable world document ───────────────────────────────
+# ── Tài liệu world bền vững ──────────────────────────────
 
 
 @dataclass
 class WorldState:
     user_id: str
-    datasets: Dict[str, DatasetEntry] = field(default_factory=dict)
-    jobs: Dict[str, JobEntry] = field(default_factory=dict)
-    goals: List[Dict[str, Any]] = field(default_factory=list)
-    plans: Dict[str, PlanEntry] = field(default_factory=dict)
-    active_plan_id: Optional[str] = None
-    active_dataset_id: Optional[str] = None
-    active_job_id: Optional[str] = None
-    active_goal: Optional[GoalSpec] = None
+    datasets: dict[str, DatasetEntry] = field(default_factory=dict)
+    jobs: dict[str, JobEntry] = field(default_factory=dict)
+    goals: list[dict[str, Any]] = field(default_factory=list)
+    plans: dict[str, PlanEntry] = field(default_factory=dict)
+    active_plan_id: str | None = None
+    active_dataset_id: str | None = None
+    active_job_id: str | None = None
+    active_goal: GoalSpec | None = None
     phase: str = "idle"
-    last_verification: Optional[Dict[str, Any]] = None
-    last_surprise: Optional[Dict[str, Any]] = None
-    cost_metrics: Dict[str, Any] = field(default_factory=dict)
+    last_verification: dict[str, Any] | None = None
+    last_surprise: dict[str, Any] | None = None
+    cost_metrics: dict[str, Any] = field(default_factory=dict)
     updated_at: datetime = field(default_factory=utc_now)
     created_at: datetime = field(default_factory=utc_now)
+    schema_version: str = CURRENT_SCHEMA_VERSION
+    update_frequency: float = 1.0
+    surprise_momentum: float = 0.0
 
-    def to_dict(self) -> Dict[str, Any]:
+    @classmethod
+    def from_execution_snapshot(
+        cls,
+        snapshot: Mapping[str, Any],
+        *,
+        user_id: Any = None,
+    ) -> WorldState:
+        """Khôi phục các trường dùng khi cập nhật world trong lúc thực thi."""
+        return cls(
+            user_id=str(user_id or snapshot.get("user_id") or ""),
+            datasets=dict(snapshot.get("datasets") or {}),
+            jobs=dict(snapshot.get("jobs") or {}),
+            goals=list(snapshot.get("goals") or []),
+            plans=dict(snapshot.get("plans") or {}),
+            active_plan_id=snapshot.get("active_plan_id"),
+            active_dataset_id=snapshot.get("active_dataset_id"),
+            active_job_id=snapshot.get("active_job_id"),
+            active_goal=snapshot.get("active_goal"),
+            phase=str(snapshot.get("phase") or "idle"),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
         return _json_ready(asdict(self))
 
     def to_observation(
@@ -243,6 +316,4 @@ class WorldState:
         phase: str | None = None,
         goal: GoalSpec | None = None,
     ) -> AutoMLObservation:
-        return AutoMLObservation.from_world_state(
-            self, phase=phase, goal=goal
-        )
+        return AutoMLObservation.from_world_state(self, phase=phase, goal=goal)

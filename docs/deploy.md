@@ -44,7 +44,7 @@ này. **Sau khi train, KHÔNG đổi vocab trong hagent.yaml** (`outcome_head` /
 `outcome_ensemble.search_algorithms`, `model_vocab`) — đổi vocab là đổi
 chiều feature, checkpoint cũ vô hiệu (path đã version v2 để chặn nạp nhầm).
 
-Bật cơ chế replanning (điều kiện thí nghiệm C) trong `hagent/hagent.yaml`:
+Bật cơ chế replanning (điều kiện thí nghiệm C) trong `hagent/config/hagent.yaml`:
 
 ```yaml
 agent:

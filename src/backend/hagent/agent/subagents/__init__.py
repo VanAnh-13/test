@@ -6,44 +6,37 @@ Cung cấp pattern chung cho tất cả sub-agents:
 - Bind tools subset (mỗi sub-agent khai báo riêng)
 - Thực thi LLM call + trả kết quả về state
 - Dependency injection cho LLM factory (testable)
-
-SOLID Principles:
-  S — Mỗi sub-agent chỉ làm 1 việc (SRP)
-  O — Mở rộng qua kế thừa, không sửa base (OCP)
-  L — Sub-agents thay thế được cho nhau trong graph (LSP)
-  I — Interface gọn: run() + _extract_context() (ISP)
-  D — LLM factory inject qua constructor, không import trực tiếp (DIP)
-
-Reference: DeerFlow's agent pattern (mỗi agent = prompt + tools + LLM)
 """
 
 from __future__ import annotations
 
 import abc
-import logging
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
+import structlog
 from langchain_core.messages import AIMessage, SystemMessage
 
-from hagent.agent.state import AutoMLState
+from hagent.agent.orchestration import AutoMLState
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 def _default_prompts_dir() -> Path:
     """Lấy prompts directory từ config, fallback sang relative path."""
     try:
         from hagent.bridge.config import load_config
+
         cfg = load_config()
         agent_cfg = cfg.get("agent", {})
         prompt_path = agent_cfg.get("system_prompt_path", "./prompts/coordinator.md")
         # Derive prompts dir từ prompt file path
         base = Path(__file__).parent.parent.parent
-        prompt_dir = (base / Path(prompt_path).parent)
+        prompt_dir = base / Path(prompt_path).parent
         if prompt_dir.exists():
             return prompt_dir
-    except Exception:
+    except Exception:  # noqa: BLE001, S110
         pass
     return Path(__file__).parent.parent.parent / "prompts"
 
@@ -162,7 +155,8 @@ class SubAgent(abc.ABC):
         if self._llm_factory is not None:
             return self._llm_factory()
 
-        from hagent.agent.llm_config import create_chat_model
+        from hagent.agent.llm import create_chat_model
+
         return create_chat_model()
 
     # ── Main execution ───────────────────────────────────

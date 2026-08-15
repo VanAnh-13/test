@@ -41,9 +41,7 @@ def _main() -> int:
     )
     parser.add_argument("--budget", type=int, default=20, help="Số job mỗi run")
     parser.add_argument("--seeds", type=int, default=3, help="Số seed (0..n-1)")
-    parser.add_argument(
-        "--campaign-size", type=int, default=3, dest="campaign_size"
-    )
+    parser.add_argument("--campaign-size", type=int, default=3, dest="campaign_size")
     parser.add_argument(
         "--out",
         default="benchmarks/bench_results.json",
@@ -115,7 +113,9 @@ def _main() -> int:
     def _fmt(value, width, spec):
         return f"{value:>{width}{spec}}" if value is not None else f"{'-':>{width}}"
 
-    print(f"\n{'profile':<14} {'condition':<20} {'final_best':>10} {'n.regret':>9} {'jobs95':>7}")
+    print(
+        f"\n{'profile':<14} {'condition':<20} {'final_best':>10} {'n.regret':>9} {'jobs95':>7}"
+    )
     print("-" * 64)
     for key, agg in aggregates.items():
         prof, cond = key.split("::")

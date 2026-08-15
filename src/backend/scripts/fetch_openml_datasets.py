@@ -16,14 +16,14 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 BACKEND = Path(__file__).resolve().parent.parent
 if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
 
 # data_id cố định trên OpenML — không dùng name+version để tránh trôi phiên bản
-DATASETS: Dict[str, Dict[str, Any]] = {
+DATASETS: dict[str, dict[str, Any]] = {
     "credit-g": {"data_id": 31, "problem_type": "classification"},
     "diabetes": {"data_id": 37, "problem_type": "classification"},
     "vehicle": {"data_id": 54, "problem_type": "classification"},
@@ -46,14 +46,16 @@ def normalize_frame(df, target_col: str):
     return out
 
 
-def fetch_one(name: str, out_dir: Path) -> Dict[str, Any]:
+def fetch_one(name: str, out_dir: Path) -> dict[str, Any]:
     """Tải một dataset, ghi CSV, trả manifest entry."""
     from sklearn.datasets import fetch_openml
 
     spec = DATASETS[name]
     bunch = fetch_openml(data_id=spec["data_id"], as_frame=True, parser="auto")
     df = bunch.frame
-    target_col = bunch.target_names[0] if getattr(bunch, "target_names", None) else "class"
+    target_col = (
+        bunch.target_names[0] if getattr(bunch, "target_names", None) else "class"
+    )
     if target_col not in df.columns:
         # fallback: cột cuối là target
         target_col = df.columns[-1]
@@ -77,9 +79,13 @@ def fetch_one(name: str, out_dir: Path) -> Dict[str, Any]:
 
 def _main() -> int:
     parser = argparse.ArgumentParser(description="Fetch OpenML benchmark datasets")
-    parser.add_argument("--list", action="store_true", help="Liệt kê registry rồi thoát")
     parser.add_argument(
-        "--datasets", default=",".join(DATASETS), help="Danh sách tên, phân tách dấu phẩy"
+        "--list", action="store_true", help="Liệt kê registry rồi thoát"
+    )
+    parser.add_argument(
+        "--datasets",
+        default=",".join(DATASETS),
+        help="Danh sách tên, phân tách dấu phẩy",
     )
     parser.add_argument("--out", default=str(DEFAULT_OUT), help="Thư mục output")
     args = parser.parse_args()
@@ -111,7 +117,10 @@ def _main() -> int:
         )
         print(f"Manifest: {manifest_path} ({len(manifest)} datasets)")
     if failed:
-        print(f"{len(failed)} dataset(s) failed: {[n for n, _ in failed]}", file=sys.stderr)
+        print(
+            f"{len(failed)} dataset(s) failed: {[n for n, _ in failed]}",
+            file=sys.stderr,
+        )
         return 1
     return 0
 

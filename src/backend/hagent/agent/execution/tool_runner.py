@@ -1,19 +1,22 @@
-"""Gọi tool đã đăng ký bằng action type và params.
+"""Gọi công cụ đã đăng ký bằng loại action và các tham số.
 
-Module này tách plan executor khỏi wiring ToolNode của LangChain.
+Module này tách bộ thực thi plan khỏi phần nối dây ToolNode của LangChain.
 """
 
 from __future__ import annotations
 
+import hashlib
 import inspect
 import json
-import logging
-from typing import Any, Callable, Dict
+from collections.abc import Callable
+from typing import Any
 
-logger = logging.getLogger(__name__)
+import structlog
+
+logger = structlog.get_logger(__name__)
 
 # Hook tùy chọn dành cho kiểm thử
-_tool_invoker: Callable[[str, Dict[str, Any]], Any] | None = None
+_tool_invoker: Callable[[str, dict[str, Any]], Any] | None = None
 
 _USER_ID_SCOPED_ACTIONS = frozenset(
     {
@@ -39,7 +42,7 @@ _CREDENTIAL_SCOPED_ACTIONS = frozenset(
 )
 
 
-def _auth_scope_error() -> Dict[str, Any]:
+def _auth_scope_error() -> dict[str, Any]:
     return {
         "error": {
             "code": "AUTH_SCOPE_REQUIRED",
@@ -53,7 +56,7 @@ def _tool_accepts_parameter(tool: Any, parameter: str) -> bool:
     return isinstance(args, dict) and parameter in args
 
 
-def set_tool_invoker(fn: Callable[[str, Dict[str, Any]], Any] | None) -> None:
+def set_tool_invoker(fn: Callable[[str, dict[str, Any]], Any] | None) -> None:
     """Inject mock invoker đồng bộ hoặc bất đồng bộ dành cho kiểm thử."""
     global _tool_invoker
     _tool_invoker = fn
@@ -74,7 +77,7 @@ def _parse_tool_output(raw: Any) -> Any:
     return {"raw": raw}
 
 
-def _normalize_tool_output(raw: Any) -> Dict[str, Any]:
+def _normalize_tool_output(raw: Any) -> dict[str, Any]:
     payload = _parse_tool_output(raw)
     error = payload.get("error") if isinstance(payload, dict) else None
     if error is None:
@@ -96,10 +99,10 @@ def _normalize_tool_output(raw: Any) -> Dict[str, Any]:
     }
 
 
-async def invoke_tool(action_type: str, params: Dict[str, Any]) -> Dict[str, Any]:
-    """Chạy tool theo tên và trả payload dict đã parse.
+async def invoke_tool(action_type: str, params: dict[str, Any]) -> dict[str, Any]:
+    """Chạy công cụ theo tên và trả về payload dict đã phân tích.
 
-    Hàm không phát sinh exception ra ngoài; lỗi được chuyển thành payload ``error``.
+    Hàm không phát sinh ngoại lệ ra ngoài; lỗi được chuyển thành payload ``error``.
     """
     try:
         if _tool_invoker is not None:
@@ -108,9 +111,9 @@ async def invoke_tool(action_type: str, params: Dict[str, Any]) -> Dict[str, Any
                 result = await result
             return _normalize_tool_output(result)
 
-        from hagent.agent.registry import get_tool_map
+        from hagent.agent.orchestration import registry as registry_module
 
-        tmap = get_tool_map()
+        tmap = registry_module.get_tool_map()
         tool = tmap.get(action_type)
         if tool is None:
             return {"error": f"Unknown tool: {action_type}"}
@@ -133,7 +136,7 @@ async def invoke_tool(action_type: str, params: Dict[str, Any]) -> Dict[str, Any
             return {"error": f"Tool {action_type} is not invokable"}
 
         return _normalize_tool_output(result)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - boundary công cụ phải chuẩn hóa mọi lỗi
         logger.error(
             "Gọi tool thất bại action=%s type=%s",
             action_type,
@@ -149,14 +152,15 @@ async def invoke_tool(action_type: str, params: Dict[str, Any]) -> Dict[str, Any
 
 def enrich_params(
     action_type: str,
-    params: Dict[str, Any],
+    params: dict[str, Any],
     *,
     user_id: str | None,
     user_token: str | None,
-    goal: Dict[str, Any] | None,
-    world_model: Dict[str, Any] | None,
-) -> Dict[str, Any]:
-    """Bổ sung user_id, token và dataset_id từ context đáng tin cậy của state."""
+    goal: dict[str, Any] | None,
+    world_model: dict[str, Any] | None,
+    action_id: str | None = None,
+) -> dict[str, Any]:
+    """Bổ sung user_id, token và dataset_id từ context state đáng tin cậy."""
     out = dict(params or {})
     goal = goal or {}
     wm = world_model or {}
@@ -175,15 +179,27 @@ def enrich_params(
         focus = wm.get("focus") or {}
         if isinstance(focus, dict):
             ds = focus.get("dataset_id")
-    if ds and "dataset_id" not in out and action_type in (
-        "get_dataset_info",
-        "get_features",
-        "preview_data",
-        "start_training",
+    if (
+        ds
+        and "dataset_id" not in out
+        and action_type
+        in (
+            "get_dataset_info",
+            "get_features",
+            "preview_data",
+            "start_training",
+        )
     ):
         out["dataset_id"] = ds
 
     if action_type == "start_training":
+        out.pop("idempotency_key", None)
+        normalized_action_id = str(action_id or "").strip()
+        if user_id and 1 <= len(normalized_action_id) <= 512:
+            digest = hashlib.sha256(
+                f"{user_id}\0{normalized_action_id}".encode()
+            ).hexdigest()
+            out["idempotency_key"] = f"hagent-{digest}"
         if "problem_type" not in out and goal.get("problem_type"):
             out["problem_type"] = goal["problem_type"]
         if "target_column" not in out and goal.get("target_column"):

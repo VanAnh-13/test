@@ -1,22 +1,26 @@
-"""WorldStateStore — durable per-user world documents."""
+"""WorldStateStore lưu tài liệu world bền vững theo từng người dùng."""
 
 from __future__ import annotations
 
 import dataclasses
 import inspect
-import logging
-from typing import Any, Dict, Optional
+from typing import Any
+
+import structlog
 
 try:
     from pymongo import ReturnDocument
 except ImportError:  # pragma: no cover
+
     class ReturnDocument:  # type: ignore[no-redef]
         AFTER = True
         BEFORE = False
 
-from .schema import WorldState, utc_now
 
-logger = logging.getLogger(__name__)
+from .schema import WorldState, utc_now
+from .schema_migration import migrate_world_state_doc
+
+logger = structlog.get_logger(__name__)
 
 _WORLD_STATE_FIELDS = {f.name for f in dataclasses.fields(WorldState)}
 
@@ -27,13 +31,9 @@ async def _maybe_await(value):
     return value
 
 
-def _world_state_from_doc(doc: Dict[str, Any]) -> WorldState:
-    clean_doc = {k: v for k, v in doc.items() if k in _WORLD_STATE_FIELDS}
-    # Defaults for newly added fields when reading old documents
-    clean_doc.setdefault("plans", {})
-    clean_doc.setdefault("goals", [])
-    clean_doc.setdefault("cost_metrics", {})
-    clean_doc.setdefault("phase", "idle")
+def _world_state_from_doc(doc: dict[str, Any]) -> WorldState:
+    migrated = migrate_world_state_doc(doc)
+    clean_doc = {k: v for k, v in migrated.items() if k in _WORLD_STATE_FIELDS}
     return WorldState(**clean_doc)
 
 
@@ -60,7 +60,7 @@ class WorldStateStore:
             )
 
     async def ensure(self, user_id: str) -> None:
-        """Ensure a world state document exists for user."""
+        """Bảo đảm người dùng có một tài liệu world state."""
         now = utc_now()
         await _maybe_await(
             self.collection.update_one(
@@ -81,29 +81,26 @@ class WorldStateStore:
             )
         )
 
-    async def get(self, user_id: str) -> Optional[WorldState]:
+    async def get(self, user_id: str) -> WorldState | None:
         doc = await _maybe_await(self.collection.find_one({"user_id": user_id}))
         if doc:
             return _world_state_from_doc(doc)
         return None
 
-    async def get_snapshot(self, user_id: str) -> Optional[Dict[str, Any]]:
+    async def get_snapshot(self, user_id: str) -> dict[str, Any] | None:
         """
-        JSON-ready snapshot for chat_router / middleware.
+        Snapshot sẵn sàng cho JSON để chat_router và middleware sử dụng.
 
-        Returns None if user has no document yet.
+        Trả về None nếu người dùng chưa có tài liệu.
         """
         state = await self.get(user_id)
         if state is None:
             return None
         return state.to_dict()
 
-    async def upsert(self, user_id: str, patch: Dict[str, Any]) -> Optional[WorldState]:
-        """Merge patch fields into the user world state document."""
-        patch_with_timestamp = {
-            k: v for k, v in patch.items() if k in _WORLD_STATE_FIELDS or k == "updated_at"
-        }
-        # Allow only known fields (+ updated_at always set)
+    async def upsert(self, user_id: str, patch: dict[str, Any]) -> WorldState | None:
+        """Gộp các trường patch vào tài liệu world state của người dùng."""
+        # Chỉ cho phép các trường đã biết và luôn đặt updated_at.
         allowed = {k: v for k, v in patch.items() if k in _WORLD_STATE_FIELDS}
         allowed["updated_at"] = utc_now()
 
@@ -119,8 +116,10 @@ class WorldStateStore:
             return _world_state_from_doc(updated_doc)
         return None
 
-    async def apply_patch(self, user_id: str, patch: Dict[str, Any]) -> Optional[WorldState]:
-        """Alias with clearer semantics for middleware."""
+    async def apply_patch(
+        self, user_id: str, patch: dict[str, Any]
+    ) -> WorldState | None:
+        """Alias có ngữ nghĩa rõ hơn cho middleware."""
         return await self.upsert(user_id, patch)
 
 
@@ -131,7 +130,7 @@ def create_world_state_store(
     collection_name: str | None = None,
     ttl_seconds: int | None = None,
 ) -> WorldStateStore:
-    """Factory — all defaults from config, no hard-coded product values."""
+    """Factory lấy mọi giá trị mặc định từ cấu hình, không mã hóa cứng giá trị sản phẩm."""
     from hagent.bridge.config import get_mongodb_config, get_world_state_config
 
     mongo = get_mongodb_config()

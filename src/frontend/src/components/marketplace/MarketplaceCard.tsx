@@ -26,12 +26,15 @@ export default function MarketplaceCard({ model, onViewDetail }: Props) {
   return (
     <div
       onClick={() => {
+        if (onViewDetail) {
+          onViewDetail(model);
+          return;
+        }
         router.push(`/market-place/${toSlug(model.name)}`);
-        console.log(model.name);
       }}
       className="relative group flex bg-white border rounded-lg p-5 hover:shadow-md transition cursor-pointer"
     >
-      {/* Icon */}
+      {/* Biểu tượng mô hình */}
       <div className="w-12 h-12 border rounded-sm text-xs text-gray-400">
         <Image
           src={model.img}
@@ -42,7 +45,7 @@ export default function MarketplaceCard({ model, onViewDetail }: Props) {
         />
       </div>
 
-      {/* Content */}
+      {/* Nội dung mô hình */}
       <div className="ml-4 flex flex-col flex-1">
         <div className="text-xs text-gray-500 mb-1">{model.provider}</div>
 
@@ -60,7 +63,7 @@ export default function MarketplaceCard({ model, onViewDetail }: Props) {
         </div>
       </div>
 
-      {/* Hover Detail Bubble */}
+      {/* Thông tin chi tiết khi rê chuột */}
       <div
         className="
                 absolute left-1/2 top-full mt-3 -translate-x-1/2
@@ -72,7 +75,7 @@ export default function MarketplaceCard({ model, onViewDetail }: Props) {
                 z-20
         "
       >
-        {/* Arrow */}
+        {/* Mũi tên chỉ vào thẻ */}
         <div
           className="
                 absolute -top-2 left-1/2 -translate-x-1/2

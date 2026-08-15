@@ -1,6 +1,6 @@
 # ═══════════════════════════════════════════════════════════
 # HAutoML backend image — MỘT image dùng chung cho 3 service:
-#   toolkit (python app.py)  ·  worker (uvicorn cluster.worker:app)
+#   toolkit (python -m server.application)  ·  worker (uvicorn cluster.worker:app)
 #   nano    (python automl/demo_gradio.py)
 # Command đặt trong docker-compose.yaml; image chỉ lo deps + code.
 # (worker.dockerfile / hautoml.nano.dockerfile cũ đã bỏ — cùng
@@ -25,7 +25,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app \
     PIP_NO_CACHE_DIR=1 \
-    HAGENT_CONFIG=/app/hagent/hagent.yaml
+    HAGENT_CONFIG=/app/hagent/config/hagent.yaml
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -49,4 +49,4 @@ COPY . .
 EXPOSE 8585
 
 # Mặc định chạy toolkit; worker/nano ghi đè command trong compose
-CMD ["python", "app.py"]
+CMD ["python", "-m", "server.application"]

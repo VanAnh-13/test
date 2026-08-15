@@ -18,11 +18,11 @@ except ModuleNotFoundError:
     sys.modules["motor"] = motor_module
     sys.modules["motor.motor_asyncio"] = motor_asyncio_module
 
-from hagent import chat_router
-from hagent.agent import graph
+from hagent.agent.orchestration import graph
 from hagent.bridge import app as bridge_app
 from hagent.bridge.auth import TokenPayload
 from hagent.bridge.models import ChatRequest
+from hagent.chat import router as chat_router
 
 
 @dataclass

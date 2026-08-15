@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, List, Optional
+from collections.abc import Callable
+from typing import Any
 
 from hagent.agent.harness.schema import AgentScenario
 
 # Deterministic Student Performance regression metrics (aligns with mock_hautoml_server)
-STUDENT_TRAINING_RESULTS: Dict[str, Dict[str, float]] = {
+STUDENT_TRAINING_RESULTS: dict[str, dict[str, float]] = {
     "RandomForestRegressor": {"rmse": 1.82, "mae": 1.34, "r2": 0.87, "mse": 3.31},
     "XGBRegressor": {"rmse": 1.65, "mae": 1.21, "r2": 0.91, "mse": 2.72},
     "SVR": {"rmse": 2.15, "mae": 1.58, "r2": 0.82, "mse": 4.62},
@@ -21,7 +22,7 @@ STUDENT_DEFAULT_MODELS = [
 ]
 
 
-def _is_student_scenario(scenario: AgentScenario, ds: Optional[str]) -> bool:
+def _is_student_scenario(scenario: AgentScenario, ds: str | None) -> bool:
     if ds and "student" in str(ds).lower():
         return True
     if "student" in str(scenario.id).lower():
@@ -36,7 +37,7 @@ def _is_student_scenario(scenario: AgentScenario, ds: Optional[str]) -> bool:
     return False
 
 
-def _pick_models(params: Dict[str, Any], scenario: AgentScenario) -> List[str]:
+def _pick_models(params: dict[str, Any], scenario: AgentScenario) -> list[str]:
     for key in ("models", "model_names", "algorithms"):
         raw = params.get(key) or (scenario.goal or {}).get(key)
         if isinstance(raw, list) and raw:
@@ -50,11 +51,11 @@ def _pick_models(params: Dict[str, Any], scenario: AgentScenario) -> List[str]:
 
 def _build_student_job(
     jid: str,
-    ds: Optional[str],
-    models: List[str],
+    ds: str | None,
+    models: list[str],
     *,
     metric: str = "rmse",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     model_results = []
     best_model = None
     best_score = float("inf")
@@ -85,7 +86,7 @@ def _build_student_job(
 def make_mock_tool_invoker(
     scenario: AgentScenario,
     *,
-    scores: Optional[list[float]] = None,
+    scores: list[float] | None = None,
 ) -> Callable:
     """
     Async invoker(action_type, params) -> dict
@@ -94,11 +95,11 @@ def make_mock_tool_invoker(
     Student Performance scenarios return multi-model RF/XGB/SVR results.
     """
     job_n = {"i": 0}
-    jobs: Dict[str, Dict[str, Any]] = {}
+    jobs: dict[str, dict[str, Any]] = {}
     score_list = list(scores or [0.71, 0.88, 0.80, 0.76])
     wm = scenario.world_model or {}
 
-    async def invoker(action_type: str, params: Dict[str, Any]) -> Dict[str, Any]:
+    async def invoker(action_type: str, params: dict[str, Any]) -> dict[str, Any]:
         ds = (
             params.get("dataset_id")
             or (scenario.goal or {}).get("dataset_id")

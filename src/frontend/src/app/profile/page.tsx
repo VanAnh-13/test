@@ -111,7 +111,7 @@ const Profile = () => {
     } finally {
       setLoading(false);
     }
-  }, [session?.user?.username]);
+  }, [get, session?.user?.username]);
 
   useEffect(() => {
     if (status === "authenticated") {

@@ -1,29 +1,16 @@
 "use client";
 
 import { useSearchParams } from "next/navigation";
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import InferencingSettings from "@/components/marketplace/playground/InferenceSetting";
 import { Button } from "@/components/ui/button";
 import { LogOut } from "lucide-react";
 
-const MODELS = [
-  {
-    id: "deepseek-ocr",
-    name: "DeepSeek OCR",
-    category: "Vision AI",
-  },
-  {
-    id: "gpt-4-turbo",
-    name: "GPT-4 Turbo",
-    category: "LLM",
-  },
-];
-
-export default function PlaygroundPage() {
+function PlaygroundContent() {
   const searchParams = useSearchParams();
   const defaultModel = searchParams?.get("model");
 
-  const [model, setModel] = useState(defaultModel);
+  const model = defaultModel;
   const [file, setFile] = useState<File | null>(null);
   const [result, setResult] = useState("");
 
@@ -43,15 +30,15 @@ export default function PlaygroundPage() {
         </div>
       </div>
       <div className="h-[calc(100vh-64px)] flex p-10">
-        {/* LEFT SIDEBAR */}
+        {/* Thanh cấu hình bên trái */}
         <InferencingSettings />
 
-        {/* RIGHT MAIN */}
+        {/* Khu vực kết quả bên phải */}
         <main className="flex-1 bg-gray-50 p-6 overflow-auto">
           <h1 className="text-xl font-semibold mb-4">Playground</h1>
 
           <div className="grid grid-cols-1 xl:grid-cols-1 gap-6">
-            {/* Input */}
+            {/* Dữ liệu đầu vào */}
             <div className="bg-white border rounded-lg p-4 space-y-4">
               <h3 className="font-semibold">Input</h3>
 
@@ -85,7 +72,7 @@ export default function PlaygroundPage() {
               </button>
             </div>
 
-            {/* Output */}
+            {/* Kết quả đầu ra */}
             <div className="bg-white border rounded-lg p-4 space-y-4">
               <h3 className="font-semibold">Output</h3>
 
@@ -103,5 +90,19 @@ export default function PlaygroundPage() {
         </main>
       </div>
     </div>
+  );
+}
+
+export default function PlaygroundPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center" role="status">
+          Đang tải môi trường thử nghiệm...
+        </div>
+      }
+    >
+      <PlaygroundContent />
+    </Suspense>
   );
 }

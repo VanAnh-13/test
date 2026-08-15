@@ -77,10 +77,15 @@ def test_generate_docs_trainable(tmp_path):
             s["params"],
             s["dataset_meta"],
             None,
-            {"search_algorithms": [
-                "grid_search", "bayesian_search", "genetic_algorithm",
-                "random_search", "successive_halving",
-            ]},
+            {
+                "search_algorithms": [
+                    "grid_search",
+                    "bayesian_search",
+                    "genetic_algorithm",
+                    "random_search",
+                    "successive_halving",
+                ]
+            },
         )
         assert x.ndim == 1 and x.shape[0] > 0
 
@@ -93,9 +98,10 @@ def test_generate_docs_trainable(tmp_path):
 
 def test_doc_params_match_serve_variant_shape():
     doc = make_doc(
-        "synth_x", "grid_search", {k: 0.0 for k in META_KEYS_V2},
-        {"best_score": 0.8, "seconds": 1.0, "time_limited": False,
-         "best_params": {}},
+        "synth_x",
+        "grid_search",
+        {k: 0.0 for k in META_KEYS_V2},
+        {"best_score": 0.8, "seconds": 1.0, "time_limited": False, "best_params": {}},
         JOB_CFG,
     )
     cfg = doc["next_observation"]["jobs"]["warmup:synth_x:grid_search"]["config"]

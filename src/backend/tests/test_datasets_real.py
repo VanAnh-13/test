@@ -14,7 +14,6 @@ from automl.search.datasets_real import (
     load_real_datasets,
 )
 
-
 SMALL = {"iris", "wine", "breast_cancer", "digits", "glass", "online_shoppers"}
 
 

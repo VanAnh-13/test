@@ -67,8 +67,12 @@ class TestOutcomeFeatures:
         vocab = ["DecisionTreeClassifier", "RandomForestClassifier", "SVC"]
         cfg = {"use_latent": False, "model_vocab": vocab}
         base = {"search_algorithm": "grid_search"}
-        assert outcome_feature_dim(cfg) == outcome_feature_dim({"use_latent": False}) + 3
-        x_rf = outcome_features(dict(base, models=["RandomForestClassifier"]), config=cfg)
+        assert (
+            outcome_feature_dim(cfg) == outcome_feature_dim({"use_latent": False}) + 3
+        )
+        x_rf = outcome_features(
+            dict(base, models=["RandomForestClassifier"]), config=cfg
+        )
         x_svc = outcome_features(dict(base, models=["SVC"]), config=cfg)
         assert not np.allclose(x_rf, x_svc)
         # model ngoài vocab không tạo feature ma
@@ -78,11 +82,15 @@ class TestOutcomeFeatures:
 
     def test_model_vocab_roundtrips_checkpoint(self, tmp_path):
         vocab = ["RandomForestClassifier", "SVC"]
-        head = OutcomeHeadV1({"use_latent": False, "model_vocab": vocab, "hidden_dim": 16})
+        head = OutcomeHeadV1(
+            {"use_latent": False, "model_vocab": vocab, "hidden_dim": 16}
+        )
         head.init_random(seed=0)
         ckpt = str(tmp_path / "vocab.npz")
         head.save(ckpt)
-        head2 = OutcomeHeadV1({"use_latent": False, "checkpoint_path": ckpt, "hidden_dim": 16})
+        head2 = OutcomeHeadV1(
+            {"use_latent": False, "checkpoint_path": ckpt, "hidden_dim": 16}
+        )
         assert head2.feature_cfg["model_vocab"] == vocab
         p = {"search_algorithm": "grid_search", "models": ["SVC"]}
         assert head.predict(p).mean == pytest.approx(head2.predict(p).mean)
@@ -140,7 +148,11 @@ class TestOutcomeHeadLifecycle:
 def _synthetic_samples(n=120, seed=0):
     """best_score phụ thuộc algorithm + time_limit → head phải học được thứ tự."""
     rng = np.random.default_rng(seed)
-    algo_bonus = {"grid_search": 0.0, "bayesian_search": 0.08, "genetic_algorithm": 0.04}
+    algo_bonus = {
+        "grid_search": 0.0,
+        "bayesian_search": 0.08,
+        "genetic_algorithm": 0.04,
+    }
     samples = []
     for _ in range(n):
         algo = rng.choice(list(algo_bonus))
@@ -169,25 +181,39 @@ def _synthetic_samples(n=120, seed=0):
 class TestTraining:
     def test_nll_decreases(self):
         head = train_outcome_head(
-            _synthetic_samples(), config={"use_latent": False, "hidden_dim": 32},
-            epochs=60, lr=0.01, seed=0,
+            _synthetic_samples(),
+            config={"use_latent": False, "hidden_dim": 32},
+            epochs=60,
+            lr=0.01,
+            seed=0,
         )
         hist = head.config.get("train_history")
         assert hist and hist[-1] < hist[0]
 
     def test_learned_ordering(self):
         head = train_outcome_head(
-            _synthetic_samples(), config={"use_latent": False, "hidden_dim": 32},
-            epochs=80, lr=0.01, seed=0,
+            _synthetic_samples(),
+            config={"use_latent": False, "hidden_dim": 32},
+            epochs=80,
+            lr=0.01,
+            seed=0,
         )
         best = head.predict(
-            {"search_algorithm": "bayesian_search", "problem_type": "classification",
-             "metric": "accuracy", "time_limit": 600},
+            {
+                "search_algorithm": "bayesian_search",
+                "problem_type": "classification",
+                "metric": "accuracy",
+                "time_limit": 600,
+            },
             DATASET_META,
         )
         worst = head.predict(
-            {"search_algorithm": "grid_search", "problem_type": "classification",
-             "metric": "accuracy", "time_limit": 60},
+            {
+                "search_algorithm": "grid_search",
+                "problem_type": "classification",
+                "metric": "accuracy",
+                "time_limit": 60,
+            },
             DATASET_META,
         )
         assert best.mean > worst.mean
@@ -199,12 +225,19 @@ class TestTraining:
 
     def test_prediction_in_sane_range(self):
         head = train_outcome_head(
-            _synthetic_samples(), config={"use_latent": False, "hidden_dim": 32},
-            epochs=60, lr=0.01, seed=0,
+            _synthetic_samples(),
+            config={"use_latent": False, "hidden_dim": 32},
+            epochs=60,
+            lr=0.01,
+            seed=0,
         )
         pred = head.predict(
-            {"search_algorithm": "genetic_algorithm", "problem_type": "classification",
-             "metric": "accuracy", "time_limit": 180},
+            {
+                "search_algorithm": "genetic_algorithm",
+                "problem_type": "classification",
+                "metric": "accuracy",
+                "time_limit": 180,
+            },
             DATASET_META,
         )
         assert 0.4 < pred.mean < 1.1
@@ -300,10 +333,15 @@ class TestRanking:
 
     def test_trained_head_ranks_by_mean(self):
         head = train_outcome_head(
-            _synthetic_samples(), config={"use_latent": False, "hidden_dim": 32},
-            epochs=80, lr=0.01, seed=0,
+            _synthetic_samples(),
+            config={"use_latent": False, "hidden_dim": 32},
+            epochs=80,
+            lr=0.01,
+            seed=0,
         )
-        ranked = rank_variants_by_outcome(_variants(), head=head, dataset_meta=DATASET_META)
+        ranked = rank_variants_by_outcome(
+            _variants(), head=head, dataset_meta=DATASET_META
+        )
         means = [pred.mean for _, pred in ranked]
         assert means == sorted(means, reverse=True)
         # bayesian + 600s phải đứng đầu theo synthetic ground truth
@@ -311,8 +349,11 @@ class TestRanking:
 
     def test_lower_is_better_flips_order(self):
         head = train_outcome_head(
-            _synthetic_samples(), config={"use_latent": False, "hidden_dim": 32},
-            epochs=40, lr=0.01, seed=0,
+            _synthetic_samples(),
+            config={"use_latent": False, "hidden_dim": 32},
+            epochs=40,
+            lr=0.01,
+            seed=0,
         )
         ranked = rank_variants_by_outcome(
             _variants(), head=head, dataset_meta=DATASET_META, higher_is_better=False

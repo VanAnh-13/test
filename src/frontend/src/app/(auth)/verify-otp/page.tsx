@@ -1,7 +1,7 @@
 "use client";
 
 import { useSearchParams, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { RefreshCwIcon } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -22,7 +22,7 @@ import {
   InputOTPSlot,
 } from "@/components/ui/input-otp";
 
-export default function VerifyOTPForm() {
+function VerifyOTPContent() {
   const params = useSearchParams();
   const router = useRouter();
 
@@ -73,8 +73,8 @@ export default function VerifyOTPForm() {
         },
       );
 
-      setTimeLeft(60); // reset timer
-      setOtp(""); // clear otp (optional)
+      setTimeLeft(60); // Đặt lại thời gian chờ.
+      setOtp(""); // Xóa mã cũ sau khi gửi lại.
       alert("Đã gửi lại mã OTP");
     } catch {
       alert("Không thể gửi lại OTP");
@@ -170,5 +170,19 @@ export default function VerifyOTPForm() {
         </Field>
       </CardFooter>
     </Card>
+  );
+}
+
+export default function VerifyOTPForm() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center" role="status">
+          Đang tải biểu mẫu xác thực...
+        </div>
+      }
+    >
+      <VerifyOTPContent />
+    </Suspense>
   );
 }

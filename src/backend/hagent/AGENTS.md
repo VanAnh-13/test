@@ -9,7 +9,7 @@ multi-agent của LangGraph, tích hợp thẳng vào backend HAutoML.
 ## Đọc theo thứ tự
 
 1. `README_HAGENT.md` — kiến trúc Docker/runtime
-2. `hagent.yaml` — LLM, planning, campaign, hierarchy, world_model
+2. `config/hagent.yaml` — LLM, planning, campaign, hierarchy, world_model
 3. `agent/tools/automl_tools.py` — danh sách tool (source of truth)
 
 ## Runtime Docker
@@ -37,7 +37,7 @@ Frontend → HAgent Bridge (:9900)
 
 | Path | Vai trò |
 |---|---|
-| `chat_router.py` | FastAPI chat + `/agent-run` (LangGraph) |
+| `chat/router.py` | FastAPI chat + `/agent-run` (LangGraph) |
 | `bridge/app.py` | JWT, conversation, forward tới agent runtime |
 | `agent/graph.py` | Multi-agent orchestration |
 | `agent/tools/automl_tools.py` | LangChain tools (source of truth) |

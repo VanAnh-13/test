@@ -33,7 +33,7 @@ export default function Page() {
     if (datasetID) {
       fetchData();
     }
-  }, [datasetID]);
+  }, [datasetID, get]);
 
   return datasetID ? (
     <TrainCard datasetID={datasetID} datasetName={dataName} />

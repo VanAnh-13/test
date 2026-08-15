@@ -3,23 +3,20 @@ HAgent — Fact Extractor (Phase 3).
 
 Rút trích facts từ tool outputs và AI responses.
 Rule-based extraction — không cần LLM call thêm.
-
-SOLID:
-  S — Chỉ làm extraction, không lưu trữ
-  O — Thêm extraction rule qua YAML config
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
-import logging
 import re
 from typing import Any
 
+import structlog
+
 from hagent.agent.memory import Fact
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 # ── Extraction rules (config-driven categories) ─────────
@@ -40,12 +37,14 @@ def extract_from_tool_output(
 
     if tool_name == "list_datasets" and "datasets" in payload:
         ds_list = payload["datasets"]
-        facts.append(Fact(
-            key="known_datasets",
-            content=f"User có {len(ds_list)} datasets: {', '.join(d.get('name', d.get('id', '?')) for d in ds_list[:10])}",
-            category="dataset",
-            source=source,
-        ))
+        facts.append(
+            Fact(
+                key="known_datasets",
+                content=f"User có {len(ds_list)} datasets: {', '.join(d.get('name', d.get('id', '?')) for d in ds_list[:10])}",
+                category="dataset",
+                source=source,
+            )
+        )
 
     elif tool_name == "get_dataset_info" and "id" in payload:
         ds_id = payload.get("id", "")
@@ -54,25 +53,29 @@ def extract_from_tool_output(
         n_cols = payload.get("n_cols", "?")
         problem = payload.get("problem_type", "unknown")
         target = payload.get("target", "?")
-        facts.append(Fact(
-            key=f"dataset_{ds_id}",
-            content=(
-                f"Dataset '{ds_name}': {n_rows} rows × {n_cols} cols, "
-                f"problem_type={problem}, target='{target}'"
-            ),
-            category="dataset",
-            source=source,
-        ))
+        facts.append(
+            Fact(
+                key=f"dataset_{ds_id}",
+                content=(
+                    f"Dataset '{ds_name}': {n_rows} rows × {n_cols} cols, "
+                    f"problem_type={problem}, target='{target}'"
+                ),
+                category="dataset",
+                source=source,
+            )
+        )
 
     elif tool_name == "start_training" and "job_id" in payload:
         job_id = payload["job_id"]
         ds_id = payload.get("dataset_id", "?")
-        facts.append(Fact(
-            key=f"training_{job_id}",
-            content=f"Started training job '{job_id}' on dataset '{ds_id}'",
-            category="workflow",
-            source=source,
-        ))
+        facts.append(
+            Fact(
+                key=f"training_{job_id}",
+                content=f"Started training job '{job_id}' on dataset '{ds_id}'",
+                category="workflow",
+                source=source,
+            )
+        )
 
     elif tool_name == "get_job_info":
         job_id = payload.get("id", payload.get("job_id", ""))
@@ -84,21 +87,25 @@ def extract_from_tool_output(
             content += f", best_model={best}"
         if score:
             content += f", score={score}"
-        facts.append(Fact(
-            key=f"job_{job_id}",
-            content=content,
-            category="model" if best else "workflow",
-            source=source,
-        ))
+        facts.append(
+            Fact(
+                key=f"job_{job_id}",
+                content=content,
+                category="model" if best else "workflow",
+                source=source,
+            )
+        )
 
     elif tool_name == "get_available_models" and "models" in payload:
         models = payload["models"]
-        facts.append(Fact(
-            key="available_models",
-            content=f"Available ML models: {', '.join(str(m) for m in models[:20])}",
-            category="model",
-            source=source,
-        ))
+        facts.append(
+            Fact(
+                key="available_models",
+                content=f"Available ML models: {', '.join(str(m) for m in models[:20])}",
+                category="model",
+                source=source,
+            )
+        )
 
     return facts
 
@@ -123,9 +130,7 @@ def extract_from_response(
         match = re.search(pattern, response_text, re.IGNORECASE)
         if match:
             matched_text = match.group(0)
-            digest = hashlib.sha256(
-                matched_text.encode("utf-8")
-            ).hexdigest()
+            digest = hashlib.sha256(matched_text.encode("utf-8")).hexdigest()
             facts.append(
                 Fact(
                     key=f"response_{category}_{digest}",
@@ -146,9 +151,7 @@ def extract_from_tool_message(msg: Any, source: str = "") -> list[Fact]:
 
     try:
         payload = (
-            json.loads(msg.content)
-            if isinstance(msg.content, str)
-            else msg.content
+            json.loads(msg.content) if isinstance(msg.content, str) else msg.content
         )
         if isinstance(payload, dict) and "error" not in payload:
             return extract_from_tool_output(msg.name, payload, source=source)

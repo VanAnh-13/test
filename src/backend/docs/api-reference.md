@@ -218,22 +218,13 @@ Lấy danh sách jobs của user.
 
 ## Inference
 
-### POST /inference-model
+### POST /v2/auto/{job_id}/predictions
 
-Chạy dự đoán trên dữ liệu mới bằng mô hình đã huấn luyện.
-
-**Form Data**:
-- `job_id` (string) - ID của job đã hoàn thành
-- `user_id` (string)
-- `file_data` (file) - CSV dữ liệu mới
+Chạy dự đoán trên dữ liệu mới bằng mô hình đã huấn luyện (endpoint `/inference-model` cũ trả dữ liệu giả đã bị xóa).
 
 ---
 
 ## Model Management
-
-### POST /activate-model?job_id={id}&activate={0|1}
-
-Kích hoạt/vô hiệu hóa mô hình.
 
 ### POST /get-list-job-by-userId
 

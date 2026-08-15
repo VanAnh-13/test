@@ -5,7 +5,6 @@ dimension inference + fix hội tụ/scoring-None của BayesianSearch, factory.
 
 from __future__ import annotations
 
-import numpy as np
 import pytest
 from sklearn.datasets import make_classification
 from sklearn.model_selection import StratifiedKFold
@@ -93,7 +92,10 @@ class TestRandomSearch:
 class TestSuccessiveHalving:
     def test_contract_and_halving_happens(self):
         s = SuccessiveHalvingStrategy(
-            **FAST_CFG, n_candidates=9, eta=3, min_resource_frac=1 / 9,
+            **FAST_CFG,
+            n_candidates=9,
+            eta=3,
+            min_resource_frac=1 / 9,
             min_subsample_rows=30,
         )
         bp, bs, ba, cv, tl = _unpack(
@@ -111,7 +113,10 @@ class TestSuccessiveHalving:
 
     def test_best_comes_from_full_fidelity(self):
         s = SuccessiveHalvingStrategy(
-            **FAST_CFG, n_candidates=9, eta=3, min_resource_frac=1 / 9,
+            **FAST_CFG,
+            n_candidates=9,
+            eta=3,
+            min_resource_frac=1 / 9,
             min_subsample_rows=30,
         )
         bp, bs, _, cv, _ = _unpack(
@@ -125,7 +130,10 @@ class TestSuccessiveHalving:
     def test_tiny_data_uses_full(self):
         """Dữ liệu quá nhỏ so với min_subsample_rows → mọi rung full data."""
         s = SuccessiveHalvingStrategy(
-            **FAST_CFG, n_candidates=4, eta=2, min_resource_frac=0.25,
+            **FAST_CFG,
+            n_candidates=4,
+            eta=2,
+            min_resource_frac=0.25,
             min_subsample_rows=10_000,
         )
         _, bs, _, cv, _ = _unpack(
@@ -173,7 +181,7 @@ class TestParallelCandidates:
         assert ba["accuracy"] == pytest.approx(bs)
 
     def test_bo_batch_size_resolution(self):
-        s1 = BayesianSearchStrategy(**FAST_CFG)          # n_jobs=1
+        s1 = BayesianSearchStrategy(**FAST_CFG)  # n_jobs=1
         assert s1._resolve_batch_size() == 1
         cfg = dict(FAST_CFG)
         cfg["n_jobs"] = 2
@@ -187,7 +195,10 @@ class TestParallelCandidates:
         cfg = dict(FAST_CFG)
         cfg["n_jobs"] = 2
         s = GeneticAlgorithm(
-            **cfg, population_size=6, generation=2, elite_size=1,
+            **cfg,
+            population_size=6,
+            generation=2,
+            elite_size=1,
         )
         bp, bs, _, _, tl = _unpack(
             s.search(DecisionTreeClassifier(random_state=0), GRID, X, y)
@@ -201,7 +212,10 @@ class TestParallelCandidates:
         from automl.search.strategy.genetic_algorithm import GeneticAlgorithm
 
         s = GeneticAlgorithm(
-            **FAST_CFG, population_size=4, generation=2, elite_size=1,
+            **FAST_CFG,
+            population_size=4,
+            generation=2,
+            elite_size=1,
         )
         _, _, _, cv, _ = _unpack(
             s.search(DecisionTreeClassifier(random_state=0), GRID, X, y)
@@ -227,11 +241,9 @@ class TestParallelCandidates:
         config → 2 pool loky chồng nhau (24 tiến trình/16 lõi), stall 2231s."""
         import inspect
 
-        src = inspect.getsource(
-            BayesianSearchStrategy._search_single_grid_batch
-        )
+        src = inspect.getsource(BayesianSearchStrategy._search_single_grid_batch)
         assert "Parallel(n_jobs=b)" not in src
-        assert "self.config.get('n_jobs')" in src
+        assert 'self.config.get("n_jobs")' in src
 
     def test_bo_batch_never_swallows_whole_budget(self):
         """Regression: batch=n_calls → ask() đề xuất cả budget trước khi quan
@@ -305,7 +317,9 @@ class TestParallelCandidates:
         g = GridSearchStrategy(**FAST_CFG)
         # workload trung bình từng bị chọn 'threading' (GIL-bound) — giờ loky
         assert g._select_optimal_backend(n_combinations=9, data_size=12_000) == "loky"
-        assert g._select_optimal_backend(n_combinations=2, data_size=12_000) == "threading"
+        assert (
+            g._select_optimal_backend(n_combinations=2, data_size=12_000) == "threading"
+        )
 
     def test_batch_evaluator_handles_failures(self):
         """Ứng viên lỗi → None, không sập cả batch."""
@@ -358,14 +372,18 @@ class TestBayesianConvergence:
     def test_single_plateau_step_is_not_convergence(self):
         """Bug cũ: một bước không cải thiện sau patience → dừng. Phải là False."""
         history = [0.5, 0.6, 0.7, 0.8, 0.9, 0.9]  # chỉ MỘT bước phẳng cuối
-        assert not BayesianSearchStrategy._converged(history, patience=5, threshold=0.001)
+        assert not BayesianSearchStrategy._converged(
+            history, patience=5, threshold=0.001
+        )
 
     def test_full_plateau_is_convergence(self):
         history = [0.5, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9]
         assert BayesianSearchStrategy._converged(history, patience=5, threshold=0.001)
 
     def test_short_history_not_converged(self):
-        assert not BayesianSearchStrategy._converged([0.9, 0.9], patience=5, threshold=0.001)
+        assert not BayesianSearchStrategy._converged(
+            [0.9, 0.9], patience=5, threshold=0.001
+        )
 
     def test_small_improvements_count_as_plateau(self):
         history = [0.5, 0.9] + [0.9 + i * 1e-5 for i in range(1, 6)]

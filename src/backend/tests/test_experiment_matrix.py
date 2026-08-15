@@ -246,7 +246,7 @@ class TestPairedAdvice:
         "response",
         [
             "not-json",
-            "```json\n{\"search_algorithm\":\"grid_search\"}\n```",
+            '```json\n{"search_algorithm":"grid_search"}\n```',
             "[]",
             '{"search_algorithm":"GRID_SEARCH"}',
             '{"search_algorithm":"grid_search","extra":1}',
@@ -319,7 +319,7 @@ class TestPairedAdvice:
     def test_provider_transport_disables_internal_retries(self, monkeypatch):
         from types import SimpleNamespace
 
-        import hagent.agent.llm_config as llm_config
+        import hagent.agent.llm.config as llm_config
 
         seen = {}
         config = llm_config.ModelConfig(
@@ -399,7 +399,9 @@ class TestAdviceJournal:
             "dispatched",
             "accepted",
         ]
-        assert all("prompt" not in record and "response" not in record for record in records)
+        assert all(
+            "prompt" not in record and "response" not in record for record in records
+        )
 
     def test_pending_call_is_not_retried(self, tmp_path):
         from automl.search.datasets_real import load_dataset
@@ -510,9 +512,7 @@ class TestAdviceJournal:
                     OSError("network")
                 ),
             )
-        dispatched = json.loads(
-            sidecar.read_text(encoding="utf-8").splitlines()[-1]
-        )
+        dispatched = json.loads(sidecar.read_text(encoding="utf-8").splitlines()[-1])
         receipt = {
             key: value
             for key, value in dispatched.items()
@@ -590,8 +590,11 @@ class TestRealJobEnv:
 
         env = mx.RealJobEnv(
             load_dataset("iris"),
-            job_cfg={"cv": 3, "time_limit": 30,
-                     "param_grid": {"max_depth": [3, 5], "n_estimators": [10]}},
+            job_cfg={
+                "cv": 3,
+                "time_limit": 30,
+                "param_grid": {"max_depth": [3, 5], "n_estimators": [10]},
+            },
             seed=0,
         )
 
@@ -620,7 +623,6 @@ class TestRealJobEnv:
                 "time_limited": False,
             }
         ]
-
 
     def test_dataset_info_from_registry(self):
         from automl.search.datasets_real import load_dataset
@@ -652,9 +654,9 @@ class TestArtifactProvenance:
             lambda: {"outcome_head": {"checkpoint_path": str(checkpoint)}},
         )
 
-        assert mx._checkpoint_sha() == hashlib.sha256(
-            checkpoint.read_bytes()
-        ).hexdigest()
+        assert (
+            mx._checkpoint_sha() == hashlib.sha256(checkpoint.read_bytes()).hexdigest()
+        )
 
     def test_git_sha_uses_full_head(self, monkeypatch):
         seen = {}
@@ -757,13 +759,13 @@ class TestCellAdviceEvidence:
     def test_run_cell_clears_invoker_when_message_rendering_fails(
         self, tmp_path, monkeypatch
     ):
-        import hagent.agent.execution.tool_runner as tool_runner
+        from hagent.agent.execution import tool_runner
 
         design_sha = "e" * 64
         advice = TestEnumerationAndResume.accepted_advice(design_sha)
         cfg = matrix_config()
         cfg["prompt"] = "Train {dataset} target {target} with {missing}"
-        original_config = str(mx.BACKEND / "hagent" / "hagent.yaml")
+        original_config = str(mx.BACKEND / "hagent" / "config" / "hagent.yaml")
         monkeypatch.setenv("HAGENT_CONFIG", original_config)
 
         try:
@@ -847,13 +849,13 @@ class TestCellAdviceEvidence:
         )
 
         assert row["error"] is None
-        assert mx.validate_result_evidence(
-            row, design_sha, {advice["advice_key"]: advice}
-        ) == []
+        assert (
+            mx.validate_result_evidence(row, design_sha, {advice["advice_key"]: advice})
+            == []
+        )
 
 
 class TestEnumerationAndResume:
-
     def test_cell_key_format(self):
         assert mx.cell_key("A", "iris", "m", 0) == "A:iris:m:0"
 
@@ -863,12 +865,9 @@ class TestEnumerationAndResume:
             {"key": "A:iris:m:0", "error": None},
             {"key": "A:wine:m:0", "error": "boom"},  # lỗi → phải chạy lại
         ]
-        out.write_text(
-            "\n".join(json.dumps(r) for r in rows), encoding="utf-8"
-        )
+        out.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
         done = mx.migrate_rejected_rows(
-            out, tmp_path / "rejected.jsonl",
-            design_sha="e" * 64, accepted_advices={}
+            out, tmp_path / "rejected.jsonl", design_sha="e" * 64, accepted_advices={}
         )
         assert done == set()
         assert not out.exists()
@@ -914,9 +913,7 @@ class TestEnumerationAndResume:
             "design_sha256": advice["design_sha256"],
             "experiment_id": advice["experiment_id"],
             "dataset_sha256": advice["dataset_sha256"],
-            "advice_provenance": {
-                key: advice[key] for key in provenance_keys
-            },
+            "advice_provenance": {key: advice[key] for key in provenance_keys},
             "campaign_status": "done",
             "variant_sources": ["requested"],
             "requested_variant": {
@@ -995,9 +992,7 @@ class TestEnumerationAndResume:
         changed["meta"]["mean_abs_skew"] += 0.25
         assert mx.dataset_sha256(changed) == row["dataset_sha256"]
         prompt_sha = hashlib.sha256(
-            mx._advice_prompt(
-                mx.anonymized_advice_payload(changed)
-            ).encode("utf-8")
+            mx._advice_prompt(mx.anonymized_advice_payload(changed)).encode("utf-8")
         ).hexdigest()
         current_key = mx._advice_key(
             design_sha,
@@ -1347,8 +1342,8 @@ class TestMatrixCli:
     ):
         import numpy as np
 
-        import automl.search.datasets_real as datasets_real
-        import hagent.agent.llm_config as llm_config
+        import hagent.agent.llm.config as llm_config
+        from automl.search import datasets_real
 
         config_path, cfg = self.write_config(tmp_path)
         loaded = []
@@ -1405,9 +1400,7 @@ class TestMatrixCli:
     def test_only_must_be_a_member_of_frozen_design(self, tmp_path, only):
         config_path, cfg = self.write_config(tmp_path)
 
-        exit_code = mx.main(
-            ["--config", str(config_path), "--dry-run", "--only", only]
-        )
+        exit_code = mx.main(["--config", str(config_path), "--dry-run", "--only", only])
 
         assert exit_code == 2
         assert not Path(cfg["output"]).exists()
@@ -1482,19 +1475,18 @@ class TestMatrixCli:
             "--only",
             "A:iris:meta-ai:0",
         ]
-        first = mx.main(
-            argv, advice_invoke=advice_invoke, agent_runner=agent_runner
-        )
-        second = mx.main(
-            argv, advice_invoke=advice_invoke, agent_runner=agent_runner
-        )
+        first = mx.main(argv, advice_invoke=advice_invoke, agent_runner=agent_runner)
+        second = mx.main(argv, advice_invoke=advice_invoke, agent_runner=agent_runner)
 
         assert first == second == 0
         assert advice_calls == agent_calls == 1
         row = json.loads(Path(cfg["output"]).read_text(encoding="utf-8"))
         advice_state = mx.load_advice_index(Path(cfg["advice_output"]))
-        assert mx.validate_result_evidence(
-            row, mx.design_sha256(cfg), advice_state["accepted"]
-        ) == []
+        assert (
+            mx.validate_result_evidence(
+                row, mx.design_sha256(cfg), advice_state["accepted"]
+            )
+            == []
+        )
         assert not Path(cfg["rejected_output"]).exists()
         assert "HAGENT_CONFIG" not in os.environ

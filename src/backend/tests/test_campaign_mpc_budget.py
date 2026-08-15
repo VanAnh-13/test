@@ -58,18 +58,25 @@ def _head(seed=0):
 
 class TestBudgetFields:
     def test_default_budget_from_n(self):
-        camp = run(build_campaign(GOAL, user_id="t7", config=BUILD_CFG, outcome_model=None))
+        camp = run(
+            build_campaign(GOAL, user_id="t7", config=BUILD_CFG, outcome_model=None)
+        )
         assert camp.total_budget == 6  # n=3 → fallback n×2
 
     def test_budget_from_goal_constraints(self):
         goal = dict(GOAL, constraints={"max_jobs": 10})
-        camp = run(build_campaign(goal, user_id="t7", config=BUILD_CFG, outcome_model=None))
+        camp = run(
+            build_campaign(goal, user_id="t7", config=BUILD_CFG, outcome_model=None)
+        )
         assert camp.total_budget == 10
 
     def test_roundtrip(self):
         camp = Campaign(
-            campaign_id="c", goal=dict(GOAL), variants=[],
-            total_budget=9, spent_budget=4,
+            campaign_id="c",
+            goal=dict(GOAL),
+            variants=[],
+            total_budget=9,
+            spent_budget=4,
         )
         back = Campaign.from_dict(camp.to_dict())
         assert back.total_budget == 9
@@ -78,7 +85,9 @@ class TestBudgetFields:
 
 class TestExtensionRespectsBudget:
     def _camp(self, total, spent, n_variants=3):
-        camp = run(build_campaign(GOAL, user_id="t7", config=BUILD_CFG, outcome_model=None))
+        camp = run(
+            build_campaign(GOAL, user_id="t7", config=BUILD_CFG, outcome_model=None)
+        )
         camp.total_budget = total
         camp.spent_budget = spent
         return camp
@@ -135,7 +144,9 @@ class TestMpcPlanBatchPath:
 
         monkeypatch.setattr(CemMpcV1Planner, "plan_batch", spy)
 
-        camp = run(build_campaign(GOAL, user_id="t7", config=BUILD_CFG, outcome_model=None))
+        camp = run(
+            build_campaign(GOAL, user_id="t7", config=BUILD_CFG, outcome_model=None)
+        )
         camp.total_budget = 8
         camp.spent_budget = 3
         new = propose_extension_variants(
@@ -147,7 +158,7 @@ class TestMpcPlanBatchPath:
 
     def test_default_backend_unchanged(self):
         """Không đổi config → vẫn cem_config_v1 (không plan_batch)."""
-        from hagent.agent.campaign.builder import _campaign_planner, _campaign_config
+        from hagent.agent.campaign.builder import _campaign_config, _campaign_planner
         from hagent.world.planner.cem_config_v1 import CemConfigV1Planner
 
         planner = _campaign_planner(dict(_campaign_config()))

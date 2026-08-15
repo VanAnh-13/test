@@ -6,15 +6,13 @@ import asyncio
 import sys
 from pathlib import Path
 
-import pytest
-
 BACKEND = Path(__file__).resolve().parent.parent
 if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
 
 from hagent.agent.harness.assertions import assert_expectations
 from hagent.agent.harness.loader import load_all_scenarios, scenario_from_mapping
-from hagent.agent.harness.schema import AgentScenario, ExpectSpec
+from hagent.agent.harness.schema import ExpectSpec
 from hagent.agent.harness.suite import run_harness_suite
 
 

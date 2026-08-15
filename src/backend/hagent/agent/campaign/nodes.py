@@ -2,36 +2,31 @@
 
 from __future__ import annotations
 
-import logging
 from typing import Any
+
+import structlog
 
 try:
     from langchain_core.messages import AIMessage
 except ImportError:  # pragma: no cover
+
     class AIMessage:  # type: ignore[no-redef]
         def __init__(self, content: str = "", **kwargs):
             self.content = content
             self.type = "ai"
 
-from hagent.agent.campaign.runner import campaign_step, ensure_campaign
-from hagent.agent.state import AutoMLState
 
-logger = logging.getLogger(__name__)
+from hagent.agent.campaign.runner import campaign_step, ensure_campaign
+from hagent.agent.campaign.settings import max_monitor_ticks
+from hagent.agent.orchestration import AutoMLState
+
+logger = structlog.get_logger(__name__)
 
 
 def _append_event(state: AutoMLState, event: dict) -> list:
     events = list(state.get("execution_events") or [])
     events.append(event)
     return events
-
-
-def _max_monitor_ticks() -> int:
-    try:
-        from hagent.bridge.config import get_campaign_config
-
-        return int(get_campaign_config().get("max_monitor_ticks", 50))
-    except Exception:
-        return 50
 
 
 def _select_surprise(surprise_buf: list) -> dict | None:
@@ -104,7 +99,7 @@ async def campaign_node(state: AutoMLState) -> dict:
     wm_from_camp = getattr(campaign, "_world_model_snapshot", None)
 
     # Safety: avoid infinite graph loops when jobs never finish
-    max_ticks = _max_monitor_ticks()
+    max_ticks = max_monitor_ticks()
     if campaign.status == "monitoring" and ticks >= max_ticks:
         for v in campaign.variants:
             if v.status in ("pending", "submitted", "running"):
@@ -131,15 +126,11 @@ async def campaign_node(state: AutoMLState) -> dict:
         )
 
     cost["campaign_variants"] = len(campaign.variants)
-    cost["campaign_submitted"] = sum(
-        1 for v in campaign.variants if v.job_id
-    )
+    cost["campaign_submitted"] = sum(1 for v in campaign.variants if v.job_id)
     cost["campaign_completed"] = sum(
         1 for v in campaign.variants if v.status == "completed"
     )
-    cost["campaign_failed"] = sum(
-        1 for v in campaign.variants if v.status == "failed"
-    )
+    cost["campaign_failed"] = sum(1 for v in campaign.variants if v.status == "failed")
 
     events.append(
         {
@@ -186,9 +177,7 @@ async def campaign_node(state: AutoMLState) -> dict:
         }
         update["plan_status"] = "done"
         score_txt = (
-            f"score={best.best_score}, model={best.best_model}"
-            if best
-            else "no winner"
+            f"score={best.best_score}, model={best.best_model}" if best else "no winner"
         )
         msg = (
             f"Campaign {campaign.campaign_id[:8]} xong: "
@@ -214,15 +203,7 @@ async def campaign_node(state: AutoMLState) -> dict:
         jobs = dict(wm.get("jobs") or {})
         for v in campaign.variants:
             if v.job_id:
-                jobs[v.job_id] = {
-                    "id": v.job_id,
-                    "status": v.status,
-                    "best_model": v.best_model,
-                    "best_score": v.best_score,
-                    "metrics": v.metrics,
-                    "config": v.params,
-                    "dataset_id": v.params.get("dataset_id"),
-                }
+                jobs[v.job_id] = v.to_job_entry()
         wm["jobs"] = jobs
         update["world_model"] = wm
     elif wm_from_camp is not None:
@@ -231,7 +212,7 @@ async def campaign_node(state: AutoMLState) -> dict:
     elif campaign.status == "failed":
         update["plan_status"] = "failed"
         update["messages"] = [
-            AIMessage(content=f"Campaign thất bại: không có variant thành công.")
+            AIMessage(content="Campaign thất bại: không có variant thành công.")
         ]
         events.append(
             {
@@ -242,7 +223,9 @@ async def campaign_node(state: AutoMLState) -> dict:
         )
         update["execution_events"] = events
     else:
-        n_run = sum(1 for v in campaign.variants if v.status in ("submitted", "running"))
+        n_run = sum(
+            1 for v in campaign.variants if v.status in ("submitted", "running")
+        )
         n_pend = sum(1 for v in campaign.variants if v.status == "pending")
         update["messages"] = [
             AIMessage(

@@ -4,9 +4,6 @@ Tests cho CemMpcV1Planner — budget-annealed Thompson batch planning.
 
 from __future__ import annotations
 
-import numpy as np
-import pytest
-
 from hagent.world.planner import CemMpcV1Planner, create_campaign_planner
 from hagent.world.predictor.outcome_head_v1 import OutcomeHeadV1, OutcomePrediction
 
@@ -47,7 +44,7 @@ class TestPlanBatch:
             base_params={},
             outcome_model=FakeModel(TABLE),
             n=2,
-            remaining_budget=2,   # remaining_after = 0 → exploit
+            remaining_budget=2,  # remaining_after = 0 → exploit
             total_budget=12,
         )
         assert len(batch) == 2
@@ -95,7 +92,11 @@ class TestPlanBatch:
             total_budget=12,
         )
         sigs = [
-            (c.get("search_algorithm"), c.get("time_limit"), tuple(c.get("models") or []))
+            (
+                c.get("search_algorithm"),
+                c.get("time_limit"),
+                tuple(c.get("models") or []),
+            )
             for c in batch
         ]
         assert len(sigs) == len(set(sigs))

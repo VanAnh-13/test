@@ -3,7 +3,7 @@ import logging
 import math
 import time
 from collections import Counter
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -18,24 +18,25 @@ from automl.search.strategy.base import SearchStrategy, normalize_param_grid
 # Cấu hình logger cho module này
 logger = logging.getLogger(__name__)
 
+
 class BayesianSearchStrategy(SearchStrategy):
     """
-        Thực thi tìm kiếm siêu tham số bằng Tối ưu hóa Bayesian (Bayesian Optimization)
-        sử dụng thư viện scikit-optimize.
+    Thực thi tìm kiếm siêu tham số bằng Tối ưu hóa Bayesian (Bayesian Optimization)
+    sử dụng thư viện scikit-optimize.
     """
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._optimizer_state = {}  # Lưu trạng thái optimizer cho warm start
-        self._cache_dir = kwargs.get('cache_dir', '.bayesian_cache')
+        self._cache_dir = kwargs.get("cache_dir", ".bayesian_cache")
 
     def _detect_class_imbalance(self, y: np.ndarray) -> bool:
         """
         Phát hiện xem tập dữ liệu có mất cân bằng lớp hay không.
-        
+
         Args:
             y: Mảng nhãn
-            
+
         Returns:
             bool: True nếu mất cân bằng, False nếu cân bằng
         """
@@ -44,14 +45,16 @@ class BayesianSearchStrategy(SearchStrategy):
         total_samples = len(y)
 
         # Tính tỷ lệ của mỗi lớp
-        class_ratios = {cls: count / total_samples for cls, count in class_counts.items()}
+        class_ratios = {
+            cls: count / total_samples for cls, count in class_counts.items()
+        }
 
         # Tìm tỷ lệ nhỏ nhất và lớn nhất
         min_ratio = min(class_ratios.values())
         max_ratio = max(class_ratios.values())
 
         # Kiểm tra xem sự khác biệt có đáng kể không
-        threshold = self.config.get('imbalance_threshold', 0.3)
+        threshold = self.config.get("imbalance_threshold", 0.3)
 
         # Nếu chênh lệch giữa lớp nhỏ nhất và lớn nhất vượt ngưỡng, dữ liệu mất cân bằng
         return (max_ratio - min_ratio) > threshold
@@ -59,37 +62,41 @@ class BayesianSearchStrategy(SearchStrategy):
     def _get_averaging_method(self, y: np.ndarray) -> str:
         """
         Xác định phương pháp tính trung bình nào sẽ sử dụng dựa trên cấu hình và dữ liệu.
-        
+
         Args:
             y: Mảng nhãn
-            
+
         Returns:
             str: 'macro' hoặc 'weighted'
         """
-        averaging = self.config.get('averaging', 'auto')
+        averaging = self.config.get("averaging", "auto")
 
-        if averaging == 'auto':
+        if averaging == "auto":
             # Tự động phát hiện dựa trên cân bằng lớp
             if self._detect_class_imbalance(y):
-                logger.info("Phát hiện mất cân bằng lớp. Sử dụng trung bình có trọng số (weighted).")
-                return 'weighted'
+                logger.info(
+                    "Phát hiện mất cân bằng lớp. Sử dụng trung bình có trọng số (weighted)."
+                )
+                return "weighted"
             else:
                 logger.info("Phát hiện các lớp cân bằng. Sử dụng trung bình macro.")
-                return 'macro'
-        elif averaging in ['macro', 'weighted']:
+                return "macro"
+        elif averaging in ["macro", "weighted"]:
             logger.info(f"Sử dụng trung bình {averaging} theo cấu hình.")
             return averaging
         else:
-            logger.warning(f"Phương pháp tính trung bình '{averaging}' không hợp lệ. Mặc định dùng macro.")
-            return 'macro'
+            logger.warning(
+                f"Phương pháp tính trung bình '{averaging}' không hợp lệ. Mặc định dùng macro."
+            )
+            return "macro"
 
     @staticmethod
-    def get_default_config() -> Dict[str, Any]:
+    def get_default_config() -> dict[str, Any]:
         """Lấy cấu hình mặc định bằng cách tải từ file YAML."""
         base_config = SearchStrategy.get_default_config()
 
         # Tải cấu hình Bayesian từ file YAML (sử dụng method từ base class)
-        bayesian_config = SearchStrategy._load_yaml_config('bayesian_search')
+        bayesian_config = SearchStrategy._load_yaml_config("bayesian_search")
 
         if bayesian_config:
             base_config.update(bayesian_config)
@@ -119,7 +126,7 @@ class BayesianSearchStrategy(SearchStrategy):
         return Categorical(vals, name=param_name)
 
     @staticmethod
-    def _converged(best_history: List[float], patience: int, threshold: float) -> bool:
+    def _converged(best_history: list[float], patience: int, threshold: float) -> bool:
         """
         Hội tụ khi cải thiện < threshold trong `patience` bước LIÊN TIẾP
         gần nhất. Một bước không cải thiện đơn lẻ KHÔNG phải hội tụ —
@@ -127,18 +134,16 @@ class BayesianSearchStrategy(SearchStrategy):
         """
         if patience < 1 or len(best_history) < patience + 1:
             return False
-        recent = best_history[-(patience + 1):]
-        return all(
-            abs(recent[i + 1] - recent[i]) < threshold for i in range(patience)
-        )
+        recent = best_history[-(patience + 1) :]
+        return all(abs(recent[i + 1] - recent[i]) < threshold for i in range(patience))
 
-    def _get_search_space_hash(self, search_space: List) -> str:
+    def _get_search_space_hash(self, search_space: list) -> str:
         """
         Tạo hash của search space để nhận dạng cấu hình.
-        
+
         Args:
             search_space: Danh sách các dimensions
-            
+
         Returns:
             str: Hash của search space
         """
@@ -148,55 +153,59 @@ class BayesianSearchStrategy(SearchStrategy):
     def _save_optimizer_state(self, result, search_space_hash: str, model_name: str):
         """
         Lưu trạng thái optimizer để sử dụng cho warm start.
-        
+
         Args:
             result: Kết quả gp_minimize
             search_space_hash: Hash của search space
             model_name: Tên model
         """
-        if not self.config.get('save_optimizer_state', True):
+        if not self.config.get("save_optimizer_state", True):
             return
 
         state = {
-            'x_iters': result.x_iters,
-            'func_vals': result.func_vals,
-            'search_space_hash': search_space_hash,
+            "x_iters": result.x_iters,
+            "func_vals": result.func_vals,
+            "search_space_hash": search_space_hash,
         }
 
         key = f"{model_name}_{search_space_hash}"
         self._optimizer_state[key] = state
 
-        if self.config.get('verbose', 1) > 1:
+        if self.config.get("verbose", 1) > 1:
             logger.debug(f"Đã lưu trạng thái optimizer với {len(result.x_iters)} điểm")
 
-    def _load_optimizer_state(self, search_space_hash: str, model_name: str) -> Tuple[List, List]:
+    def _load_optimizer_state(
+        self, search_space_hash: str, model_name: str
+    ) -> tuple[list, list]:
         """
         Tải trạng thái optimizer để warm start.
-        
+
         Args:
             search_space_hash: Hash của search space
             model_name: Tên model
-            
+
         Returns:
             Tuple[List, List]: (x0, y0) cho warm start, hoặc (None, None) nếu không có
         """
-        if not self.config.get('warm_start_enabled', False):
+        if not self.config.get("warm_start_enabled", False):
             return None, None
 
         key = f"{model_name}_{search_space_hash}"
 
         if key in self._optimizer_state:
             state = self._optimizer_state[key]
-            if state.get('search_space_hash') == search_space_hash:
-                x0 = state.get('x_iters', [])
-                y0 = state.get('func_vals', [])
+            if state.get("search_space_hash") == search_space_hash:
+                x0 = state.get("x_iters", [])
+                y0 = state.get("func_vals", [])
                 if x0 and y0:
                     logger.info(f"Warm start: sử dụng {len(x0)} điểm từ lần chạy trước")
                     return x0, y0
 
         return None, None
 
-    def _evaluate_default_params(self, model: BaseEstimator, X: np.ndarray, y: np.ndarray) -> Tuple[Dict, float, Dict, Dict, bool]:
+    def _evaluate_default_params(
+        self, model: BaseEstimator, X: np.ndarray, y: np.ndarray
+    ) -> tuple[dict, float, dict, dict, bool]:
         """Đánh giá model với default params khi không có hyperparameters để tối ưu.
 
         Args:
@@ -207,54 +216,60 @@ class BayesianSearchStrategy(SearchStrategy):
         Returns:
             Tuple: (best_params, best_score, best_all_scores, cv_results_, time_limit_reached)
         """
-        scoring_config = self.config.get('scoring', {})
-        metric_names = list(scoring_config.keys()) if scoring_config else ['accuracy']
-        primary_metric = self.config.get('metric_sort', 'accuracy')
+        scoring_config = self.config.get("scoring", {})
+        metric_names = list(scoring_config.keys()) if scoring_config else ["accuracy"]
+        primary_metric = self.config.get("metric_sort", "accuracy")
 
         scores = cross_validate(
             estimator=model,
             X=X,
             y=y,
-            cv=self.config['cv'],
-            n_jobs=self.config['n_jobs'],
+            cv=self.config["cv"],
+            n_jobs=self.config["n_jobs"],
             scoring=scoring_config,
-            error_score=self.config['error_score'],
-            return_train_score=False
+            error_score=self.config["error_score"],
+            return_train_score=False,
         )
 
-        # Tính mean score cho mỗi metric
-        all_scores = {}
-        for metric in metric_names:
-            test_key = f'test_{metric}'
-            if test_key in scores:
-                all_scores[metric] = float(np.mean(scores[test_key]))
+        # Tính mean score cho mỗi metric (lặp đúng metric_names như trước)
+        all_scores = self._extract_cv_mean_scores(
+            scores, dict.fromkeys(metric_names), primary_metric
+        )
 
         best_score = all_scores.get(primary_metric, 0.0)
 
         # Xây dựng cv_results_ format
         cv_results_ = {
-            'params': [{}],
-            'mean_test_score': [best_score],
-            'std_test_score': [0.0],
-            'rank_test_score': [1],
+            "params": [{}],
+            "mean_test_score": [best_score],
+            "std_test_score": [0.0],
+            "rank_test_score": [1],
         }
         for metric in metric_names:
-            cv_results_[f'mean_test_{metric}'] = [all_scores.get(metric, 0.0)]
-            cv_results_[f'std_test_{metric}'] = [0.0]
-            cv_results_[f'rank_test_{metric}'] = [1]
+            cv_results_[f"mean_test_{metric}"] = [all_scores.get(metric, 0.0)]
+            cv_results_[f"std_test_{metric}"] = [0.0]
+            cv_results_[f"rank_test_{metric}"] = [1]
 
-        logger.info(f"Đánh giá {model.__class__.__name__} với default params: {primary_metric}={best_score:.4f}")
+        logger.info(
+            f"Đánh giá {model.__class__.__name__} với default params: {primary_metric}={best_score:.4f}"
+        )
 
         return {}, best_score, all_scores, cv_results_, False
 
-    def search(self, model: BaseEstimator, param_grid: List[Dict[str, Any]],
-               X: np.ndarray, y: np.ndarray, **kwargs) -> Tuple[Dict, float, Dict, Dict, bool]:
+    def search(
+        self,
+        model: BaseEstimator,
+        param_grid: list[dict[str, Any]],
+        X: np.ndarray,
+        y: np.ndarray,
+        **kwargs,
+    ) -> tuple[dict, float, dict, dict, bool]:
         """
         Thực thi thuật toán tìm kiếm.
 
         Args:
             model (BaseEstimator): Mô hình scikit-learn.
-            param_grid (List[Dict[str, Any]]): Một list-of-dicts hoặc một dict đơn lẻ, trong đó mỗi dict 
+            param_grid (List[Dict[str, Any]]): Một list-of-dicts hoặc một dict đơn lẻ, trong đó mỗi dict
                                          chứa key là tên tham số và value có thể là:
                                          - Một dimension của skopt (Real, Integer, Categorical)
                                          - Một list các giá trị (sẽ được chuyển thành Categorical)
@@ -267,7 +282,7 @@ class BayesianSearchStrategy(SearchStrategy):
             Tuple[Dict, float, Dict, Dict, bool]: (best_params, best_score, best_all_scores, cv_results_, time_limit_reached)
                 - best_params: Từ điển các tham số tốt nhất
                 - best_score: Điểm số tốt nhất đạt được
-                - best_all_scores: Từ điển với tất cả điểm số metric cho tham số tốt nhất  
+                - best_all_scores: Từ điển với tất cả điểm số metric cho tham số tốt nhất
                 - cv_results_: Từ điển với kết quả cross-validation chi tiết
                 - time_limit_reached: True nếu search bị dừng do hết thời gian
         """
@@ -289,8 +304,10 @@ class BayesianSearchStrategy(SearchStrategy):
                 all_cv_results.append(result[3])
                 continue
 
-            if self.config.get('verbose', 1) > 0:
-                logger.info(f"Đang tối ưu hóa grid {grid_idx + 1}/{len(param_grid_list)}")
+            if self.config.get("verbose", 1) > 0:
+                logger.info(
+                    f"Đang tối ưu hóa grid {grid_idx + 1}/{len(param_grid_list)}"
+                )
 
             result = self._search_single_grid(model, single_grid, X, y, **kwargs)
             all_results.append(result)
@@ -307,9 +324,11 @@ class BayesianSearchStrategy(SearchStrategy):
         # Gộp tất cả cv_results
         combined_cv_results = self._combine_cv_results(all_cv_results)
 
-        return self._finalize_results(best_params, best_score, best_all_scores, combined_cv_results)
+        return self._finalize_results(
+            best_params, best_score, best_all_scores, combined_cv_results
+        )
 
-    def _combine_cv_results(self, cv_results_list: list) -> Dict[str, Any]:
+    def _combine_cv_results(self, cv_results_list: list) -> dict[str, Any]:
         """Gộp cv_results từ nhiều grid thành một."""
         if not cv_results_list:
             return {}
@@ -332,10 +351,10 @@ class BayesianSearchStrategy(SearchStrategy):
                     combined[key].extend(cv_results[key])
 
         # Tính lại rank
-        if 'mean_test_score' in combined and combined['mean_test_score']:
-            test_scores = combined['mean_test_score']
+        if combined.get("mean_test_score"):
+            test_scores = combined["mean_test_score"]
             ranks = np.argsort(np.argsort(-np.array(test_scores))) + 1
-            combined['rank_test_score'] = ranks.tolist()
+            combined["rank_test_score"] = ranks.tolist()
 
         return combined
 
@@ -350,58 +369,50 @@ class BayesianSearchStrategy(SearchStrategy):
         nhiên cố định, giống hệt nhau trên mọi dataset. Đo thực tế đã dính
         đúng bẫy này: n_calls=8, batch=8 → 1 vòng, 0 lần thích ứng.
         """
-        raw = self.config.get('batch_size', 'auto')
-        if raw in (None, 'auto'):
+        raw = self.config.get("batch_size", "auto")
+        if raw in (None, "auto"):
             from joblib import effective_n_jobs
 
-            batch = max(1, min(8, effective_n_jobs(self.config.get('n_jobs') or 1)))
+            batch = max(1, min(8, effective_n_jobs(self.config.get("n_jobs") or 1)))
         else:
             batch = max(1, int(raw))
 
-        n_calls = int(self.config.get('n_calls', 0) or 0)
-        min_rounds = max(1, int(self.config.get('min_adaptive_rounds', 4)))
+        n_calls = int(self.config.get("n_calls", 0) or 0)
+        min_rounds = max(1, int(self.config.get("min_adaptive_rounds", 4)))
         if n_calls > 0:
             batch = max(1, min(batch, math.ceil(n_calls / min_rounds)))
         return batch
 
     def _evaluate_point(
-        self, model: BaseEstimator, params: Dict[str, Any], X: np.ndarray, y: np.ndarray
-    ) -> Dict[str, float]:
+        self, model: BaseEstimator, params: dict[str, Any], X: np.ndarray, y: np.ndarray
+    ) -> dict[str, float]:
         """Đánh giá 1 điểm với cv n_jobs=1 (được gọi bên trong Parallel)."""
         est = clone(model)
         est.set_params(**params)
-        scoring = self.config.get('scoring')
+        scoring = self.config.get("scoring")
         cv_out = cross_validate(
             estimator=est,
             X=X,
             y=y,
-            cv=self.config['cv'],
+            cv=self.config["cv"],
             n_jobs=1,
             scoring=scoring,
-            error_score=self.config['error_score'],
+            error_score=self.config["error_score"],
             return_train_score=False,
         )
-        all_scores: Dict[str, float] = {}
-        if scoring:
-            for key in scoring:
-                test_key = f'test_{key}'
-                if test_key in cv_out:
-                    all_scores[key] = float(np.mean(cv_out[test_key]))
-        elif 'test_score' in cv_out:
-            all_scores[self.config.get('metric_sort', 'accuracy')] = float(
-                np.mean(cv_out['test_score'])
-            )
-        return all_scores
+        return self._extract_cv_mean_scores(
+            cv_out, scoring, self.config.get("metric_sort", "accuracy")
+        )
 
     def _search_single_grid_batch(
         self,
         model: BaseEstimator,
         X: np.ndarray,
         y: np.ndarray,
-        search_space: List,
-        param_names: List[str],
+        search_space: list,
+        param_names: list[str],
         batch_size: int,
-    ) -> Tuple[Dict, float, Dict, Dict, bool]:
+    ) -> tuple[dict, float, dict, dict, bool]:
         """
         BO theo lô (ask/tell + constant liar): mỗi vòng đề xuất batch_size
         điểm và đánh giá SONG SONG bằng process — tăng tốc ~batch lần so với
@@ -410,17 +421,17 @@ class BayesianSearchStrategy(SearchStrategy):
         from joblib import Parallel, delayed
         from skopt import Optimizer
 
-        primary_metric = self.config.get('metric_sort', 'accuracy')
-        scoring = self.config.get('scoring') or {}
+        primary_metric = self.config.get("metric_sort", "accuracy")
+        scoring = self.config.get("scoring") or {}
         metric_names = list(scoring.keys()) if scoring else [primary_metric]
-        n_calls = int(self.config['n_calls'])
+        n_calls = int(self.config["n_calls"])
 
         opt = Optimizer(
             dimensions=search_space,
-            random_state=self.config['random_state'],
-            acq_func=self.config.get('acq_func', 'EI'),
-            acq_optimizer=self.config.get('acq_optimizer', 'sampling'),
-            n_initial_points=self.config.get('n_initial_points', 5),
+            random_state=self.config["random_state"],
+            acq_func=self.config.get("acq_func", "EI"),
+            acq_optimizer=self.config.get("acq_optimizer", "sampling"),
+            n_initial_points=self.config.get("n_initial_points", 5),
         )
 
         space_hash = self._get_search_space_hash(search_space)
@@ -429,22 +440,15 @@ class BayesianSearchStrategy(SearchStrategy):
         if x0 and y0 is not None and len(x0):
             opt.tell(list(x0), list(y0))
 
-        cv_results_: Dict[str, Any] = {
-            'params': [],
-            'mean_test_score': [],
-            'std_test_score': [],
-        }
-        for metric in metric_names:
-            cv_results_[f'mean_test_{metric}'] = []
-            cv_results_[f'std_test_{metric}'] = []
+        cv_results_ = self._init_cv_results(metric_names)
 
-        best_params: Dict[str, Any] = {}
-        best_score = float('-inf')
-        best_all_scores: Dict[str, float] = {}
-        best_history: List[float] = []
-        early_enabled = self.config.get('early_stopping_enabled', True)
-        patience = self.config.get('early_stopping_patience', 5)
-        threshold = self.config.get('convergence_threshold', 0.001)
+        best_params: dict[str, Any] = {}
+        best_score = float("-inf")
+        best_all_scores: dict[str, float] = {}
+        best_history: list[float] = []
+        early_enabled = self.config.get("early_stopping_enabled", True)
+        patience = self.config.get("early_stopping_patience", 5)
+        threshold = self.config.get("convergence_threshold", 0.001)
 
         evaluated = 0
         while evaluated < n_calls:
@@ -454,9 +458,7 @@ class BayesianSearchStrategy(SearchStrategy):
 
             def _one(pt):
                 try:
-                    return self._evaluate_point(
-                        model, dict(zip(param_names, pt)), X, y
-                    )
+                    return self._evaluate_point(model, dict(zip(param_names, pt)), X, y)
                 except Exception as exc:
                     logger.warning("BO batch bỏ qua điểm %s: %s", pt, exc)
                     return None
@@ -464,26 +466,21 @@ class BayesianSearchStrategy(SearchStrategy):
             # Dùng ĐÚNG n_jobs của config để tái dùng pool loky sẵn có.
             # Truyền n_jobs=b (khác kích thước) khiến loky giữ pool THỨ HAI —
             # 8+16 tiến trình trên 16 lõi, đã gây stall 2231s trên iris.
-            outs = Parallel(n_jobs=self.config.get('n_jobs') or 1)(
+            outs = Parallel(n_jobs=self.config.get("n_jobs") or 1)(
                 delayed(_one)(pt) for pt in points
             )
             duration = time.time() - t0
 
             tell_ys = []
             for pt, all_scores in zip(points, outs):
-                params = SearchStrategy.convert_numpy_types(
-                    dict(zip(param_names, pt))
-                )
+                params = SearchStrategy.convert_numpy_types(dict(zip(param_names, pt)))
                 all_scores = all_scores or {}
                 score = float(all_scores.get(primary_metric, 0.0))
                 tell_ys.append(-score)
 
-                cv_results_['params'].append(params)
-                cv_results_['mean_test_score'].append(score)
-                cv_results_['std_test_score'].append(0.0)
-                for metric in metric_names:
-                    cv_results_[f'mean_test_{metric}'].append(all_scores.get(metric, 0.0))
-                    cv_results_[f'std_test_{metric}'].append(0.0)
+                self._append_cv_result(
+                    cv_results_, params, score, all_scores, metric_names
+                )
 
                 if score > best_score:
                     best_score = score
@@ -498,10 +495,8 @@ class BayesianSearchStrategy(SearchStrategy):
             opt.tell(points, tell_ys)
             evaluated += b
 
-            if self.config.get('verbose', 0) > 0:
-                logger.info(
-                    "BO batch %d/%d: best=%.4f", evaluated, n_calls, best_score
-                )
+            if self.config.get("verbose", 0) > 0:
+                logger.info("BO batch %d/%d: best=%.4f", evaluated, n_calls, best_score)
 
             if not self._should_start_next_iteration(iteration_duration=duration):
                 logger.info("BO batch dừng do time limit tại %d/%d", evaluated, n_calls)
@@ -521,23 +516,29 @@ class BayesianSearchStrategy(SearchStrategy):
 
         self._save_optimizer_state(_State, space_hash, model_name)
 
-        if cv_results_['mean_test_score']:
-            scores_arr = np.array(cv_results_['mean_test_score'])
-            cv_results_['rank_test_score'] = (
-                np.argsort(np.argsort(-scores_arr)) + 1
-            ).tolist()
+        if cv_results_["mean_test_score"]:
+            cv_results_["rank_test_score"] = self._rank_descending(
+                cv_results_["mean_test_score"]
+            )
             for metric in metric_names:
-                m_arr = np.array(cv_results_[f'mean_test_{metric}'])
-                cv_results_[f'rank_test_{metric}'] = (
-                    np.argsort(np.argsort(-m_arr)) + 1
-                ).tolist()
+                cv_results_[f"rank_test_{metric}"] = self._rank_descending(
+                    cv_results_[f"mean_test_{metric}"]
+                )
 
-        if best_score == float('-inf'):
+        if best_score == float("-inf"):
             best_score = 0.0
-        return self._finalize_results(best_params, best_score, best_all_scores, cv_results_)
+        return self._finalize_results(
+            best_params, best_score, best_all_scores, cv_results_
+        )
 
-    def _search_single_grid(self, model: BaseEstimator, param_grid: Dict[str, Any],
-               X: np.ndarray, y: np.ndarray, **kwargs) -> Tuple[Dict, float, Dict, Dict, bool]:
+    def _search_single_grid(
+        self,
+        model: BaseEstimator,
+        param_grid: dict[str, Any],
+        X: np.ndarray,
+        y: np.ndarray,
+        **kwargs,
+    ) -> tuple[dict, float, dict, dict, bool]:
         """
         Thực thi thuật toán tìm kiếm trên một grid đơn lẻ.
 
@@ -546,16 +547,16 @@ class BayesianSearchStrategy(SearchStrategy):
         """
 
         # Tạo đường dẫn file log sử dụng phương thức lớp cơ sở
-        log_file = self.create_log_file_path(model, 'bayesian_search')
+        log_file = self.create_log_file_path(model, "bayesian_search")
 
         # Chuyển đổi param_grid thành danh sách các dimension
         search_space = []
         param_names = []
 
-        infer_dims = self.config.get('infer_dimensions', True)
+        infer_dims = self.config.get("infer_dimensions", True)
         for param_name, param_value in param_grid.items():
             # Nếu param_value là dimension object (Real, Integer, Categorical)
-            if hasattr(param_value, 'name'):
+            if hasattr(param_value, "name"):
                 if param_value.name is None:
                     param_value.name = param_name
                 search_space.append(param_value)
@@ -570,7 +571,9 @@ class BayesianSearchStrategy(SearchStrategy):
                 search_space.append(dim)
                 param_names.append(param_name)
             else:
-                raise ValueError(f"Invalid parameter type for {param_name}: {type(param_value)}")
+                raise ValueError(
+                    f"Invalid parameter type for {param_name}: {type(param_value)}"
+                )
 
         # Batch BO song song khi batch_size > 1 (mặc định 'auto' theo n_jobs);
         # batch_size=1 giữ nguyên đường gp_minimize tuần tự
@@ -583,35 +586,24 @@ class BayesianSearchStrategy(SearchStrategy):
         # Danh sách để lưu lịch sử tìm kiếm
         search_history = []
 
-        # Khởi tạo từ điển cv_results_ tương tự grid_search
-        cv_results_ = {
-            'params': [],
-            'mean_test_score': [],
-            'std_test_score': [],
-            'rank_test_score': []
-        }
-
         # Lấy danh sách metrics từ scoring config
-        scoring_config = self.config.get('scoring', {})
-        metric_names = list(scoring_config.keys()) if scoring_config else ['accuracy']
+        scoring_config = self.config.get("scoring", {})
+        metric_names = list(scoring_config.keys()) if scoring_config else ["accuracy"]
 
-        # Thêm các trường cụ thể cho metric
-        for metric in metric_names:
-            cv_results_[f'mean_test_{metric}'] = []
-            cv_results_[f'std_test_{metric}'] = []
-            cv_results_[f'rank_test_{metric}'] = []
+        # Khởi tạo từ điển cv_results_ tương tự grid_search
+        cv_results_ = self._init_cv_results(metric_names, with_rank=True)
 
         # Theo dõi metrics tốt nhất cho tất cả điểm số
         best_all_scores = None
 
         # Xác định metrics nào cần tính toán
-        averaging = self.config.get('averaging', 'both')
-        optimize_for = self.config.get('optimize_for', 'auto')
+        averaging = self.config.get("averaging", "both")
+        optimize_for = self.config.get("optimize_for", "auto")
 
         # Nếu optimize_for là 'auto', phát hiện dựa trên cân bằng lớp
-        if optimize_for == 'auto':
-            optimize_for = 'weighted' if self._detect_class_imbalance(y) else 'macro'
-            if self.config.get('verbose', 1) > 0:
+        if optimize_for == "auto":
+            optimize_for = "weighted" if self._detect_class_imbalance(y) else "macro"
+            if self.config.get("verbose", 1) > 0:
                 logger.info(f"Tự động phát hiện mục tiêu tối ưu hóa: {optimize_for}")
 
         # Định nghĩa hàm mục tiêu
@@ -620,51 +612,46 @@ class BayesianSearchStrategy(SearchStrategy):
             model.set_params(**params)
 
             # Lấy cấu hình scoring
-            scoring_config = self.config.get('scoring')
+            scoring_config = self.config.get("scoring")
 
             # Xác định metric chính để tối ưu hóa
-            primary_metric = self.config.get('metric_sort', 'accuracy')
+            primary_metric = self.config.get("metric_sort", "accuracy")
             scoring_metrics = scoring_config
 
             cv_results = cross_validate(
                 estimator=model,
                 X=X,
                 y=y,
-                cv=self.config['cv'],
-                n_jobs=self.config['n_jobs'],
+                cv=self.config["cv"],
+                n_jobs=self.config["n_jobs"],
                 scoring=scoring_metrics,
-                error_score=self.config['error_score'],
-                return_train_score=False
+                error_score=self.config["error_score"],
+                return_train_score=False,
             )
 
             # Lưu trữ tất cả metrics - sẽ được chuyển đổi sau
-            objective.last_metrics = {}
-
             # scoring=None → cross_validate trả 'test_score' đơn lẻ
-            if scoring_metrics:
-                for key in scoring_metrics:
-                    test_key = f'test_{key}'
-                    if test_key in cv_results:
-                        objective.last_metrics[key] = float(np.mean(cv_results[test_key]))
-            elif 'test_score' in cv_results:
-                objective.last_metrics[primary_metric] = float(
-                    np.mean(cv_results['test_score'])
-                )
+            objective.last_metrics = self._extract_cv_mean_scores(
+                cv_results, scoring_metrics, primary_metric
+            )
 
             # Chọn điểm số để tối ưu hóa
-            score = objective.last_metrics.get(primary_metric, objective.last_metrics.get('accuracy', 0.0))
+            score = objective.last_metrics.get(
+                primary_metric, objective.last_metrics.get("accuracy", 0.0)
+            )
 
             # gp_minimize luôn tối thiểu hóa, vì vậy trả về -score
             return -score
 
         # Theo dõi để dừng sớm
         best_score_history = []
-        early_stopping_patience = self.config.get('early_stopping_patience', 5)
-        early_stopping_enabled = self.config.get('early_stopping_enabled', True)
-        convergence_threshold = self.config.get('convergence_threshold', 0.001)
+        early_stopping_patience = self.config.get("early_stopping_patience", 5)
+        early_stopping_enabled = self.config.get("early_stopping_enabled", True)
+        convergence_threshold = self.config.get("convergence_threshold", 0.001)
 
         # Hàm callback để lưu lịch sử
         self._last_callback_time = time.time()  # Theo dõi thời gian giữa các iteration
+
         def on_step(res):
             """Callback được gọi sau mỗi iteration để lưu kết quả"""
             nonlocal best_all_scores, best_score_history
@@ -682,42 +669,48 @@ class BayesianSearchStrategy(SearchStrategy):
             # Sử dụng bộ chuyển đổi lớp cơ sở để chuyển đổi toàn diện
             current_params = SearchStrategy.convert_numpy_types(raw_params)
 
-            current_score = float(-res.func_vals[-1]) if hasattr(res.func_vals[-1], 'item') else -res.func_vals[-1]
-            best_score_so_far = float(-res.fun) if hasattr(res.fun, 'item') else -res.fun
+            current_score = (
+                float(-res.func_vals[-1])
+                if hasattr(res.func_vals[-1], "item")
+                else -res.func_vals[-1]
+            )
+            best_score_so_far = (
+                float(-res.fun) if hasattr(res.fun, "item") else -res.fun
+            )
 
             # Lấy tên model
             model_name = model.__class__.__name__
 
             # Lấy metrics từ iteration hiện tại và convert numpy types
-            raw_metrics = getattr(objective, 'last_metrics', {})
+            raw_metrics = getattr(objective, "last_metrics", {})
             metrics = SearchStrategy.convert_numpy_types(raw_metrics)
 
             # Tạo bản ghi cho lịch sử
             record = {
-                'model': model_name,
-                'run_type': 'bayesian_search',
-                'best_params': str(current_params),
+                "model": model_name,
+                "run_type": "bayesian_search",
+                "best_params": str(current_params),
             }
             # Thêm tất cả metrics vào record
             for metric_key in metric_names:
                 record[metric_key] = metrics.get(metric_key, 0.0)
 
             # In thông tin ra console
-            if self.config.get('verbose', 1) > 0:
-                metrics_str = ", ".join([f"{k}={metrics.get(k, 0.0):.4f}" for k in metric_names])
-                logger.info(f"Lần lặp {iteration}/{self.config['n_calls']}: {metrics_str}")
+            if self.config.get("verbose", 1) > 0:
+                metrics_str = ", ".join(
+                    [f"{k}={metrics.get(k, 0.0):.4f}" for k in metric_names]
+                )
+                logger.info(
+                    f"Lần lặp {iteration}/{self.config['n_calls']}: {metrics_str}"
+                )
 
             search_history.append(record)
 
             # Điền dữ liệu vào cv_results_
-            cv_results_['params'].append(current_params)
-            cv_results_['mean_test_score'].append(current_score)
-            cv_results_['std_test_score'].append(0.0)  # Bayesian opt không tính std cho mỗi iteration
-
-            # Thêm tất cả metrics vào cv_results_
-            for metric_key in metric_names:
-                cv_results_[f'mean_test_{metric_key}'].append(metrics.get(metric_key, 0.0))
-                cv_results_[f'std_test_{metric_key}'].append(0.0)
+            # Bayesian opt không tính std cho mỗi iteration (mặc định 0.0)
+            self._append_cv_result(
+                cv_results_, current_params, current_score, metrics, metric_names
+            )
 
             # Cập nhật best_all_scores nếu đây là kết quả tốt nhất cho đến nay
             if current_score >= best_score_so_far:
@@ -727,7 +720,9 @@ class BayesianSearchStrategy(SearchStrategy):
             best_score_history.append(best_score_so_far)
 
             # Kiểm tra time limit (sử dụng base.py)
-            if not self._should_start_next_iteration(iteration_duration=iteration_duration):
+            if not self._should_start_next_iteration(
+                iteration_duration=iteration_duration
+            ):
                 logger.info(f"Dừng search tại iteration {iteration}.")
                 return True  # Dừng gp_minimize
 
@@ -747,7 +742,7 @@ class BayesianSearchStrategy(SearchStrategy):
                     return True
 
             # Lưu log sau mỗi iteration nếu được yêu cầu
-            if self.config['save_log']:
+            if self.config["save_log"]:
                 df = pd.DataFrame(search_history)
                 df.to_csv(log_file, index=False)
 
@@ -756,27 +751,39 @@ class BayesianSearchStrategy(SearchStrategy):
 
         # Lọc kwargs để chỉ giữ các tham số hợp lệ cho gp_minimize
         # Loại bỏ các tham số của SearchStrategy như 'scoring', 'cv', 'n_jobs', 'error_score'
-        valid_gp_minimize_params = ['n_initial_points', 'acq_func', 'acq_optimizer',
-                                    'x0', 'y0', 'noise', 'n_points', 'n_restarts_optimizer',
-                                    'xi', 'kappa', 'verbose', 'callback', 'n_jobs']
+        valid_gp_minimize_params = [
+            "n_initial_points",
+            "acq_func",
+            "acq_optimizer",
+            "x0",
+            "y0",
+            "noise",
+            "n_points",
+            "n_restarts_optimizer",
+            "xi",
+            "kappa",
+            "verbose",
+            "callback",
+            "n_jobs",
+        ]
         gp_kwargs = {k: v for k, v in kwargs.items() if k in valid_gp_minimize_params}
 
         # Thêm các tham số tối ưu từ config nếu chưa được chỉ định
-        if 'n_initial_points' not in gp_kwargs:
-            gp_kwargs['n_initial_points'] = self.config.get('n_initial_points', 5)
-        if 'acq_func' not in gp_kwargs:
-            gp_kwargs['acq_func'] = self.config.get('acq_func', 'EI')
-        if 'acq_optimizer' not in gp_kwargs:
-            gp_kwargs['acq_optimizer'] = self.config.get('acq_optimizer', 'sampling')
+        if "n_initial_points" not in gp_kwargs:
+            gp_kwargs["n_initial_points"] = self.config.get("n_initial_points", 5)
+        if "acq_func" not in gp_kwargs:
+            gp_kwargs["acq_func"] = self.config.get("acq_func", "EI")
+        if "acq_optimizer" not in gp_kwargs:
+            gp_kwargs["acq_optimizer"] = self.config.get("acq_optimizer", "sampling")
 
         # Thêm callback vào gp_kwargs
-        if 'callback' in gp_kwargs:
-            if isinstance(gp_kwargs['callback'], list):
-                gp_kwargs['callback'].append(on_step)
+        if "callback" in gp_kwargs:
+            if isinstance(gp_kwargs["callback"], list):
+                gp_kwargs["callback"].append(on_step)
             else:
-                gp_kwargs['callback'] = [gp_kwargs['callback'], on_step]
+                gp_kwargs["callback"] = [gp_kwargs["callback"], on_step]
         else:
-            gp_kwargs['callback'] = [on_step]
+            gp_kwargs["callback"] = [on_step]
 
         # Warm start: tải trạng thái từ lần chạy trước
         search_space_hash = self._get_search_space_hash(search_space)
@@ -787,22 +794,25 @@ class BayesianSearchStrategy(SearchStrategy):
         # Thêm x0, y0 vào gp_kwargs nếu có
         if x0 is not None and y0 is not None:
             # Giảm số điểm initial khi warm start
-            gp_kwargs['n_initial_points'] = max(1, gp_kwargs.get('n_initial_points', 5) // 2)
-            gp_kwargs['x0'] = x0
-            gp_kwargs['y0'] = y0
+            gp_kwargs["n_initial_points"] = max(
+                1, gp_kwargs.get("n_initial_points", 5) // 2
+            )
+            gp_kwargs["x0"] = x0
+            gp_kwargs["y0"] = y0
 
         # Thực thi tối ưu hóa Bayesian với hỗ trợ song song
         # Đảm bảo n_jobs được thiết lập để tối ưu hóa hàm acquisition song song
-        if 'n_jobs' not in gp_kwargs:
+        if "n_jobs" not in gp_kwargs:
             import multiprocessing
-            gp_kwargs['n_jobs'] = self.config.get('n_jobs', multiprocessing.cpu_count())
+
+            gp_kwargs["n_jobs"] = self.config.get("n_jobs", multiprocessing.cpu_count())
 
         result = gp_minimize(
             func=objective,
             dimensions=search_space,
-            n_calls=self.config['n_calls'],
-            random_state=self.config['random_state'],
-            **gp_kwargs
+            n_calls=self.config["n_calls"],
+            random_state=self.config["random_state"],
+            **gp_kwargs,
         )
 
         # Lưu trạng thái optimizer cho warm start tương lai
@@ -815,29 +825,31 @@ class BayesianSearchStrategy(SearchStrategy):
             raw_best_params[param_names[i]] = val
         best_params = SearchStrategy.convert_numpy_types(raw_best_params)
 
-        best_score = float(-result.fun) if hasattr(result.fun, 'item') else -result.fun  # Đổi dấu để lấy giá trị dương
+        best_score = (
+            float(-result.fun) if hasattr(result.fun, "item") else -result.fun
+        )  # Đổi dấu để lấy giá trị dương
 
         # Tính toán xếp hạng cho cv_results_
         for metric in metric_names:
-            test_scores = cv_results_.get(f'mean_test_{metric}', [])
+            test_scores = cv_results_.get(f"mean_test_{metric}", [])
             if test_scores:
-                ranks = np.argsort(np.argsort(-np.array(test_scores))) + 1
-                cv_results_[f'rank_test_{metric}'] = ranks.tolist()
+                cv_results_[f"rank_test_{metric}"] = self._rank_descending(test_scores)
 
         # Xếp hạng tổng thể dựa trên metric tối ưu hóa
-        test_scores = cv_results_['mean_test_score']
+        test_scores = cv_results_["mean_test_score"]
         if test_scores:
-            ranks = np.argsort(np.argsort(-np.array(test_scores))) + 1
-            cv_results_['rank_test_score'] = ranks.tolist()
+            cv_results_["rank_test_score"] = self._rank_descending(test_scores)
 
         # Nếu best_all_scores chưa được thiết lập (không nên xảy ra), tạo từ lần chạy cuối
         if best_all_scores is None:
-            raw_metrics = getattr(objective, 'last_metrics', {})
+            raw_metrics = getattr(objective, "last_metrics", {})
             best_all_scores = SearchStrategy.convert_numpy_types(raw_metrics)
 
         # In thông báo về vị trí file log
-        if self.config['save_log']:
+        if self.config["save_log"]:
             logger.info(f"Đã lưu log tìm kiếm vào: {log_file}")
 
         # Xóa cache và chuyển đổi kiểu numpy trước khi trả về
-        return self._finalize_results(best_params, best_score, best_all_scores, cv_results_)
+        return self._finalize_results(
+            best_params, best_score, best_all_scores, cv_results_
+        )

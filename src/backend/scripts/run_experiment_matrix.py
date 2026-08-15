@@ -23,25 +23,26 @@ from __future__ import annotations
 import argparse
 import asyncio
 import hashlib
-import math
 import json
+import math
 import os
 import subprocess
 import sys
 import tempfile
 import time
 import uuid
+from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 BACKEND = Path(__file__).resolve().parent.parent
 if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
 
-import numpy as np  # noqa: E402
-import yaml  # noqa: E402
+import numpy as np
+import yaml
 
 # ── Điều kiện → patch yaml ───────────────────────────────
 
@@ -82,11 +83,15 @@ def _canonical_json(value: Any) -> str:
     )
 
 
-def build_experiment_design(cfg: dict) -> Dict[str, Any]:
-    dimensions: Dict[str, list] = {}
+def build_experiment_design(cfg: dict) -> dict[str, Any]:
+    dimensions: dict[str, list] = {}
     for name in ("conditions", "datasets", "models", "seeds"):
         values = cfg.get(name)
-        if not isinstance(values, list) or not values or len(values) != len(set(values)):
+        if (
+            not isinstance(values, list)
+            or not values
+            or len(values) != len(set(values))
+        ):
             raise ProtocolError(f"{name} must be a non-empty unique list")
         dimensions[name] = list(values)
     if tuple(dimensions["conditions"]) != PROTOCOL_CONDITIONS:
@@ -112,9 +117,7 @@ def build_experiment_design(cfg: dict) -> Dict[str, Any]:
         **dimensions,
         "metric": PROTOCOL_METRIC,
         "search_algorithms": list(ADVICE_ALGORITHMS),
-        "meta_feature_schema": {
-            key: "finite_number" for key in META_FEATURE_KEYS
-        },
+        "meta_feature_schema": {key: "finite_number" for key in META_FEATURE_KEYS},
         "condition_patches": {
             condition: CONDITION_PATCHES[condition]
             for condition in dimensions["conditions"]
@@ -131,7 +134,7 @@ def design_sha256(cfg: dict) -> str:
     ).hexdigest()
 
 
-def dataset_sha256(dataset: Dict[str, Any]) -> str:
+def dataset_sha256(dataset: dict[str, Any]) -> str:
     digest = hashlib.sha256()
     for name in ("X", "y"):
         if name not in dataset:
@@ -144,11 +147,11 @@ def dataset_sha256(dataset: Dict[str, Any]) -> str:
 
 
 def anonymized_advice_payload(
-    dataset: Dict[str, Any],
+    dataset: dict[str, Any],
     *,
     metric: str = PROTOCOL_METRIC,
     algorithms: tuple[str, ...] = ADVICE_ALGORITHMS,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     if metric != PROTOCOL_METRIC:
         raise ProtocolError(f"metric must be {PROTOCOL_METRIC}")
     if tuple(algorithms) != ADVICE_ALGORITHMS:
@@ -156,7 +159,7 @@ def anonymized_advice_payload(
     meta = dataset.get("meta")
     if not isinstance(meta, dict):
         raise ProtocolError("dataset meta-features are missing")
-    safe_meta: Dict[str, float] = {}
+    safe_meta: dict[str, float] = {}
     for key in META_FEATURE_KEYS:
         value = meta.get(key)
         if isinstance(value, bool) or not isinstance(value, (int, float, np.number)):
@@ -172,23 +175,22 @@ def anonymized_advice_payload(
     }
 
 
-def _advice_prompt(payload: Dict[str, Any]) -> str:
+def _advice_prompt(payload: dict[str, Any]) -> str:
     return (
         "Select exactly one HPO search algorithm from the supplied ordered pool. "
         'Return exactly one JSON object: {"search_algorithm":"<enum>"}. '
-        "Do not add prose, markdown, or fields.\n"
-        + _canonical_json(payload)
+        "Do not add prose, markdown, or fields.\n" + _canonical_json(payload)
     )
 
 
 def _invoke_advice_model(model: str, prompt: str) -> tuple[str, dict]:
-    from hagent.agent.llm_config import _build_model, require_model_config
+    from hagent.agent.llm import config as llm_config
     from hagent.agent.middlewares.usage_tracker import (
         UsageTracker,
         UsageTrackingCallback,
     )
 
-    config = require_model_config(model)
+    config = llm_config.require_model_config(model)
     provider = config.provider.lower()
     if provider not in {"openai", "openai_compatible"}:
         raise ProtocolError("Meta advice requires an OpenAI-compatible provider")
@@ -197,7 +199,7 @@ def _invoke_advice_model(model: str, prompt: str) -> tuple[str, dict]:
         extra={**(config.extra or {}), "max_retries": 0},
     )
     tracker = UsageTracker()
-    chat_model = _build_model(
+    chat_model = llm_config._build_model(
         provider,
         config,
         config.resolve_api_key(),
@@ -249,7 +251,7 @@ def _strict_advice_algorithm(response: str) -> str:
     return algorithm
 
 
-def _strict_usage(usage: dict) -> Dict[str, int]:
+def _strict_usage(usage: dict) -> dict[str, int]:
     if not isinstance(usage, dict):
         raise ProtocolError("advice usage is missing")
     values = [
@@ -288,13 +290,13 @@ def _advice_key(
 
 
 def request_paired_advice(
-    dataset: Dict[str, Any],
+    dataset: dict[str, Any],
     *,
     model: str,
     design_sha: str,
     experiment_id: str,
-    invoke: Optional[Callable[[str, str], tuple[str, dict]]] = None,
-) -> Dict[str, Any]:
+    invoke: Callable[[str, str], tuple[str, dict]] | None = None,
+) -> dict[str, Any]:
     if (
         not isinstance(design_sha, str)
         or len(design_sha) != 64
@@ -412,7 +414,9 @@ def _validate_advice_record(record: dict, *, line_number: int) -> None:
         if record.get("algorithm") not in ADVICE_ALGORITHMS:
             raise ProtocolError(f"advice line {line_number} has invalid algorithm")
         if not _is_sha256(record.get("response_sha256")):
-            raise ProtocolError(f"advice line {line_number} has invalid response_sha256")
+            raise ProtocolError(
+                f"advice line {line_number} has invalid response_sha256"
+            )
         usage = record.get("token_usage")
         if not isinstance(usage, dict) or set(usage) != {
             "input_tokens",
@@ -426,8 +430,7 @@ def _validate_advice_record(record: dict, *, line_number: int) -> None:
             raise ProtocolError(f"advice line {line_number} has invalid token usage")
         if (
             usage["total_calls"] != 1
-            or usage["total_tokens"]
-            != usage["input_tokens"] + usage["output_tokens"]
+            or usage["total_tokens"] != usage["input_tokens"] + usage["output_tokens"]
             or usage["total_tokens"] <= 0
         ):
             raise ProtocolError(f"advice line {line_number} has invalid token usage")
@@ -443,8 +446,8 @@ def _append_jsonl(path: Path, record: dict) -> None:
         os.fsync(handle.fileno())
 
 
-def load_advice_index(path: Path) -> Dict[str, Dict[str, dict]]:
-    state: Dict[str, Dict[str, dict]] = {
+def load_advice_index(path: Path) -> dict[str, dict[str, dict]]:
+    state: dict[str, dict[str, dict]] = {
         "pending": {},
         "dispatched": {},
         "accepted": {},
@@ -509,22 +512,22 @@ def reconcile_dispatched_advice(sidecar_path: Path, receipt: dict) -> dict:
 
 def ensure_paired_advices(
     *,
-    cells: List[tuple[str, str, str, int]],
-    datasets: Dict[str, Dict[str, Any]],
+    cells: list[tuple[str, str, str, int]],
+    datasets: dict[str, dict[str, Any]],
     sidecar_path: Path,
     design_sha: str,
     experiment_id: str,
-    invoke: Optional[Callable[[str, str], tuple[str, dict]]] = None,
-) -> Dict[tuple[str, str], dict]:
+    invoke: Callable[[str, str], tuple[str, dict]] | None = None,
+) -> dict[tuple[str, str], dict]:
     state = load_advice_index(sidecar_path)
-    pairs: List[tuple[str, str]] = []
+    pairs: list[tuple[str, str]] = []
     for cell in cells:
         if not isinstance(cell, tuple) or len(cell) != 4:
             raise ProtocolError("cell must be condition, dataset, model, seed")
         pair = (cell[1], cell[2])
         if pair not in pairs:
             pairs.append(pair)
-    result: Dict[tuple[str, str], dict] = {}
+    result: dict[tuple[str, str], dict] = {}
     for dataset_name, model in pairs:
         dataset = datasets.get(dataset_name)
         if dataset is None:
@@ -563,9 +566,7 @@ def ensure_paired_advices(
             }
             _append_jsonl(sidecar_path, pending)
             state["pending"][key] = pending
-        elif any(
-            pending[field] != value for field, value in expected_common.items()
-        ):
+        elif any(pending[field] != value for field, value in expected_common.items()):
             raise ProtocolError(f"advice key {key} conflicts with pending claim")
         dispatched = {
             **expected_common,
@@ -590,15 +591,14 @@ def ensure_paired_advices(
     return result
 
 
-
 def validate_result_evidence(
     row: dict,
     design_sha: str,
-    accepted_advices: Dict[str, dict],
-    current_dataset_hashes: Optional[Dict[str, str]] = None,
-    current_advice_keys: Optional[Dict[tuple[str, str], str]] = None,
-) -> List[str]:
-    reasons: List[str] = []
+    accepted_advices: dict[str, dict],
+    current_dataset_hashes: dict[str, str] | None = None,
+    current_advice_keys: dict[tuple[str, str], str] | None = None,
+) -> list[str]:
+    reasons: list[str] = []
 
     def reject(reason: str) -> None:
         if reason not in reasons:
@@ -703,8 +703,8 @@ def validate_result_evidence(
 
     trace = row.get("budget_score_trace")
     trace_valid = isinstance(trace, list) and bool(trace)
-    trace_algorithms: List[str] = []
-    trace_jobs: Dict[str, str] = {}
+    trace_algorithms: list[str] = []
+    trace_jobs: dict[str, str] = {}
     if trace_valid:
         for item in trace:
             required = {
@@ -762,15 +762,17 @@ def validate_result_evidence(
 
     requested = row.get("requested_variant")
     if (
-        not isinstance(requested, dict)
-        or requested.get("source") != "requested"
-        or requested.get("status") != "completed"
-        or requested.get("job_id") not in trace_jobs
-    ):
-        reject("requested_variant_invalid")
-    elif advice is not None and (
-        requested.get("algorithm") != advice["algorithm"]
-        or trace_jobs[requested["job_id"]] != advice["algorithm"]
+        (
+            not isinstance(requested, dict)
+            or requested.get("source") != "requested"
+            or requested.get("status") != "completed"
+            or requested.get("job_id") not in trace_jobs
+        )
+        or advice is not None
+        and (
+            requested.get("algorithm") != advice["algorithm"]
+            or trace_jobs[requested["job_id"]] != advice["algorithm"]
+        )
     ):
         reject("requested_variant_invalid")
     if advice is not None and advice["algorithm"] not in (executed or []):
@@ -779,16 +781,16 @@ def validate_result_evidence(
 
 
 def partition_resume_rows(
-    rows: List[dict],
+    rows: list[dict],
     design_sha: str,
-    accepted_advices: Dict[str, dict],
-    current_dataset_hashes: Optional[Dict[str, str]] = None,
-    current_advice_keys: Optional[Dict[tuple[str, str], str]] = None,
-) -> Dict[str, Any]:
+    accepted_advices: dict[str, dict],
+    current_dataset_hashes: dict[str, str] | None = None,
+    current_advice_keys: dict[tuple[str, str], str] | None = None,
+) -> dict[str, Any]:
     seen: set[str] = set()
     done: set[str] = set()
-    kept: List[dict] = []
-    rejected: List[dict] = []
+    kept: list[dict] = []
+    rejected: list[dict] = []
     for row in rows:
         key = row.get("key") if isinstance(row, dict) else None
         if isinstance(key, str):
@@ -823,20 +825,16 @@ def _strict_json_line(line: str, artifact: str, line_number: int) -> Any:
         return json.loads(
             line,
             object_pairs_hook=no_duplicates,
-            parse_constant=lambda value: (_ for _ in ()).throw(
-                ValueError(value)
-            ),
+            parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)),
         )
     except (json.JSONDecodeError, ValueError) as exc:
-        raise ProtocolError(
-            f"{artifact} line {line_number} is malformed"
-        ) from exc
+        raise ProtocolError(f"{artifact} line {line_number} is malformed") from exc
 
 
-def _read_result_rows(path: Path) -> List[dict]:
+def _read_result_rows(path: Path) -> list[dict]:
     if not path.is_file():
         return []
-    rows: List[dict] = []
+    rows: list[dict] = []
     for line_number, line in enumerate(
         path.read_text(encoding="utf-8").splitlines(), 1
     ):
@@ -898,9 +896,7 @@ def _safe_integer_fields(value: Any, fields: set[str]) -> dict:
     if not isinstance(value, dict):
         return {}
     return {
-        key: value[key]
-        for key in fields
-        if key in value and type(value[key]) is int
+        key: value[key] for key in fields if key in value and type(value[key]) is int
     }
 
 
@@ -913,11 +909,7 @@ def _safe_rejected_row(row: Any) -> dict:
         if isinstance(row.get(key), str)
     }
     safe.update(
-        {
-            key: row[key]
-            for key in _REJECTED_INTEGER_FIELDS
-            if type(row.get(key)) is int
-        }
+        {key: row[key] for key in _REJECTED_INTEGER_FIELDS if type(row.get(key)) is int}
     )
     usage = _safe_integer_fields(row.get("cost_metrics"), _REJECTED_USAGE_FIELDS)
     if usage:
@@ -952,12 +944,10 @@ def _rejection_core(record: dict) -> dict:
     }
 
 
-def _rejection_record(row: dict, reason_codes: List[str]) -> dict:
+def _rejection_record(row: dict, reason_codes: list[str]) -> dict:
     safe_row = _safe_rejected_row(row)
     row_sha = hashlib.sha256(_canonical_json(row).encode("utf-8")).hexdigest()
-    safe_row_sha = hashlib.sha256(
-        _canonical_json(safe_row).encode("utf-8")
-    ).hexdigest()
+    safe_row_sha = hashlib.sha256(_canonical_json(safe_row).encode("utf-8")).hexdigest()
     record = {
         "record_type": "matrix_preflight_rejection",
         "row_sha256": row_sha,
@@ -1049,9 +1039,9 @@ def migrate_rejected_rows(
     rejected_path: Path,
     *,
     design_sha: str,
-    accepted_advices: Dict[str, dict],
-    current_dataset_hashes: Optional[Dict[str, str]] = None,
-    current_advice_keys: Optional[Dict[tuple[str, str], str]] = None,
+    accepted_advices: dict[str, dict],
+    current_dataset_hashes: dict[str, str] | None = None,
+    current_advice_keys: dict[tuple[str, str], str] | None = None,
 ) -> set[str]:
     temp_path = results_path.with_name(results_path.name + ".tmp")
     rows = _read_result_rows(results_path)
@@ -1067,18 +1057,14 @@ def migrate_rejected_rows(
         if temp_path.exists():
             raise ProtocolError(f"stale migration temp exists: {temp_path.name}")
         return partition["done"]
-    expected_temp = "".join(
-        _canonical_json(row) + "\n" for row in partition["kept"]
-    )
+    expected_temp = "".join(_canonical_json(row) + "\n" for row in partition["kept"])
     if temp_path.exists():
         existing_temp = temp_path.read_text(encoding="utf-8")
         if existing_temp != expected_temp:
             if expected_temp.startswith(existing_temp):
                 _write_migration_temp(temp_path, expected_temp, "w")
             else:
-                raise ProtocolError(
-                    f"stale migration temp conflicts: {temp_path.name}"
-                )
+                raise ProtocolError(f"stale migration temp conflicts: {temp_path.name}")
     for rejected in partition["rejected"]:
         record = _rejection_record(rejected["row"], rejected["reason_codes"])
         if record["rejection_id"] not in rejection_ids:
@@ -1094,7 +1080,7 @@ def migrate_rejected_rows(
     return partition["done"]
 
 
-CONDITION_PATCHES: Dict[str, Dict[str, Any]] = {
+CONDITION_PATCHES: dict[str, dict[str, Any]] = {
     "A": {
         "campaign": {
             "wm_variant_proposal": False,
@@ -1158,14 +1144,16 @@ def render_condition_yaml(condition: str, scratch_dir: Path) -> Path:
         raise ValueError(
             f"Condition {condition!r} không hợp lệ. Có: {list(CONDITION_PATCHES)}"
         )
-    base_path = BACKEND / "hagent" / "hagent.yaml"
+    base_path = BACKEND / "hagent" / "config" / "hagent.yaml"
     base = yaml.safe_load(base_path.read_text(encoding="utf-8"))
     patch = CONDITION_PATCHES[condition]
 
     merged = dict(base)
     if "campaign" in patch:
         agent = dict(merged.get("agent") or {})
-        agent["campaign"] = _deep_merge(dict(agent.get("campaign") or {}), patch["campaign"])
+        agent["campaign"] = _deep_merge(
+            dict(agent.get("campaign") or {}), patch["campaign"]
+        )
         merged["agent"] = agent
     if "world_model" in patch:
         merged["world_model"] = _deep_merge(
@@ -1189,6 +1177,7 @@ def apply_condition(condition: str, scratch_dir: Path) -> None:
 
     wm_hooks._outcome_model_cache["fingerprint"] = None
 
+
 @contextmanager
 def _activated_condition(condition: str, scratch_dir: Path):
     had_previous = "HAGENT_CONFIG" in os.environ
@@ -1211,26 +1200,29 @@ def _activated_condition(condition: str, scratch_dir: Path):
         wm_hooks._outcome_model_cache["fingerprint"] = None
 
 
-
 # ── RealJobEnv: job sklearn thật in-process ──────────────
 
 
 class RealJobEnv:
     """Tool invoker: start_training chạy THẬT search strategy trên dataset thật."""
 
-    def __init__(self, dataset: Dict[str, Any], *, job_cfg: dict, seed: int):
+    def __init__(self, dataset: dict[str, Any], *, job_cfg: dict, seed: int):
         self.dataset = dataset
         self.job_cfg = dict(job_cfg or {})
         self.seed = seed
-        self.jobs: Dict[str, Dict[str, Any]] = {}
+        self.jobs: dict[str, dict[str, Any]] = {}
 
     async def invoke(self, action_type: str, params: dict) -> dict:
         d = self.dataset
         if action_type in ("list_datasets",):
             return {
                 "datasets": [
-                    {"id": d["name"], "name": d["name"], "n_rows": d["n_rows"],
-                     "n_cols": d["n_cols"]}
+                    {
+                        "id": d["name"],
+                        "name": d["name"],
+                        "n_rows": d["n_rows"],
+                        "n_cols": d["n_cols"],
+                    }
                 ]
             }
         if action_type in ("get_dataset_info", "get_features", "preview_data"):
@@ -1280,7 +1272,8 @@ class RealJobEnv:
         )
         cfg = dict(
             cv=StratifiedKFold(
-                n_splits=int(self.job_cfg.get("cv", 3)), shuffle=True,
+                n_splits=int(self.job_cfg.get("cv", 3)),
+                shuffle=True,
                 random_state=self.seed,
             ),
             scoring={"accuracy": "accuracy"},
@@ -1313,7 +1306,7 @@ class RealJobEnv:
             "time_limited": bool(time_limited),
         }
 
-    def job_trace(self) -> List[dict]:
+    def job_trace(self) -> list[dict]:
         return [
             {
                 "sequence": sequence,
@@ -1340,11 +1333,13 @@ def _git_sha() -> str:
         return "unknown"
 
 
-def _checkpoint_sha() -> Optional[str]:
+def _checkpoint_sha() -> str | None:
     try:
         from hagent.bridge.config import get_world_model_config
 
-        path = (get_world_model_config().get("outcome_head") or {}).get("checkpoint_path")
+        path = (get_world_model_config().get("outcome_head") or {}).get(
+            "checkpoint_path"
+        )
         p = Path(path) if path else None
         if p and not p.is_absolute():
             p = BACKEND / p
@@ -1372,10 +1367,10 @@ def build_cell_message(cfg: dict, dataset_name: str, advice: dict) -> str:
 
 
 def build_cell_evidence(
-    result: Dict[str, Any],
+    result: dict[str, Any],
     env: RealJobEnv,
     advice: dict,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     _validate_advice_record(advice, line_number=0)
     if advice.get("status") != "accepted":
         raise ProtocolError("cell advice is not accepted")
@@ -1420,9 +1415,7 @@ def build_cell_evidence(
         "token_usage",
     )
     return {
-        "advice_provenance": {
-            field: advice[field] for field in provenance_fields
-        },
+        "advice_provenance": {field: advice[field] for field in provenance_fields},
         "requested_variant": {
             "source": "requested",
             "algorithm": advice["algorithm"],
@@ -1433,8 +1426,7 @@ def build_cell_evidence(
             {
                 item["source"]
                 for item in variants
-                if isinstance(item, dict)
-                and isinstance(item.get("source"), str)
+                if isinstance(item, dict) and isinstance(item.get("source"), str)
             }
         ),
         "budget_score_trace": trace,
@@ -1453,11 +1445,11 @@ def _run_cell_active(
     advice: dict,
     design_sha: str,
     experiment_id: str,
-    agent_runner: Optional[Callable[..., Any]] = None,
-) -> Dict[str, Any]:
+    agent_runner: Callable[..., Any] | None = None,
+) -> dict[str, Any]:
     from automl.search.datasets_real import load_dataset
     from hagent.agent.execution.tool_runner import set_tool_invoker
-    from hagent.agent.graph import run_agent
+    from hagent.agent.orchestration.graph import run_agent
 
     dataset = load_dataset(dataset_name)
     env = RealJobEnv(dataset, job_cfg=cfg.get("job") or {}, seed=seed)
@@ -1473,7 +1465,7 @@ def _run_cell_active(
 
     t0 = time.perf_counter()
     error = None
-    result: Dict[str, Any] = {}
+    result: dict[str, Any] = {}
     set_tool_invoker(env.invoke)
     try:
         result = asyncio.run(
@@ -1516,16 +1508,13 @@ def _run_cell_active(
         "token_usage",
     )
     evidence = {
-        "advice_provenance": {
-            field: advice[field] for field in provenance_fields
-        },
+        "advice_provenance": {field: advice[field] for field in provenance_fields},
         "requested_variant": None,
         "variant_sources": sorted(
             {
                 variant["source"]
                 for variant in variants
-                if isinstance(variant, dict)
-                and isinstance(variant.get("source"), str)
+                if isinstance(variant, dict) and isinstance(variant.get("source"), str)
             }
         ),
         "budget_score_trace": trace,
@@ -1595,8 +1584,8 @@ def run_cell(
     advice: dict,
     design_sha: str,
     experiment_id: str,
-    agent_runner: Optional[Callable[..., Any]] = None,
-) -> Dict[str, Any]:
+    agent_runner: Callable[..., Any] | None = None,
+) -> dict[str, Any]:
     with _activated_condition(condition, scratch_dir):
         return _run_cell_active(
             condition,
@@ -1612,19 +1601,15 @@ def run_cell(
 
 
 def main(
-    argv: Optional[List[str]] = None,
+    argv: list[str] | None = None,
     *,
-    advice_invoke: Optional[Callable[[str, str], tuple[str, dict]]] = None,
-    agent_runner: Optional[Callable[..., Any]] = None,
+    advice_invoke: Callable[[str, str], tuple[str, dict]] | None = None,
+    agent_runner: Callable[..., Any] | None = None,
 ) -> int:
     parser = argparse.ArgumentParser(description="Ma trận thí nghiệm agent")
-    parser.add_argument(
-        "--config", default="benchmarks/agent_matrix_config.yaml"
-    )
+    parser.add_argument("--config", default="benchmarks/agent_matrix_config.yaml")
     parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument(
-        "--only", help="Chạy đúng một ô: COND:DATASET:MODEL:SEED"
-    )
+    parser.add_argument("--only", help="Chạy đúng một ô: COND:DATASET:MODEL:SEED")
     args = parser.parse_args(argv)
 
     cfg_path = Path(args.config)
@@ -1690,10 +1675,10 @@ def main(
 
     try:
         from automl.search.datasets_real import load_dataset
-        from hagent.agent.llm_config import require_model_config
+        from hagent.agent.llm import config as llm_config
 
         for model_name in design["models"]:
-            require_model_config(model_name)
+            llm_config.require_model_config(model_name)
         loaded_datasets = {
             dataset_name: load_dataset(dataset_name)
             for dataset_name in design["datasets"]
@@ -1704,9 +1689,7 @@ def main(
         }
         current_prompt_hashes = {
             dataset_name: hashlib.sha256(
-                _advice_prompt(
-                    anonymized_advice_payload(dataset)
-                ).encode("utf-8")
+                _advice_prompt(anonymized_advice_payload(dataset)).encode("utf-8")
             ).hexdigest()
             for dataset_name, dataset in loaded_datasets.items()
         }

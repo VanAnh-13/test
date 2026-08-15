@@ -3,20 +3,17 @@ HAgent — Memory Injection (Phase 3).
 
 Load relevant facts và format thành context string
 để inject vào system prompt.
-
-SOLID:
-  S — Chỉ làm injection/formatting
-  D — FactStore inject qua parameter
 """
 
 from __future__ import annotations
 
-import logging
 from typing import Any
+
+import structlog
 
 from hagent.agent.memory import Fact, FactStore
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 async def load_memory_context(
@@ -126,11 +123,15 @@ async def inject_memory_into_state(
             query = last_msg.content[:200]
 
     memory_text = await load_memory_context(
-        store, user_id, query=query,
+        store,
+        user_id,
+        query=query,
     )
 
     if memory_text:
         state["memory_context"] = memory_text
-        logger.debug("Injected %d chars of memory for user '%s'", len(memory_text), user_id)
+        logger.debug(
+            "Injected %d chars of memory for user '%s'", len(memory_text), user_id
+        )
 
     return state

@@ -28,9 +28,9 @@ BACKEND = Path(__file__).resolve().parent.parent
 if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
 
-import numpy as np  # noqa: E402
-from sklearn.ensemble import RandomForestClassifier  # noqa: E402
-from sklearn.model_selection import StratifiedKFold, train_test_split  # noqa: E402
+import numpy as np
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import StratifiedKFold, train_test_split
 
 # Không gian tham số dùng chung cho mọi strategy (18 tổ hợp)
 PARAM_GRID = {
@@ -118,7 +118,8 @@ def _machine_state() -> dict:
         state["cpu_percent"] = psutil.cpu_percent(interval=1.0)
         state["ram_available_gb"] = round(psutil.virtual_memory().available / 1e9, 2)
         state["python_processes"] = sum(
-            1 for p in psutil.process_iter(["name"])
+            1
+            for p in psutil.process_iter(["name"])
             if (p.info.get("name") or "").lower().startswith("python")
         )
     except Exception as exc:
@@ -167,13 +168,16 @@ def run_one(dataset: dict, strategy_name: str, cfg: dict, args, seed: int) -> di
     n_evals = len(params_log)
     # Số cấu hình PHÂN BIỆT: GA log lại cả cá thể trùng (cache hit), nên
     # "8 đánh giá" của nó có thể chỉ là 5–6 cấu hình thật sự được khám phá.
-    distinct = len({tuple(sorted(p.items())) for p in params_log if isinstance(p, dict)})
+    distinct = len(
+        {tuple(sorted(p.items())) for p in params_log if isinstance(p, dict)}
+    )
     # Ngân sách quy đổi full-fidelity: successive_halving đánh giá phần lớn ở
     # fidelity thấp nên đếm đầu lượt sẽ phóng đại chi phí thật của nó.
     fracs = cv_results.get("resource_frac") if cv_results else None
     budget_equiv = float(sum(fracs)) if fracs else float(n_evals)
     off_grid = [
-        p for p in params_log
+        p
+        for p in params_log
         if isinstance(p, dict)
         and any(k in PARAM_GRID and v not in PARAM_GRID[k] for k, v in p.items())
     ]
@@ -199,23 +203,32 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="HPO benchmark trên dữ liệu thật")
     parser.add_argument(
         # Mặc định BỎ dataset lớn — phải chỉ định tường minh (vd. --datasets covtype)
-        "--datasets", default=",".join(available_datasets(include_large=False)),
+        "--datasets",
+        default=",".join(available_datasets(include_large=False)),
         help=f"Có sẵn: {', '.join(available_datasets())}",
     )
     parser.add_argument(
         "--strategies",
         default="grid_search,random_search,bayesian_search,genetic_algorithm,successive_halving",
     )
-    parser.add_argument("--budget", type=int, default=8, help="Số lần đánh giá cho non-grid")
+    parser.add_argument(
+        "--budget", type=int, default=8, help="Số lần đánh giá cho non-grid"
+    )
     parser.add_argument("--cv", type=int, default=3)
     parser.add_argument("--n-jobs", type=int, default=-1, dest="n_jobs")
     parser.add_argument("--seed", type=int, default=42, help="Seed đầu tiên")
     parser.add_argument(
-        "--n-seeds", type=int, default=3, dest="n_seeds",
+        "--n-seeds",
+        type=int,
+        default=3,
+        dest="n_seeds",
         help="Số seed lặp lại mỗi ô (n=1 thì KHÔNG có sai số để báo cáo)",
     )
     parser.add_argument(
-        "--max-time", type=float, default=None, dest="max_time",
+        "--max-time",
+        type=float,
+        default=None,
+        dest="max_time",
         help="Giới hạn giây cho MỖI lần search (đẩy vào config max_time)",
     )
     parser.add_argument("--out", default="benchmarks/hpo_real.json")
@@ -284,9 +297,10 @@ def main() -> int:
     # Tổng hợp. Speedup = TỈ SỐ CỦA TỔNG thời gian, không phải trung bình
     # cộng của các tỉ số — trung bình cộng tỉ số luôn thiên vị lên trên và
     # để một dataset bé xíu chi phối con số headline.
-    grid_total = float(
-        np.sum([r["seconds"] for r in results if r["strategy"] == "grid_search"])
-    ) or None
+    grid_total = (
+        float(np.sum([r["seconds"] for r in results if r["strategy"] == "grid_search"]))
+        or None
+    )
 
     summary = {}
     for s in strategies:
@@ -317,7 +331,9 @@ def main() -> int:
                 np.mean([r["full_fidelity_budget"] for r in rs])
             ),
             "n_off_grid_configs": int(np.sum([r["n_off_grid_configs"] for r in rs])),
-            "speedup_vs_grid_total": (grid_total / total) if grid_total and total else None,
+            "speedup_vs_grid_total": (grid_total / total)
+            if grid_total and total
+            else None,
             "n_runs": len(rs),
         }
 
@@ -360,8 +376,7 @@ def main() -> int:
             f"{s:21s} {agg['mean_cv']:.4f}±{agg['std_cv']:.4f}  "
             f"{agg['mean_test']:.4f}±{agg['std_test']:.4f}  "
             f"{agg['mean_evals']:6.1f} {agg['mean_full_fidelity_budget']:6.1f} "
-            f"{agg['total_seconds']:9.1f} "
-            + (f"{sp:6.2f}x" if sp else "     —")
+            f"{agg['total_seconds']:9.1f} " + (f"{sp:6.2f}x" if sp else "     —")
         )
     print(
         f"\nn={len(seeds)} seed/ô; speedup = tỉ số TỔNG thời gian; "

@@ -53,7 +53,7 @@ jobs:
 
     env:
       PYTHONPATH: src/backend
-      HAGENT_CONFIG: ${{ github.workspace }}/src/backend/hagent/hagent.yaml
+      HAGENT_CONFIG: ${{ github.workspace }}/src/backend/hagent/config/hagent.yaml
       HAUTOML_BASE_URL: http://localhost:8585
       MONGODB_CONNECT: localhost:27017
       MONGODB_DB_NAME: hagent_ci
@@ -110,7 +110,7 @@ jobs:
         run: |
           python - <<'PY'
           import sys, yaml
-          with open("hagent/hagent.yaml", encoding="utf-8") as f:
+          with open("hagent/config/hagent.yaml", encoding="utf-8") as f:
               cfg = yaml.safe_load(f)
           agent = cfg.get("agent") or {}
           checks = {

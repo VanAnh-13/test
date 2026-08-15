@@ -8,11 +8,12 @@ Tests cho T1 — bugfix production:
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 import pytest
 
-import hagent.agent.graph as graph_mod
-from hagent.agent.llm_config import get_default_model_config
+import hagent.agent.orchestration.graph as graph_mod
+from hagent.agent.llm import get_default_model_config
 
 
 def run(coro):
@@ -24,6 +25,11 @@ def run(coro):
 
 
 class TestStrictModelResolution:
+    def test_root_legacy_module_was_removed(self):
+        """Package canonical là nguồn duy nhất sau khi migration hoàn tất."""
+        root_module = Path(__file__).parents[1] / "hagent" / "agent" / "llm_config.py"
+        assert not root_module.exists()
+
     def test_unknown_default_model_raises(self, monkeypatch):
         monkeypatch.setenv("LLM_DEFAULT_MODEL", "gpt-4o-minii-typo")
         with pytest.raises(ValueError) as exc:
@@ -35,6 +41,7 @@ class TestStrictModelResolution:
     def test_known_name_still_resolves(self, monkeypatch):
         monkeypatch.setenv("LLM_DEFAULT_MODEL", "ollama-ci")
         cfg = get_default_model_config()
+        assert get_default_model_config.__module__ == "hagent.agent.llm.config"
         assert cfg.name == "ollama-ci"
         assert cfg.provider == "ollama"
 

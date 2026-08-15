@@ -1,12 +1,13 @@
 """
-Trajectory store — offline (o, a, o', z, ẑ, surprise) for JEPA-style learning later.
+Kho trajectory ngoại tuyến (o, a, o', z, ẑ, surprise) cho học theo kiểu JEPA về sau.
 """
 
 from __future__ import annotations
 
 import inspect
-import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
+
+import structlog
 
 from hagent.world.schema import (
     AutoMLAction,
@@ -15,8 +16,9 @@ from hagent.world.schema import (
     SurpriseResult,
     utc_now,
 )
+from hagent.world.schema_migration import migrate_trajectory_doc
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 async def _maybe_await(value):
@@ -26,7 +28,7 @@ async def _maybe_await(value):
 
 
 class TrajectoryStore:
-    """Persist world-model transitions. In-memory fallback when no Mongo client."""
+    """Lưu bền vững transition của World Model; dùng bộ nhớ khi không có Mongo client."""
 
     def __init__(
         self,
@@ -38,7 +40,7 @@ class TrajectoryStore:
         self.collection = collection
         self.max_per_user = max_per_user
         self.enabled = enabled
-        self._memory: Dict[str, List[Dict[str, Any]]] = {}
+        self._memory: dict[str, list[dict[str, Any]]] = {}
 
     async def append(
         self,
@@ -51,7 +53,7 @@ class TrajectoryStore:
         z_hat: LatentState,
         z_next: LatentState,
         surprise: SurpriseResult,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         if not self.enabled:
             return {}
 
@@ -65,80 +67,87 @@ class TrajectoryStore:
             "z_next": z_next.to_dict(),
             "surprise": surprise.to_dict(),
             "created_at": utc_now().isoformat(),
+            "schema_version": "1.0",
         }
 
         if self.collection is not None:
             try:
                 await _maybe_await(self.collection.insert_one(doc))
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 logger.warning("Trajectory Mongo insert failed: %s", exc)
                 self._append_memory(user_id, doc)
         else:
             self._append_memory(user_id, doc)
         return doc
 
-    def _append_memory(self, user_id: str, doc: Dict[str, Any]) -> None:
+    def _append_memory(self, user_id: str, doc: dict[str, Any]) -> None:
         bucket = self._memory.setdefault(user_id, [])
         bucket.append(doc)
         if len(bucket) > self.max_per_user:
             del bucket[: len(bucket) - self.max_per_user]
 
-    async def list_recent(
-        self, user_id: str, limit: int = 20
-    ) -> List[Dict[str, Any]]:
+    async def list_recent(self, user_id: str, limit: int = 20) -> list[dict[str, Any]]:
         if self.collection is not None:
             try:
-                cursor = self.collection.find({"user_id": user_id}).sort(
-                    "created_at", -1
-                ).limit(limit)
+                cursor = (
+                    self.collection.find({"user_id": user_id})
+                    .sort("created_at", -1)
+                    .limit(limit)
+                )
                 if inspect.isawaitable(cursor):
                     cursor = await cursor
                 results = []
                 async for doc in cursor:  # type: ignore[union-attr]
                     doc.pop("_id", None)
-                    results.append(doc)
+                    results.append(migrate_trajectory_doc(doc))
                 return results
             except TypeError:
                 # Sync cursor
                 results = []
                 for doc in cursor:
                     doc.pop("_id", None)
-                    results.append(doc)
+                    results.append(migrate_trajectory_doc(doc))
                 return results
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 logger.debug("Trajectory list fallback to memory: %s", exc)
-        return list(reversed(self._memory.get(user_id, [])[-limit:]))
+        return [
+            migrate_trajectory_doc(d)
+            for d in reversed(self._memory.get(user_id, [])[-limit:])
+        ]
 
     async def list_all(
         self, *, user_id: str | None = None, limit: int = 10000
-    ) -> List[Dict[str, Any]]:
-        """Load trajectories for offline training (all users or one user)."""
+    ) -> list[dict[str, Any]]:
+        """Tải trajectory để huấn luyện ngoại tuyến cho một hoặc mọi người dùng."""
         if self.collection is not None:
             try:
-                query: Dict[str, Any] = {}
+                query: dict[str, Any] = {}
                 if user_id:
                     query["user_id"] = user_id
                 cursor = self.collection.find(query).sort("created_at", -1).limit(limit)
                 if inspect.isawaitable(cursor):
                     cursor = await cursor
-                results: List[Dict[str, Any]] = []
+                results: list[dict[str, Any]] = []
                 try:
                     async for doc in cursor:  # type: ignore[union-attr]
                         doc.pop("_id", None)
-                        results.append(doc)
+                        results.append(migrate_trajectory_doc(doc))
                     return results
                 except TypeError:
                     for doc in cursor:
                         doc.pop("_id", None)
-                        results.append(doc)
+                        results.append(migrate_trajectory_doc(doc))
                     return results
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 logger.debug("Trajectory list_all fallback to memory: %s", exc)
         if user_id:
-            return list(self._memory.get(user_id, [])[-limit:])
-        all_docs: List[Dict[str, Any]] = []
+            return [
+                migrate_trajectory_doc(d)
+                for d in self._memory.get(user_id, [])[-limit:]
+            ]
+        all_docs: list[dict[str, Any]] = []
         for bucket in self._memory.values():
-            all_docs.extend(bucket)
+            all_docs.extend([migrate_trajectory_doc(d) for d in bucket])
         return all_docs[-limit:]
 
 
@@ -151,11 +160,11 @@ def create_trajectory_store(
     enabled: bool | None = None,
 ) -> TrajectoryStore:
     """
-    Factory — Mongo collection when client available, else in-memory.
+    Factory dùng collection Mongo khi có client, nếu không thì dùng bộ nhớ.
 
-    Defaults from world_model.trajectory in hagent.yaml.
+    Giá trị mặc định lấy từ world_model.trajectory trong hagent.yaml.
     """
-    traj_cfg: Dict[str, Any] = {}
+    traj_cfg: dict[str, Any] = {}
     try:
         from hagent.bridge.config import get_mongodb_config, get_world_model_config
 
@@ -163,15 +172,17 @@ def create_trajectory_store(
         traj_cfg = dict(wm.get("trajectory") or {})
         mongo = get_mongodb_config()
         db_name = db_name or mongo.get("db_name")
-        collection_name = collection_name or traj_cfg.get("collection") or "world_trajectories"
-    except Exception:
+        collection_name = (
+            collection_name or traj_cfg.get("collection") or "world_trajectories"
+        )
+    except Exception:  # noqa: BLE001
         collection_name = collection_name or "world_trajectories"
 
     coll = None
     if client is not None and db_name and collection_name:
         try:
             coll = client[db_name][collection_name]
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             logger.warning("TrajectoryStore Mongo bind failed: %s", exc)
             coll = None
 
@@ -182,7 +193,5 @@ def create_trajectory_store(
             if max_per_user is not None
             else traj_cfg.get("max_per_user", 5000)
         ),
-        enabled=bool(
-            enabled if enabled is not None else traj_cfg.get("enabled", True)
-        ),
+        enabled=bool(enabled if enabled is not None else traj_cfg.get("enabled", True)),
     )

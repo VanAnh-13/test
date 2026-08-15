@@ -29,7 +29,7 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 BACKEND = Path(__file__).resolve().parent.parent
 if str(BACKEND) not in sys.path:
@@ -43,7 +43,7 @@ DEFAULT_HUMAN_PROMPT = (
     "I want the best model you can find."
 )
 
-GLASS_WM: Dict[str, Any] = {
+GLASS_WM: dict[str, Any] = {
     "user_id": "wm_e2e_user",
     "datasets": {
         "ds_glass": {
@@ -75,7 +75,7 @@ GLASS_WM: Dict[str, Any] = {
 }
 
 
-def _check(name: str, cond: bool, detail: str = "") -> Dict[str, Any]:
+def _check(name: str, cond: bool, detail: str = "") -> dict[str, Any]:
     return {
         "name": name,
         "ok": bool(cond),
@@ -87,9 +87,9 @@ async def run_hierarchy_train(
     *,
     prompt: str,
     user_id: str,
-    world_model: Dict[str, Any],
+    world_model: dict[str, Any],
     wm_service: Any,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Production-like train path: hierarchy + campaign + WM surprise."""
     from hagent.agent.execution.hierarchy_node import hierarchy_node, hierarchy_route
     from hagent.agent.execution.tool_runner import set_tool_invoker
@@ -133,7 +133,7 @@ async def run_hierarchy_train(
     hier = decompose_goal(goal)
     apply_smart_skips(hier, world_model=world_model)
 
-    state: Dict[str, Any] = {
+    state: dict[str, Any] = {
         "messages": [],
         "user_id": user_id,
         "goal": goal,
@@ -166,7 +166,9 @@ async def run_hierarchy_train(
         str(e.get("type")) for e in events if isinstance(e, dict) and e.get("type")
     ]
     surprise_events = [
-        e for e in events if isinstance(e, dict) and "surprise" in str(e.get("type", ""))
+        e
+        for e in events
+        if isinstance(e, dict) and "surprise" in str(e.get("type", ""))
     ]
     # also step-end surprises
     for e in events:
@@ -198,15 +200,14 @@ async def run_hierarchy_train(
 async def run_plan_executor_slice(
     *,
     user_id: str,
-    world_model: Dict[str, Any],
+    world_model: dict[str, Any],
     wm_service: Any,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """One plan_executor path to force encode/predict/update/trajectory."""
     from hagent.agent.execution.plan_executor import plan_executor_node
     from hagent.agent.execution.tool_runner import set_tool_invoker
     from hagent.agent.harness.mock_env import make_mock_tool_invoker
     from hagent.agent.harness.schema import AgentScenario
-    from hagent.world.schema import AutoMLAction
 
     scenario = AgentScenario(
         id="wm_plan_slice",
@@ -249,7 +250,7 @@ async def run_plan_executor_slice(
             ],
         }
 
-    state: Dict[str, Any] = {
+    state: dict[str, Any] = {
         "messages": [],
         "user_id": user_id,
         "world_model": dict(world_model),
@@ -294,7 +295,7 @@ async def run_plan_executor_slice(
     }
 
 
-def train_neural_from_service(wm_service: Any, out_path: Path) -> Dict[str, Any]:
+def train_neural_from_service(wm_service: Any, out_path: Path) -> dict[str, Any]:
     """Fit neural predictor from in-memory trajectories if any."""
     from hagent.world.predictor.neural_jepa_v1 import train_neural_jepa
 
@@ -303,7 +304,7 @@ def train_neural_from_service(wm_service: Any, out_path: Path) -> Dict[str, Any]
         return {"trained": False, "reason": "no trajectory store"}
 
     # sync list from memory
-    docs: List[Dict[str, Any]] = []
+    docs: list[dict[str, Any]] = []
     mem = getattr(store, "_memory", {}) or {}
     for bucket in mem.values():
         docs.extend(bucket)
@@ -448,7 +449,7 @@ async def main_async(args: argparse.Namespace) -> int:
     jobs = (st.get("world_model") or {}).get("jobs") or {}
     print(f"  wm_jobs={list(jobs.keys())[:5]}")
 
-    neural_info: Dict[str, Any] = {"trained": False}
+    neural_info: dict[str, Any] = {"trained": False}
     if args.train_neural:
         print("\n── Offline neural JEPA fit from trajectories ──")
         ckpt = Path(args.neural_out)
@@ -460,7 +461,8 @@ async def main_async(args: argparse.Namespace) -> int:
         _check("encode_dim", z0.dim == 64, f"dim={z0.dim}"),
         _check(
             "plan_slice_ran",
-            plan_slice.get("plan_status") in ("done", "need_revise", "executing", "failed")
+            plan_slice.get("plan_status")
+            in ("done", "need_revise", "executing", "failed")
             or plan_slice.get("trajectory_count", 0) >= 0,
             str(plan_slice.get("plan_status")),
         ),
@@ -497,7 +499,11 @@ async def main_async(args: argparse.Namespace) -> int:
         ),
         _check(
             "has_wm_surprise_activity",
-            bool(train_out["surprise_events"] or st.get("surprise") or plan_slice.get("surprises")),
+            bool(
+                train_out["surprise_events"]
+                or st.get("surprise")
+                or plan_slice.get("surprises")
+            ),
             "no surprise recorded",
         ),
         _check(

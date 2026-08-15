@@ -40,6 +40,7 @@ def _load_jsonl(path: str) -> list:
 async def _load_mongo(limit: int) -> list:
     try:
         from pymongo import MongoClient
+
         from hagent.bridge.config import get_mongodb_config, get_world_model_config
         from hagent.world.trajectory_store import create_trajectory_store
     except Exception as exc:
@@ -66,7 +67,8 @@ async def _load_mongo(limit: int) -> list:
 def _synthetic_trajectories(n: int = 64, dim: int = 32) -> list:
     """Minimal demo trajectories when no data available."""
     import numpy as np
-    from hagent.world.schema import AutoMLAction, AutoMLObservation, LatentState
+
+    from hagent.world.schema import AutoMLAction, AutoMLObservation
     from hagent.world.service import WorldModelService
 
     wm = WorldModelService.from_config(
@@ -111,7 +113,9 @@ def _synthetic_trajectories(n: int = 64, dim: int = 32) -> list:
                 {
                     "j1": {
                         "id": "j1",
-                        "status": "completed" if a_type == "get_job_info" else "running",
+                        "status": "completed"
+                        if a_type == "get_job_info"
+                        else "running",
                         "best_score": float(rng.random()),
                     }
                 }
@@ -139,8 +143,12 @@ def _synthetic_trajectories(n: int = 64, dim: int = 32) -> list:
 def main() -> int:
     ap = argparse.ArgumentParser(description="Train neural JEPA world predictor")
     ap.add_argument("--jsonl", type=str, help="Trajectory JSONL path")
-    ap.add_argument("--mongo", action="store_true", help="Load from Mongo world_trajectories")
-    ap.add_argument("--from-memory", action="store_true", help="Use synthetic demo trajectories")
+    ap.add_argument(
+        "--mongo", action="store_true", help="Load from Mongo world_trajectories"
+    )
+    ap.add_argument(
+        "--from-memory", action="store_true", help="Use synthetic demo trajectories"
+    )
     ap.add_argument("--out", type=str, default="./data/world_model/jepa_v1.npz")
     ap.add_argument("--epochs", type=int, default=40)
     ap.add_argument("--lr", type=float, default=0.01)

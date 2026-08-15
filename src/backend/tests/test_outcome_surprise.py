@@ -172,7 +172,7 @@ class TestRunnerIntegration:
         head.save(ckpt)
 
         # Trỏ default outcome model của wm_hooks về checkpoint vừa train
-        import hagent.agent.campaign.wm_hooks as wm_hooks
+        from hagent.agent.campaign import wm_hooks
 
         monkeypatch.setattr(
             wm_hooks,
@@ -196,9 +196,7 @@ class TestRunnerIntegration:
 
         from hagent.agent.campaign.runner import campaign_step
 
-        camp = run(
-            build_campaign(GOAL, user_id="u1", config={"n_job_candidates": 1})
-        )
+        camp = run(build_campaign(GOAL, user_id="u1", config={"n_job_candidates": 1}))
         events: list = []
         camp = run(
             campaign_step(
@@ -219,11 +217,9 @@ class TestRunnerIntegration:
         assert ev["outcome"]["level"] in ("low", "medium", "high")
 
     def test_no_event_while_running(self, monkeypatch):
-        import hagent.agent.campaign.wm_hooks as wm_hooks
+        from hagent.agent.campaign import wm_hooks
 
-        monkeypatch.setattr(
-            wm_hooks, "_default_outcome_model", lambda: _trained_head()
-        )
+        monkeypatch.setattr(wm_hooks, "_default_outcome_model", lambda: _trained_head())
 
         async def fake(action_type, params):
             if action_type == "start_training":
@@ -237,21 +233,20 @@ class TestRunnerIntegration:
         events: list = []
         camp = run(
             campaign_step(
-                camp, user_id="u1", user_token=None, world_model={},
+                camp,
+                user_id="u1",
+                user_token=None,
+                world_model={},
                 surprise_events=events,
             )
         )
-        assert not [
-            e for e in events if e.get("type") == "campaign_outcome_surprise"
-        ]
+        assert not [e for e in events if e.get("type") == "campaign_outcome_surprise"]
 
     def test_explicit_none_disables_events(self, monkeypatch):
         """campaign_step(outcome_model=None) tắt hẳn — kể cả khi default có model."""
-        import hagent.agent.campaign.wm_hooks as wm_hooks
+        from hagent.agent.campaign import wm_hooks
 
-        monkeypatch.setattr(
-            wm_hooks, "_default_outcome_model", lambda: _trained_head()
-        )
+        monkeypatch.setattr(wm_hooks, "_default_outcome_model", lambda: _trained_head())
 
         async def fake(action_type, params):
             if action_type == "start_training":
@@ -269,13 +264,15 @@ class TestRunnerIntegration:
         events: list = []
         run(
             campaign_step(
-                camp, user_id="u1", user_token=None, world_model={},
-                surprise_events=events, outcome_model=None,
+                camp,
+                user_id="u1",
+                user_token=None,
+                world_model={},
+                surprise_events=events,
+                outcome_model=None,
             )
         )
-        assert not [
-            e for e in events if e.get("type") == "campaign_outcome_surprise"
-        ]
+        assert not [e for e in events if e.get("type") == "campaign_outcome_surprise"]
 
     def test_explicit_model_used_by_runner(self):
         """Model truyền trực tiếp vào campaign_step được dùng, không cần default."""
@@ -297,9 +294,12 @@ class TestRunnerIntegration:
         events: list = []
         run(
             campaign_step(
-                camp, user_id="u1", user_token=None,
+                camp,
+                user_id="u1",
+                user_token=None,
                 world_model={"datasets": {"ds1": DATASET_META}},
-                surprise_events=events, outcome_model=head,
+                surprise_events=events,
+                outcome_model=head,
             )
         )
         outcome_events = [
@@ -309,11 +309,9 @@ class TestRunnerIntegration:
 
     def test_event_fires_once_per_completion(self, monkeypatch):
         """Tick thứ hai sau khi đã completed không phát thêm event."""
-        import hagent.agent.campaign.wm_hooks as wm_hooks
+        from hagent.agent.campaign import wm_hooks
 
-        monkeypatch.setattr(
-            wm_hooks, "_default_outcome_model", lambda: _trained_head()
-        )
+        monkeypatch.setattr(wm_hooks, "_default_outcome_model", lambda: _trained_head())
 
         async def fake(action_type, params):
             if action_type == "start_training":
@@ -331,7 +329,10 @@ class TestRunnerIntegration:
         events: list = []
         camp = run(
             campaign_step(
-                camp, user_id="u1", user_token=None, world_model={},
+                camp,
+                user_id="u1",
+                user_token=None,
+                world_model={},
                 surprise_events=events,
             )
         )
@@ -340,7 +341,10 @@ class TestRunnerIntegration:
         )
         camp = run(
             campaign_step(
-                camp, user_id="u1", user_token=None, world_model={},
+                camp,
+                user_id="u1",
+                user_token=None,
+                world_model={},
                 surprise_events=events,
             )
         )

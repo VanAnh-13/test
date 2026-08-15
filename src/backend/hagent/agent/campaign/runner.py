@@ -7,18 +7,19 @@ Respects max_concurrent_jobs. Uses tool_runner.invoke_tool (mockable).
 from __future__ import annotations
 
 import json
-import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
+
+import structlog
 
 from hagent.agent.campaign.builder import build_campaign
 from hagent.agent.campaign.compare import best_config_payload, compare_campaign
 from hagent.agent.campaign.schema import Campaign, CampaignVariant
 from hagent.agent.execution.tool_runner import enrich_params, invoke_tool
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
-def _extract_job_id(payload: dict) -> Optional[str]:
+def _extract_job_id(payload: dict) -> str | None:
     if not isinstance(payload, dict):
         return None
     for key in ("job_id", "id", "_id"):
@@ -48,11 +49,11 @@ def _extract_status(payload: dict) -> str:
     return str(st or "unknown").lower()
 
 
-def _extract_metrics(payload: dict) -> Dict[str, float]:
+def _extract_metrics(payload: dict) -> dict[str, float]:
     metrics = payload.get("metrics") or {}
     if not metrics and isinstance(payload.get("data"), dict):
         metrics = payload["data"].get("metrics") or {}
-    out: Dict[str, float] = {}
+    out: dict[str, float] = {}
     if isinstance(metrics, dict):
         for k, v in metrics.items():
             try:
@@ -65,6 +66,7 @@ def _extract_metrics(payload: dict) -> Dict[str, float]:
 async def _submit_variant(
     variant: CampaignVariant,
     *,
+    campaign_id: str,
     user_id: str | None,
     user_token: str | None,
     goal: dict,
@@ -77,11 +79,28 @@ async def _submit_variant(
         user_token=user_token,
         goal=goal,
         world_model=world_model,
+        action_id=(
+            f"campaign:{campaign_id}:variant:{variant.variant_id}"
+            if campaign_id and variant.variant_id
+            else None
+        ),
     )
+    variant.params = {
+        key: value
+        for key, value in params.items()
+        if key not in {"token", "idempotency_key"}
+    }
     # Required fields guard
-    if not params.get("dataset_id") or not params.get("target_column"):
+    if (
+        not params.get("dataset_id")
+        or not params.get("target_column")
+        or not params.get("idempotency_key")
+    ):
         variant.status = "failed"
-        variant.error = "missing dataset_id or target_column for campaign variant"
+        variant.error = (
+            "missing dataset_id, target_column or trusted action identity "
+            "for campaign variant"
+        )
         return variant
 
     payload = await invoke_tool("start_training", params)
@@ -99,7 +118,6 @@ async def _submit_variant(
 
     variant.job_id = job_id
     variant.status = "submitted"
-    variant.params = params
     return variant
 
 
@@ -112,7 +130,9 @@ async def _poll_variant(
         return variant
     payload = await invoke_tool(
         "get_job_info",
-        {"job_id": variant.job_id, "token": user_token} if user_token else {"job_id": variant.job_id},
+        {"job_id": variant.job_id, "token": user_token}
+        if user_token
+        else {"job_id": variant.job_id},
     )
     if isinstance(payload, dict) and payload.get("error"):
         # Keep monitoring on transient errors
@@ -169,7 +189,7 @@ async def write_warm_start_memory(
             confidence=0.9,
         )
         await store.save(user_id, fact)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         logger.debug("Warm-start memory write failed: %s", exc)
 
 
@@ -178,9 +198,11 @@ def _extension_enabled() -> bool:
         from hagent.bridge.config import get_campaign_config
 
         return bool(
-            (get_campaign_config().get("surprise_extension") or {}).get("enabled", False)
+            (get_campaign_config().get("surprise_extension") or {}).get(
+                "enabled", False
+            )
         )
-    except Exception:
+    except Exception:  # noqa: BLE001
         return False
 
 
@@ -268,7 +290,7 @@ def _maybe_extend_on_surprise(
             float(outcome.get("zscore") or 0.0),
         )
         return True
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         logger.debug("surprise extension skipped: %s", exc)
         return False
 
@@ -276,9 +298,9 @@ def _maybe_extend_on_surprise(
 async def campaign_step(
     campaign: Campaign,
     *,
-    user_id: str | None,
-    user_token: str | None,
-    world_model: dict | None,
+    user_id: str | None = None,
+    user_token: str | None = None,
+    world_model: dict | None = None,
     fact_store: Any | None = None,
     wm_service: Any | None = None,
     surprise_events: list | None = None,
@@ -307,6 +329,7 @@ async def campaign_step(
             before = dict(wm_snap)
             await _submit_variant(
                 variant,
+                campaign_id=campaign.campaign_id,
                 user_id=user_id,
                 user_token=user_token,
                 goal=goal,
@@ -315,12 +338,7 @@ async def campaign_step(
             if variant.job_id:
                 campaign.spent_budget += 1
                 jobs = dict(wm_snap.get("jobs") or {})
-                jobs[variant.job_id] = {
-                    "id": variant.job_id,
-                    "status": variant.status,
-                    "config": variant.params,
-                    "dataset_id": variant.params.get("dataset_id"),
-                }
+                jobs[variant.job_id] = variant.to_submission_job_entry()
                 wm_snap["jobs"] = jobs
             try:
                 from hagent.agent.campaign.wm_hooks import campaign_wm_step
@@ -343,9 +361,13 @@ async def campaign_step(
                             "surprise": surprise,
                         }
                     )
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 logger.debug("campaign submit WM step: %s", exc)
-        campaign.status = "monitoring" if campaign.in_flight() or campaign.pending_submit() else campaign.status
+        campaign.status = (
+            "monitoring"
+            if campaign.in_flight() or campaign.pending_submit()
+            else campaign.status
+        )
 
     # Poll phase
     for variant in list(campaign.in_flight()):
@@ -354,15 +376,7 @@ async def campaign_step(
         await _poll_variant(variant, user_token=user_token)
         if variant.job_id:
             jobs = dict(wm_snap.get("jobs") or {})
-            jobs[variant.job_id] = {
-                "id": variant.job_id,
-                "status": variant.status,
-                "best_model": variant.best_model,
-                "best_score": variant.best_score,
-                "metrics": variant.metrics,
-                "config": variant.params,
-                "dataset_id": (variant.params or {}).get("dataset_id"),
-            }
+            jobs[variant.job_id] = variant.to_job_entry()
             wm_snap["jobs"] = jobs
         try:
             from hagent.agent.campaign.wm_hooks import campaign_wm_step
@@ -387,7 +401,7 @@ async def campaign_step(
                         "surprise": surprise,
                     }
                 )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             logger.debug("campaign poll WM step: %s", exc)
 
         # Outcome-space surprise — chỉ đúng lúc variant chuyển sang completed
@@ -423,12 +437,46 @@ async def campaign_step(
                                 "outcome": outcome,
                             }
                         )
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 logger.debug("campaign outcome surprise: %s", exc)
 
     # Attach latest WM for callers
     campaign._world_model_snapshot = wm_snap  # type: ignore[attr-defined]
     campaign._surprise_events = events  # type: ignore[attr-defined]
+
+    # Early stopping check: nếu các variants đã hoàn thành hội tụ score
+    try:
+        from hagent.bridge.config import get_campaign_config
+
+        early_cfg = dict((get_campaign_config() or {}).get("early_stopping") or {})
+    except Exception:  # noqa: BLE001
+        early_cfg = {"enabled": True, "convergence_threshold": 0.005, "patience": 2}
+
+    if early_cfg.get("enabled", True):
+        threshold = float(early_cfg.get("convergence_threshold", 0.005))
+        patience = int(early_cfg.get("patience", 2))
+        metric = (campaign.goal or {}).get("metric", "")
+        higher_is_better = str(metric).lower() not in {
+            "mae",
+            "mse",
+            "rmse",
+            "rmsle",
+            "loss",
+        }
+        if check_early_stopping(
+            campaign,
+            convergence_threshold=threshold,
+            patience=patience,
+            higher_is_better=higher_is_better,
+        ):
+            for v in campaign.pending_submit():
+                v.status = "failed"
+                v.error = "Early stopped: score converged"
+            campaign.early_stopped = True  # type: ignore[attr-defined]
+            logger.info(
+                "Campaign early stopped due to score convergence",
+                campaign_id=campaign.campaign_id,
+            )
 
     unfinished = campaign.unfinished()
     still_pending_submit = campaign.pending_submit()
@@ -465,6 +513,44 @@ async def campaign_step(
     return campaign
 
 
+def check_early_stopping(
+    campaign: Campaign,
+    *,
+    convergence_threshold: float = 0.005,
+    patience: int = 2,
+    higher_is_better: bool = True,
+) -> bool:
+    """Kiểm tra điều kiện early stopping khi các kết quả variants hội tụ.
+
+    Dừng sớm khi độ chênh lệch điểm số (improvement) giữa các lần hoàn thành
+    gần nhất < convergence_threshold liên tục trong `patience` bước.
+    """
+    completed = [
+        v
+        for v in campaign.variants
+        if v.status == "completed" and v.best_score is not None
+    ]
+    if len(completed) < patience + 1:
+        return False
+
+    scores = [float(v.best_score) for v in completed if v.best_score is not None]
+    if len(scores) < patience + 1:
+        return False
+
+    running_best: list[float] = []
+    curr_best = -float("inf") if higher_is_better else float("inf")
+    for s in scores:
+        if higher_is_better:
+            curr_best = max(curr_best, s)
+        else:
+            curr_best = min(curr_best, s)
+        running_best.append(curr_best)
+
+    recent = running_best[-(patience + 1) :]
+    improvements = [abs(recent[i] - recent[i - 1]) for i in range(1, len(recent))]
+    return all(imp < convergence_threshold for imp in improvements)
+
+
 async def ensure_campaign(
     state: dict,
     *,
@@ -478,7 +564,11 @@ async def ensure_campaign(
 
     goal = state.get("goal") if isinstance(state.get("goal"), dict) else {}
     if not goal:
-        goal = state.get("user_requirements") if isinstance(state.get("user_requirements"), dict) else {}
+        goal = (
+            state.get("user_requirements")
+            if isinstance(state.get("user_requirements"), dict)
+            else {}
+        )
 
     return await build_campaign(
         goal,
@@ -487,3 +577,7 @@ async def ensure_campaign(
         fact_store=fact_store,
         config=config,
     )
+
+
+# Alias
+run_campaign_tick = campaign_step

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, List
+from typing import Any
 
 from hagent.agent.execution.tool_runner import set_tool_invoker
 from hagent.agent.harness.assertions import assert_expectations, has_job_signal
@@ -32,9 +32,9 @@ async def run_graph_scenario(scenario: AgentScenario) -> AgentRunResult:
             )
 
         gtype = str(goal.get("goal_type") or "respond").lower()
-        out: Dict[str, Any] = {}
-        tool_names: List[str] = []
-        event_types: List[str] = []
+        out: dict[str, Any] = {}
+        tool_names: list[str] = []
+        event_types: list[str] = []
         mode = "graph"
 
         if gtype in ("train", "evaluate"):
@@ -52,7 +52,7 @@ async def run_graph_scenario(scenario: AgentScenario) -> AgentRunResult:
                 wm_service = WorldModelService.from_config()
             except Exception:
                 wm_service = None
-            state: Dict[str, Any] = {
+            state: dict[str, Any] = {
                 "messages": [],
                 "user_id": scenario.user_id,
                 "goal": goal,
@@ -169,7 +169,7 @@ async def run_graph_scenario(scenario: AgentScenario) -> AgentRunResult:
             campaign_status=out.get("campaign_status"),
             hierarchy_status=out.get("hierarchy_status"),
             hierarchy_depth=len(
-                ((out.get("hierarchy") or {}).get("subgoals") or [])
+                (out.get("hierarchy") or {}).get("subgoals") or []
             ),
             route=mode,
             event_types=event_types,

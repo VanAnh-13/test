@@ -40,9 +40,7 @@ class TestRegistry:
 
 class TestNormalizeFrame:
     def test_renames_target_and_drops_na(self):
-        df = pd.DataFrame(
-            {"a": [1, 2, 3], "class": ["x", None, "y"]}
-        )
+        df = pd.DataFrame({"a": [1, 2, 3], "class": ["x", None, "y"]})
         out = mod.normalize_frame(df, "class")
         assert "target" in out.columns
         assert "class" not in out.columns

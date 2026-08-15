@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 from hagent.agent.harness.schema import AgentRunResult, ExpectSpec
 
 
-def _tools_from_result(result: Dict[str, Any] | AgentRunResult) -> List[str]:
+def _tools_from_result(result: dict[str, Any] | AgentRunResult) -> list[str]:
     if isinstance(result, AgentRunResult):
         if result.tool_names:
             return list(result.tool_names)
@@ -25,7 +26,7 @@ def _tools_from_result(result: Dict[str, Any] | AgentRunResult) -> List[str]:
     return extracted
 
 
-def _event_types(result: Dict[str, Any] | AgentRunResult) -> List[str]:
+def _event_types(result: dict[str, Any] | AgentRunResult) -> list[str]:
     if isinstance(result, AgentRunResult):
         return list(result.event_types)
     events = result.get("execution_events") or []
@@ -48,10 +49,10 @@ def assert_expectations(
     route: str | None = None,
     event_types: Sequence[str] | None = None,
     elapsed: float = 0.0,
-    wm: Dict[str, Any] | None = None,
-) -> tuple[bool, List[str]]:
+    wm: dict[str, Any] | None = None,
+) -> tuple[bool, list[str]]:
     """Return (ok, reasons)."""
-    reasons: List[str] = []
+    reasons: list[str] = []
     ok = True
     tools = list(tools)
     n_tools = len(tools)
@@ -150,7 +151,7 @@ def assert_expectations(
     return ok, reasons
 
 
-def has_job_signal(result: Dict[str, Any]) -> bool:
+def has_job_signal(result: dict[str, Any]) -> bool:
     if result.get("best_job_id"):
         return True
     if result.get("has_job"):

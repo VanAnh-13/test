@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
@@ -48,14 +48,28 @@ const TrainCard = ({ datasetID, datasetName }: TrainCardProps) => {
   const [selectedTarget, setSelectedTarget] = useState("");
   const [selectedFeatures, setSelectedFeatures] = useState<string[]>([]);
 
-  const [isLoading, setIsLoading] = useState(false);
+  type MetricOb = Record<string, string>;
+  const [metrics, setMetrics] = useState<MetricOb>({});
 
-  // 31. Lấy dữ liệu dataset theo datasetID chọn
+  const getMetrics = useCallback(async () => {
+    if (!problemType) return;
+
+    try {
+      const data = await get(`/v2/auto/metrics?problem_type=${problemType}`);
+      setMetrics(data.metrics);
+    } catch (err) {
+      console.error("Lỗi khi gọi API:", err);
+      alert("Không thể tải dữ liệu huấn luyện.");
+    }
+  }, [get, problemType]);
+
+  // Lấy đặc trưng và độ đo theo bộ dữ liệu đã chọn.
   useEffect(() => {
-    if (step === 4 && datasetID) {
-      get(`/v2/auto/features?id_data=${datasetID}&problem_type=${problemType}`)
+    if (step === 4 && datasetID && problemType) {
+      void get(
+        `/v2/auto/features?id_data=${datasetID}&problem_type=${problemType}`,
+      )
         .then((data) => {
-          console.log(data.features);
           setListFeature(data.features);
         })
         .catch((err) => {
@@ -63,9 +77,9 @@ const TrainCard = ({ datasetID, datasetName }: TrainCardProps) => {
           alert("Không thể tải dữ liệu huấn luyện.");
         });
 
-      getMetrics();
+      void getMetrics();
     }
-  }, [step, datasetID]);
+  }, [datasetID, get, getMetrics, problemType, step]);
 
   const handleNext = () => {
     if (step === 1) {
@@ -133,28 +147,7 @@ const TrainCard = ({ datasetID, datasetName }: TrainCardProps) => {
 
   const handleStartTraining = () => {
     if (!selectedTarget) return alert("Vui lòng chọn một thuộc tính mục tiêu!");
-
-    setIsLoading(true);
-
-    setTimeout(() => {
-      router.push(`/public-datasets/${datasetID}/result`);
-    }, 100);
-  };
-
-  // Lấy danh sách độ đo theo loại bài toán
-  type MetricOb = Record<string, string>;
-  const [metrics, setMetrics] = useState<MetricOb>({});
-
-  const getMetrics = async () => {
-    try {
-      const data = await get(`/v2/auto/metrics?problem_type=${problemType}`);
-
-      console.log(data.metrics);
-      setMetrics(data.metrics);
-    } catch (err) {
-      console.error("Lỗi khi gọi API:", err);
-      alert("Không thể tải dữ liệu huấn luyện.");
-    }
+    router.push(`/public-datasets/${datasetID}/result`);
   };
 
   return (
@@ -173,7 +166,6 @@ const TrainCard = ({ datasetID, datasetName }: TrainCardProps) => {
             ]}
             value={selectedOption}
             onChange={(val) => {
-              console.log("Giá trị được chọn:", val);
               setSelectedOption(val);
               sessionStorage.setItem("choose", val);
             }}
@@ -192,7 +184,6 @@ const TrainCard = ({ datasetID, datasetName }: TrainCardProps) => {
             ]}
             value={method}
             onChange={(val) => {
-              console.log("Giá trị được chọn:", val);
               setMethod(val);
               sessionStorage.setItem("method", val);
             }}
@@ -226,7 +217,6 @@ const TrainCard = ({ datasetID, datasetName }: TrainCardProps) => {
                   <RadioGroupItem
                     id={value}
                     value={value}
-                    // disabled={disabled}
                     className="mr-3"
                   />
                   <Label htmlFor={value}>{label}</Label>

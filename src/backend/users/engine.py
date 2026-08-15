@@ -8,7 +8,6 @@ import time
 from email.mime.text import MIMEText
 from typing import Optional
 
-from dotenv import load_dotenv
 from fastapi import HTTPException, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -16,9 +15,6 @@ from pymongo.asynchronous.database import AsyncDatabase
 
 from users.utils.email_service import email_service
 from users.utils.security import HashHelper
-
-# Load file .env
-load_dotenv()
 
 
 class User(BaseModel):
@@ -177,18 +173,14 @@ async def handle_update_avatar(username, avatar, db: AsyncDatabase):
     users_collection = db.tbl_User
     user = await users_collection.find_one({"username": username})
     if user:
-        # avatar_data = avatar.read()
         avatar_data = avatar.file.read()
         avatar_base64 = base64.b64encode(avatar_data).decode('utf-8')
-        # avatar_with_prefix = f"data:image/jpeg;base64,{avatar_base64}"
         avatar_set = {"$set": {
             "avatar": avatar_base64
         }}
         await users_collection.update_one({"_id": user["_id"]}, avatar_set)
-        raise HTTPException(
-            status_code=status.HTTP_200_OK,
-            detail="Avatar cập nhật thành công"
-        )
+        # P0-FIX: trả về dict thông thường, không raise HTTPException(200)
+        return {"message": "Avatar cập nhật thành công"}
     else:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -223,16 +215,22 @@ async def handle_delete_user(username, db: AsyncDatabase) -> dict:
     users_collection = db.tbl_User
 
     user_exist = await users_collection.find_one({'username': username})
+    if not user_exist:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Người dùng {username} không tồn tại",
+        )
 
     linked_acc = await db.linked_accounts.delete_many({'user_id': user_exist['_id']})
-    result = await users_collection.delete_one({"username": username })
-    
-    if result.deleted_count > 0 and linked_acc > 0:
+    result = await users_collection.delete_one({"username": username})
+
+    # P0-FIX: so sánh đúng: linked_acc là DeleteResult, dùng .deleted_count
+    if result.deleted_count > 0:
         return {"message": "Deleted successfully"}
     else:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Không thể xóa người dùng {username}. Người dùng không tồn tại hoặc đã xảy ra lỗi"
+            detail=f"Không thể xóa người dùng {username}. Đã xảy ra lỗi trong quá trình xóa",
         )
 
 

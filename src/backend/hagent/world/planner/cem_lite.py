@@ -5,15 +5,14 @@ CEM-lite latent planner (LeWM-style, structured AutoML domain).
 2. Roll out predictor for horizon H
 3. Cost = w_latent * ||ẑ_H - z_g|| + w_constraint * violations + w_step * steps
 4. Return top-k plans
-
-Skeletons / weights / horizon come from config — not hard-coded at graph layer.
 """
 
 from __future__ import annotations
 
 import itertools
 import uuid
-from typing import Any, Dict, List, Optional, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 from hagent.world.schema import (
     AutoMLAction,
@@ -24,9 +23,8 @@ from hagent.world.schema import (
 )
 from hagent.world.surprise import latent_distance
 
-
 # Fallback skeletons when config omits goal_skeletons
-_FALLBACK_SKELETONS: Dict[str, List[List[str]]] = {
+_FALLBACK_SKELETONS: dict[str, list[list[str]]] = {
     "train": [
         ["get_dataset_info", "get_features", "get_available_models", "start_training", "get_job_info"],
         ["list_datasets", "get_dataset_info", "start_training", "get_job_info"],
@@ -54,7 +52,7 @@ _FALLBACK_SKELETONS: Dict[str, List[List[str]]] = {
 }
 
 # Map action type → preferred specialist agent (config can override)
-_FALLBACK_ACTION_AGENTS: Dict[str, str] = {
+_FALLBACK_ACTION_AGENTS: dict[str, str] = {
     "list_datasets": "data_analyst",
     "get_dataset_info": "data_analyst",
     "get_features": "data_analyst",
@@ -73,10 +71,10 @@ def _params_for_action(
     action_type: str,
     goal: GoalSpec,
     context: dict | None,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Fill action params from goal + observation context (no LLM)."""
     ctx = context or {}
-    params: Dict[str, Any] = {}
+    params: dict[str, Any] = {}
     dataset_id = goal.get("dataset_id") or ctx.get("dataset_id")
     user_id = ctx.get("user_id")
     if action_type in (
@@ -128,10 +126,10 @@ class CEMLitePlanner:
         self.w_latent = float(weights.get("latent_goal", 1.0))
         self.w_constraint = float(weights.get("constraint_violation", 5.0))
         self.w_step = float(weights.get("step_penalty", 0.05))
-        self.skeletons: Dict[str, List[List[str]]] = dict(
+        self.skeletons: dict[str, list[list[str]]] = dict(
             self.config.get("goal_skeletons") or _FALLBACK_SKELETONS
         )
-        self.action_agents: Dict[str, str] = dict(
+        self.action_agents: dict[str, str] = dict(
             self.config.get("action_agents") or _FALLBACK_ACTION_AGENTS
         )
         self.distance_metric = str(self.config.get("distance_metric") or "l2")
@@ -140,13 +138,13 @@ class CEMLitePlanner:
         self,
         goal: GoalSpec,
         action_space: Sequence[str],
-    ) -> List[List[str]]:
+    ) -> list[list[str]]:
         gtype = str(goal.get("goal_type") or "respond").lower()
         space = set(action_space)
         skeletons = list(self.skeletons.get(gtype) or self.skeletons.get("respond") or [])
 
         # Also add truncated / shuffled variants up to n_candidates
-        seqs: List[List[str]] = []
+        seqs: list[list[str]] = []
         for sk in skeletons:
             filtered = [a for a in sk if a in space]
             if filtered:
@@ -175,7 +173,7 @@ class CEMLitePlanner:
 
     def _constraint_penalty(
         self,
-        actions: List[AutoMLAction],
+        actions: list[AutoMLAction],
         goal: GoalSpec,
         context: dict | None,
     ) -> float:
@@ -206,7 +204,7 @@ class CEMLitePlanner:
         self,
         z0: LatentState,
         z_goal: LatentState,
-        actions: List[AutoMLAction],
+        actions: list[AutoMLAction],
         goal: GoalSpec,
         context: dict | None,
     ) -> float:
@@ -224,14 +222,14 @@ class CEMLitePlanner:
         z_goal: LatentState,
         *,
         goal: GoalSpec,
-        action_space: List[str],
+        action_space: list[str],
         observation_context: dict | None = None,
-    ) -> List[PlanResult]:
+    ) -> list[PlanResult]:
         if not action_space:
             return []
 
         sequences = self._candidate_sequences(goal, action_space)
-        scored: List[PlanResult] = []
+        scored: list[PlanResult] = []
 
         for seq in sequences:
             actions = [

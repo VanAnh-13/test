@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import yaml
 
@@ -14,7 +14,7 @@ def _harness_dir() -> Path:
     return Path(__file__).resolve().parent
 
 
-def load_fixture(name: str) -> Dict[str, Any]:
+def load_fixture(name: str) -> dict[str, Any]:
     """Load harness/fixtures/{name}.yaml (with or without .yaml)."""
     base = _harness_dir() / "fixtures"
     path = base / name
@@ -26,7 +26,7 @@ def load_fixture(name: str) -> Dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-def _resolve_world_model(raw: Dict[str, Any]) -> Dict[str, Any]:
+def _resolve_world_model(raw: dict[str, Any]) -> dict[str, Any]:
     wm = raw.get("world_model")
     if isinstance(wm, dict):
         return wm
@@ -37,7 +37,7 @@ def _resolve_world_model(raw: Dict[str, Any]) -> Dict[str, Any]:
     return {}
 
 
-def scenario_from_mapping(raw: Dict[str, Any]) -> AgentScenario:
+def scenario_from_mapping(raw: dict[str, Any]) -> AgentScenario:
     data = dict(raw)
     data["world_model"] = _resolve_world_model(data)
     data.pop("world_model_fixture", None)
@@ -45,10 +45,10 @@ def scenario_from_mapping(raw: Dict[str, Any]) -> AgentScenario:
     return AgentScenario.from_dict(data)
 
 
-def load_scenarios_from_yaml(path: Path) -> List[AgentScenario]:
+def load_scenarios_from_yaml(path: Path) -> list[AgentScenario]:
     text = path.read_text(encoding="utf-8")
     data = yaml.safe_load(text)
-    scenarios: List[AgentScenario] = []
+    scenarios: list[AgentScenario] = []
     if isinstance(data, dict) and "scenarios" in data:
         items = data["scenarios"]
     elif isinstance(data, list):
@@ -63,11 +63,11 @@ def load_scenarios_from_yaml(path: Path) -> List[AgentScenario]:
     return scenarios
 
 
-def load_builtin_from_eval() -> List[AgentScenario]:
+def load_builtin_from_eval() -> list[AgentScenario]:
     """Adapt Phase 7 EvalScenario defaults into AgentScenario."""
     from hagent.agent.eval.scenarios import default_scenarios
 
-    out: List[AgentScenario] = []
+    out: list[AgentScenario] = []
     for s in default_scenarios():
         expect = ExpectSpec(
             goal_type=s.expect_goal_type,
@@ -97,10 +97,10 @@ def load_builtin_from_eval() -> List[AgentScenario]:
 
 def load_all_scenarios(
     *,
-    tags: Optional[List[str]] = None,
-    scenario_ids: Optional[List[str]] = None,
-    packs_dir: Optional[Path] = None,
-) -> List[AgentScenario]:
+    tags: list[str] | None = None,
+    scenario_ids: list[str] | None = None,
+    packs_dir: Path | None = None,
+) -> list[AgentScenario]:
     scenarios = load_builtin_from_eval()
     packs = packs_dir or (_harness_dir() / "scenarios")
     if packs.exists():
@@ -108,7 +108,7 @@ def load_all_scenarios(
             scenarios.extend(load_scenarios_from_yaml(path))
 
     # dedupe by id (YAML overrides builtin)
-    by_id: Dict[str, AgentScenario] = {}
+    by_id: dict[str, AgentScenario] = {}
     for s in scenarios:
         by_id[s.id] = s
     scenarios = list(by_id.values())

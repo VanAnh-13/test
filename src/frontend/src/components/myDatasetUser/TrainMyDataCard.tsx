@@ -77,7 +77,7 @@ const TrainMyDataCard = ({ datasetID, datasetName }: TrainMyDataCardProps) => {
 
       getMetrics(problemType);
     }
-  }, [step, datasetID, problemType]);
+  }, [datasetID, get, getMetrics, problemType, step]);
 
   const handleNext = () => {
     if (step === 1) {

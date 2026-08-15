@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import time
-from typing import List, Optional
 
 from hagent.agent.eval import runner as eval_runner
 from hagent.agent.eval.scenarios import EvalScenario
 from hagent.agent.execution.tool_runner import set_tool_invoker
-from hagent.agent.harness.assertions import assert_expectations, has_job_signal
+from hagent.agent.harness.assertions import assert_expectations
 from hagent.agent.harness.mock_env import make_mock_tool_invoker
 from hagent.agent.harness.schema import AgentRunResult, AgentScenario
 
@@ -59,7 +58,7 @@ async def run_offline_scenario(
         elapsed = time.time() - t0
         tools = int(out.get("tools_called") or 0)
         # synthetic tool names for offline modes
-        tool_names: List[str] = []
+        tool_names: list[str] = []
         if out.get("has_job") or (scenario.expect.has_job or scenario.expect_has_job):
             if mode != "list" and (
                 scenario.goal.get("goal_type") == "train"

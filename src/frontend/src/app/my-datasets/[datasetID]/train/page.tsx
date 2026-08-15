@@ -31,7 +31,7 @@ export default function Page() {
     if (datasetID) {
       fetchData();
     }
-  }, [datasetID]);
+  }, [datasetID, get]);
 
   return datasetID ? (
     <TrainMyDataCard datasetID={datasetID} datasetName={dataName} />

@@ -17,15 +17,16 @@ và re-plan mỗi campaign đã cập nhật model thật).
 
 from __future__ import annotations
 
-import logging
 import math
-from typing import Any, Dict, List, Optional, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 import numpy as np
+import structlog
 
 from hagent.world.planner.cem_config_v1 import CemConfigV1Planner
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class CemMpcV1Planner:
@@ -39,21 +40,21 @@ class CemMpcV1Planner:
         self._pool_planner = CemConfigV1Planner(self.config)
 
     # Tương thích interface builder (dùng như cem_config_v1 khi không có budget)
-    def plan_campaign_configs(self, **kwargs) -> List[Dict[str, Any]]:
+    def plan_campaign_configs(self, **kwargs) -> list[dict[str, Any]]:
         return self._pool_planner.plan_campaign_configs(**kwargs)
 
     def plan_batch(
         self,
         *,
-        base_params: Dict[str, Any],
-        dataset_meta: Dict[str, Any] | None = None,
+        base_params: dict[str, Any],
+        dataset_meta: dict[str, Any] | None = None,
         z: Sequence[float] | None = None,
         outcome_model: Any | None = None,
         n: int,
         remaining_budget: int,
         total_budget: int,
         higher_is_better: bool = True,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Chọn n config cho campaign kế tiếp, biết còn remaining_budget job
         trong tổng total_budget.
@@ -103,7 +104,7 @@ class CemMpcV1Planner:
 
         # Thompson sampling: mỗi slot một lượt draw mới trên các ứng viên còn lại
         rng = np.random.default_rng(self.seed + remaining_budget)
-        chosen: List[Dict[str, Any]] = []
+        chosen: list[dict[str, Any]] = []
         available = list(preds)
         for _ in range(min(n, len(available))):
             draws = [

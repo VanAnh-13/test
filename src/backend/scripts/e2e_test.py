@@ -12,13 +12,12 @@ Chạy end-to-end test với Ollama model thật:
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import sys
 import time
 from pathlib import Path
 
-# Ensure backend in path
+# Bảo đảm backend có trong module search path khi chạy script trực tiếp.
 BACKEND = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BACKEND))
 
@@ -47,7 +46,9 @@ async def test_e2e():
     print("─" * 60)
     print("  Test: LLM Direct Response")
     print("─" * 60)
-    model_name = os.environ.get("OLLAMA_MODEL", os.environ.get("LLM_MODEL", "qwen2.5:14b"))
+    model_name = os.environ.get(
+        "OLLAMA_MODEL", os.environ.get("LLM_MODEL", "qwen2.5:14b")
+    )
     async with httpx.AsyncClient(timeout=120) as client:
         start = time.time()
         r = await client.post(
@@ -66,7 +67,7 @@ async def test_e2e():
         print()
 
     # ── Test 3: Registry ──
-    from hagent.agent.registry import get_agent_registry, reset_registry
+    from hagent.agent.orchestration import get_agent_registry, reset_registry
 
     reset_registry()
     registry = get_agent_registry()
@@ -86,7 +87,7 @@ async def test_e2e():
     print("✓ Memory: saved and retrieved fact")
 
     # ── Test 5: Cache ──
-    from hagent.agent.cache import ToolCache
+    from hagent.agent.tools import ToolCache
 
     cache = ToolCache(ttl_seconds=60)
     cache.set("list_datasets", {}, {"datasets": []})
@@ -153,7 +154,7 @@ async def test_e2e():
 
     header = f"  {'Model':<25} {'RMSE':<10} {'MAE':<10} {'R²':<10}"
     print(header)
-    print(f"  {'-'*25} {'-'*10} {'-'*10} {'-'*10}")
+    print(f"  {'-' * 25} {'-' * 10} {'-' * 10} {'-' * 10}")
     for mr in training_result["model_results"]:
         m = mr["model"]
         met = mr["metrics"]
@@ -166,11 +167,11 @@ async def test_e2e():
     print()
     print(f"  🏆 Best Model: {training_result['best_model']}")
     print(f"  📊 Best RMSE:  {training_result['best_score']}")
-    print(f"  📈 Best R²:    0.91")
+    print("  📈 Best R²:    0.91")
     print()
 
     # ── Test 9: Graph ──
-    from hagent.agent.graph import build_automl_graph, reset_graph
+    from hagent.agent.orchestration.graph import build_automl_graph, reset_graph
 
     reset_graph()
     graph = build_automl_graph()
@@ -187,8 +188,8 @@ async def test_e2e():
     print(f"  🤖 Model:       {model_name}")
     print(f"  🔧 Agents:      {len(agents)} ({', '.join(sorted(agents))})")
     print(f"  📊 Graph nodes: {len(nodes)}")
-    print(f"  🧠 Memory:      LocalFactStore")
-    print(f"  ⚡ Cache:        TTL=60s")
+    print("  🧠 Memory:      LocalFactStore")
+    print("  ⚡ Cache:        TTL=60s")
     print(f"  🔗 Middleware:   {len(chain._middlewares)} active")
     print("═" * 60)
 

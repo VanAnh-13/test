@@ -27,7 +27,11 @@ HEAD_CFG = {"use_latent": False, "hidden_dim": 24}
 
 def _synthetic_samples(n=100, seed=0, noise=0.01):
     rng = np.random.default_rng(seed)
-    algo_bonus = {"grid_search": 0.0, "bayesian_search": 0.08, "genetic_algorithm": 0.04}
+    algo_bonus = {
+        "grid_search": 0.0,
+        "bayesian_search": 0.08,
+        "genetic_algorithm": 0.04,
+    }
     samples = []
     for _ in range(n):
         algo = str(rng.choice(list(algo_bonus)))

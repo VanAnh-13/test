@@ -1,7 +1,7 @@
 Cd D:\Hoc\LAB\AutoML\AutoML\src\backend
 D:
 conda activate automl
-python app.py
+python -m server.application
 
 Cd D:\Hoc\LAB\AutoML\AutoML\src\backend
 D:
@@ -21,5 +21,4 @@ python -m automl.create_json_files
 
 
 GIỜI ƠI!!!!! CÁI PHẦN BÊN TRÊN KIA CỦA MÁY TUI. AI MUỐN VIẾT SANG MÁY MÌNH THÌ TẠO BÊN DƯỚI ĐI ĐỪNG SỬA ĐƯỜNG DẪN NỮA :)))))))))
-
 

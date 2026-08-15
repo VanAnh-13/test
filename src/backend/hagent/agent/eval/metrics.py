@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -12,14 +12,14 @@ class ToolCallTrace:
     """One observed invocation with request, outcome, and evidence payload."""
 
     name: str
-    arguments: Dict[str, Any]
+    arguments: dict[str, Any]
     effect: str
     outcome: str
-    output: Dict[str, Any] | None = None
+    output: dict[str, Any] | None = None
     error_code: str | None = None
     elapsed_seconds: float = 0.0
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
@@ -35,14 +35,14 @@ class QualityScore:
     latency_seconds: float
     token_count: int
     passed: bool
-    reasons: List[str] = field(default_factory=list)
+    reasons: list[str] = field(default_factory=list)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
-def _flatten_mapping(value: Dict[str, Any]) -> Dict[tuple[str, ...], Any]:
-    flattened: Dict[tuple[str, ...], Any] = {}
+def _flatten_mapping(value: dict[str, Any]) -> dict[tuple[str, ...], Any]:
+    flattened: dict[tuple[str, ...], Any] = {}
 
     def walk(current: Any, path: tuple[str, ...]) -> None:
         if isinstance(current, dict):
@@ -55,7 +55,7 @@ def _flatten_mapping(value: Dict[str, Any]) -> Dict[tuple[str, ...], Any]:
     return flattened
 
 
-def _goal_exactness(actual: Dict[str, Any], expected: Dict[str, Any]) -> float:
+def _goal_exactness(actual: dict[str, Any], expected: dict[str, Any]) -> float:
     if not expected:
         return 1.0
     actual_business_fields = {
@@ -76,7 +76,7 @@ def _goal_exactness(actual: Dict[str, Any], expected: Dict[str, Any]) -> float:
     return matches / len(all_paths)
 
 
-def _has_evidence_key(output: Dict[str, Any], key: str) -> bool:
+def _has_evidence_key(output: dict[str, Any], key: str) -> bool:
     value: Any = output
     for part in key.split("."):
         if not isinstance(value, dict) or part not in value:
@@ -88,8 +88,8 @@ def _has_evidence_key(output: Dict[str, Any], key: str) -> bool:
 def evaluate_quality(
     scenario,
     *,
-    actual_goal: Dict[str, Any],
-    invocations: List[ToolCallTrace],
+    actual_goal: dict[str, Any],
+    invocations: list[ToolCallTrace],
     outcome: str,
     elapsed_seconds: float,
     token_count: int,
@@ -104,7 +104,7 @@ def evaluate_quality(
         or getattr(scenario, "baseline_version", None)
         or not getattr(scenario, "allow_mutations", True)
     )
-    matched_calls: Dict[int, ToolCallTrace] = {}
+    matched_calls: dict[int, ToolCallTrace] = {}
     unused_call_indexes = set(range(len(invocations)))
     for expectation_index, expectation in enumerate(expectations):
         for call_index in sorted(unused_call_indexes):
@@ -145,7 +145,7 @@ def evaluate_quality(
         unauthorized = sum(1 for call in mutations if id(call) not in matched_call_ids)
     else:
         unauthorized = 0
-    mutation_counts: Dict[str, int] = {}
+    mutation_counts: dict[str, int] = {}
     for call in mutations:
         digest = json.dumps(
             {"name": call.name, "arguments": call.arguments},
@@ -165,7 +165,7 @@ def evaluate_quality(
     tokens_ok = scenario.max_tokens is None or token_count <= scenario.max_tokens
     policy_compliant = unauthorized == 0 and duplicate_mutations == 0
 
-    reasons: List[str] = []
+    reasons: list[str] = []
     if goal_exactness < 1.0:
         reasons.append(f"goal_exactness={goal_exactness:.3f}")
     if argument_exactness < 1.0:
@@ -206,7 +206,7 @@ class ScenarioResult:
     scenario_id: str
     mode: str
     success: bool
-    reasons: List[str] = field(default_factory=list)
+    reasons: list[str] = field(default_factory=list)
     elapsed_seconds: float = 0.0
     outcome: str = "succeeded"
     goal_exactness: float = 1.0
@@ -215,20 +215,20 @@ class ScenarioResult:
     unauthorized_side_effects: int = 0
     duplicate_mutations: int = 0
     token_count: int = 0
-    invocations: List[ToolCallTrace] = field(default_factory=list)
+    invocations: list[ToolCallTrace] = field(default_factory=list)
     tools_called: int = 0
     steps_executed: int = 0
     revisions: int = 0
     campaign_variants: int = 0
     campaign_completed: int = 0
-    best_score: Optional[float] = None
-    best_job_id: Optional[str] = None
-    plan_status: Optional[str] = None
-    campaign_status: Optional[str] = None
+    best_score: float | None = None
+    best_job_id: str | None = None
+    plan_status: str | None = None
+    campaign_status: str | None = None
     hierarchy_depth: int = 0
-    extra: Dict[str, Any] = field(default_factory=dict)
+    extra: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
@@ -248,16 +248,16 @@ class ModeSummary:
     unauthorized_side_effects: int
     duplicate_mutations: int
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
-def summarize(results: List[ScenarioResult]) -> List[ModeSummary]:
-    by_mode: Dict[str, List[ScenarioResult]] = {}
+def summarize(results: list[ScenarioResult]) -> list[ModeSummary]:
+    by_mode: dict[str, list[ScenarioResult]] = {}
     for r in results:
         by_mode.setdefault(r.mode, []).append(r)
 
-    summaries: List[ModeSummary] = []
+    summaries: list[ModeSummary] = []
     for mode, rows in sorted(by_mode.items()):
         n = len(rows)
         if n == 0:
@@ -296,9 +296,9 @@ def judge_success(
     campaign_status: str | None,
     mode: str,
     quality: QualityScore | None = None,
-) -> tuple[bool, List[str]]:
+) -> tuple[bool, list[str]]:
     """Rule-based success criteria for offline harness."""
-    reasons: List[str] = []
+    reasons: list[str] = []
     ok = True
 
     if scenario.expect_goal_type and goal_type:
@@ -343,9 +343,9 @@ def judge_success(
 # ── Benchmark metrics (sample-efficiency) ────────────────
 
 
-def best_so_far_curve(scores: List[float]) -> List[float]:
+def best_so_far_curve(scores: list[float]) -> list[float]:
     """Curve best-so-far: phần tử i = max(scores[:i+1])."""
-    curve: List[float] = []
+    curve: list[float] = []
     best = float("-inf")
     for s in scores:
         best = max(best, float(s))
@@ -353,7 +353,7 @@ def best_so_far_curve(scores: List[float]) -> List[float]:
     return curve
 
 
-def jobs_to_threshold(curve: List[float], threshold: float) -> Optional[int]:
+def jobs_to_threshold(curve: list[float], threshold: float) -> int | None:
     """Số job (1-based) để curve chạm threshold; None nếu không bao giờ chạm."""
     for i, v in enumerate(curve):
         if v >= threshold:
@@ -371,14 +371,14 @@ def normalized_regret(
     return max(0.0, (optimum - final_best) / denom)
 
 
-def aggregate_curves(curves: List[List[float]]) -> Dict[str, List[float]]:
+def aggregate_curves(curves: list[list[float]]) -> dict[str, list[float]]:
     """Mean/std theo từng bước qua nhiều seed; cắt về độ dài chung ngắn nhất."""
     curves = [c for c in curves if c]
     if not curves:
         return {"mean": [], "std": [], "n": 0}
     length = min(len(c) for c in curves)
-    mean: List[float] = []
-    std: List[float] = []
+    mean: list[float] = []
+    std: list[float] = []
     for i in range(length):
         vals = [c[i] for c in curves]
         m = sum(vals) / len(vals)

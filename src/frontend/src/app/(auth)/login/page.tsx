@@ -6,14 +6,14 @@ import { useEffect } from 'react'
 import LoginForm from '@/app/(auth)/login/LoginForm'
 
 const LoginPage = () => {
-  const { data: session, status } = useSession()
+  const { status } = useSession()
   const router = useRouter()
 
   useEffect(() => {
     if (status === 'authenticated') {
       router.replace('/') 
     }
-  }, [status])
+  }, [router, status])
 
   if (status === 'loading') {
     return null

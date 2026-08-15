@@ -6,7 +6,6 @@ from urllib.parse import urlencode
 
 from authlib.integrations.starlette_client import OAuth
 from bson import ObjectId
-from dotenv import load_dotenv
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response, status
 from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordBearer
@@ -15,7 +14,8 @@ from pymongo import ReturnDocument
 from pymongo.asynchronous.database import AsyncDatabase
 from starlette.requests import Request
 
-from database.database import get_db
+from config.providers import get_db
+from config.server_runtime import load_cookie_runtime_policy
 from users.engine import handle_send_otp, verify_stored_password
 from users.schema import (
     OAuthCodeExchangeRequest,
@@ -33,13 +33,16 @@ from users.utils.authentication import jwt_service
 from users.utils.email_service import email_service
 from users.utils.security import HashHelper
 
-# Load .env file
-load_dotenv()
-
-
 router = APIRouter(tags=["Authentication"])
 
 OAUTH_CODE_TTL_SECONDS = int(os.getenv('OAUTH_CODE_TTL_SECONDS', '60'))
+_REFRESH_COOKIE_KEY = "refresh_token"
+_REFRESH_COOKIE_PATH = "/"
+_REFRESH_COOKIE_SAMESITE = "lax"
+
+
+def _is_session_cookie_secure() -> bool:
+    return load_cookie_runtime_policy().session_https_only
 
 
 def _is_skip_email_verification_enabled() -> bool:
@@ -209,6 +212,7 @@ async def login(user_login: UserLoginRequest, response: Response, db: AsyncDatab
 
 @router.post('/refresh', response_model=Token)
 async def refresh_token(response: Response, refresh_request: RefreshRequest, db: AsyncDatabase = Depends(get_db)) -> Token:
+    cookie_secure = _is_session_cookie_secure()
     refresh_token = refresh_request.refresh_token
 
     if not refresh_token:
@@ -244,12 +248,13 @@ async def refresh_token(response: Response, refresh_request: RefreshRequest, db:
 
     refresh_expire_days = int(os.getenv('REFRESH_EXPIRE', 1))
     response.set_cookie(
-        key='refresh_token',
+        key=_REFRESH_COOKIE_KEY,
         value=new_refresh_token,
         httponly=True,
         max_age=refresh_expire_days * 24 * 60 * 60,
-        samesite='lax',
-        secure=False
+        path=_REFRESH_COOKIE_PATH,
+        samesite=_REFRESH_COOKIE_SAMESITE,
+        secure=cookie_secure,
     )
 
     return Token(access_token=new_access_token, refresh_token=new_refresh_token, token_type='bearer')
@@ -284,11 +289,13 @@ async def get_me(current_user: dict = Depends(get_current_user)) -> UserResponse
 
 @router.post('/logout')
 async def logout(response: Response, current_user: dict = Depends(get_current_user)):
+    cookie_secure = _is_session_cookie_secure()
     response.delete_cookie(
-        key='refresh_token',
+        key=_REFRESH_COOKIE_KEY,
         httponly=True,
-        samesite='lax',
-        secure=False
+        path=_REFRESH_COOKIE_PATH,
+        samesite=_REFRESH_COOKIE_SAMESITE,
+        secure=cookie_secure,
     )
 
     return {'message': 'Logged out successfully'}

@@ -2,10 +2,10 @@
 
 import { useApi } from "@/hooks/useApi";
 import { useSearchParams, useRouter } from "next/navigation";
-import { useEffect, useState, useRef } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { CheckCircle2, XCircle, Loader2, Mail, Send, ArrowRight } from "lucide-react";
 
-export default function VerifyEmailPage() {
+function VerifyEmailContent() {
   const params = useSearchParams();
   const router = useRouter();
   const { post } = useApi();
@@ -70,7 +70,7 @@ export default function VerifyEmailPage() {
     }
   };
 
-  // --- RENDERING UI ---
+  // --- GIAO DIỆN ---
 
   // Đang loading (gọi API)
   if (status === "loading") {
@@ -200,5 +200,19 @@ export default function VerifyEmailPage() {
 
       </div>
     </div>
+  );
+}
+
+export default function VerifyEmailPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center" role="status">
+          Đang tải thông tin xác minh...
+        </div>
+      }
+    >
+      <VerifyEmailContent />
+    </Suspense>
   );
 }

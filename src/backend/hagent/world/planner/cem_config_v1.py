@@ -14,13 +14,14 @@ diversify của builder) để hành vi hệ thống không đổi khi chưa tra
 
 from __future__ import annotations
 
-import logging
 import math
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from collections.abc import Sequence
+from typing import Any
 
 import numpy as np
+import structlog
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 _DEFAULT_ALGOS = ["grid_search", "bayesian_search", "genetic_algorithm"]
 _DEFAULT_TIME_OPTIONS = [180, 300, 600]
@@ -31,15 +32,15 @@ class CemConfigV1Planner:
 
     def __init__(self, config: dict | None = None):
         self.config = dict(config or {})
-        self.algorithms: List[str] = list(
+        self.algorithms: list[str] = list(
             self.config.get("search_algorithms") or _DEFAULT_ALGOS
         )
-        self.time_options: List[int] = [
+        self.time_options: list[int] = [
             int(t) for t in (self.config.get("time_limit_options") or _DEFAULT_TIME_OPTIONS)
         ]
-        self.model_options: List[str] = list(self.config.get("model_options") or [])
+        self.model_options: list[str] = list(self.config.get("model_options") or [])
         self.min_models = max(1, int(self.config.get("min_models", 1)))
-        self.categorical_dims: Dict[str, List[Any]] = {
+        self.categorical_dims: dict[str, list[Any]] = {
             str(k): list(v)
             for k, v in dict(self.config.get("categorical_dims") or {}).items()
             if v
@@ -55,8 +56,8 @@ class CemConfigV1Planner:
 
     # ── Fallback (không có outcome model) ────────────────
 
-    def _fallback_configs(self, n_return: int) -> List[Dict[str, Any]]:
-        out: List[Dict[str, Any]] = []
+    def _fallback_configs(self, n_return: int) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
         for i in range(n_return):
             out.append(
                 {
@@ -70,7 +71,7 @@ class CemConfigV1Planner:
 
     def _sample_models(
         self, rng: np.random.Generator, p_model: np.ndarray
-    ) -> Tuple[str, ...]:
+    ) -> tuple[str, ...]:
         mask = rng.random(len(self.model_options)) < p_model
         if mask.sum() < self.min_models:
             # Ép đủ min_models model có xác suất cao nhất
@@ -86,13 +87,13 @@ class CemConfigV1Planner:
     def plan_campaign_configs(
         self,
         *,
-        base_params: Dict[str, Any],
-        dataset_meta: Dict[str, Any] | None = None,
+        base_params: dict[str, Any],
+        dataset_meta: dict[str, Any] | None = None,
         z: Sequence[float] | None = None,
         outcome_model: Any | None = None,
         n_return: int = 3,
         higher_is_better: bool = True,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Trả về tối đa n_return dict config distinct (search_algorithm,
         time_limit, models?, extra dims?), xếp theo score dự đoán.
@@ -114,15 +115,15 @@ class CemConfigV1Planner:
         }
 
         sign = 1.0 if higher_is_better else -1.0
-        scored: Dict[tuple, float] = {}
-        proposals: Dict[tuple, Dict[str, Any]] = {}
+        scored: dict[tuple, float] = {}
+        proposals: dict[tuple, dict[str, Any]] = {}
 
         def score_config(
             algo: str,
             t: int,
-            models: Tuple[str, ...] | None,
-            extra: Dict[str, Any],
-        ) -> Optional[float]:
+            models: tuple[str, ...] | None,
+            extra: dict[str, Any],
+        ) -> float | None:
             params = dict(base_params)
             params["search_algorithm"] = algo
             params["time_limit"] = t
@@ -139,7 +140,7 @@ class CemConfigV1Planner:
             # cộng vào phía "tốt" (sign*(μ+βσ) sẽ thành PHẠT σ khi minimize).
             val = sign * pred.mean + self.exploration_weight * pred.std
             scored[key] = val
-            prop: Dict[str, Any] = {"search_algorithm": algo, "time_limit": t}
+            prop: dict[str, Any] = {"search_algorithm": algo, "time_limit": t}
             if models is not None:
                 prop["models"] = list(models)
             prop.update(extra)
@@ -198,7 +199,7 @@ class CemConfigV1Planner:
                 )
 
         ranked = sorted(scored.items(), key=lambda kv: kv[1], reverse=True)
-        out: List[Dict[str, Any]] = []
+        out: list[dict[str, Any]] = []
         for key, _ in ranked:
             out.append(proposals[key])
             if len(out) >= n_return:

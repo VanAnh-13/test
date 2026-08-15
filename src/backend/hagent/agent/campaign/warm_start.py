@@ -7,12 +7,13 @@ No hard-coded model names beyond what's already in past job configs / config YAM
 from __future__ import annotations
 
 import json
-import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
+
+import structlog
 
 from hagent.world.query import past_best_jobs
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 def _score_job(job: dict) -> float:
@@ -36,14 +37,14 @@ def configs_from_world_model(
     *,
     problem_type: str | None,
     top_k: int = 3,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Extract training configs from past successful jobs."""
     jobs = past_best_jobs(
         world_model or {},
         problem_type=problem_type,
         top_k=top_k,
     )
-    configs: List[Dict[str, Any]] = []
+    configs: list[dict[str, Any]] = []
     for j in jobs:
         cfg = dict(j.get("config") or {})
         if not cfg and j.get("best_model"):
@@ -63,7 +64,7 @@ async def configs_from_memory(
     *,
     problem_type: str | None,
     fact_store: Any | None = None,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Load warm-start facts previously written by campaigns."""
     if not user_id:
         return []
@@ -73,7 +74,7 @@ async def configs_from_memory(
 
             fact_store = create_fact_store()
         facts = await fact_store.search(user_id, category="model", limit=20)
-        out: List[Dict[str, Any]] = []
+        out: list[dict[str, Any]] = []
         for fact in facts:
             # Keys written by campaigns: warm_start_{problem_type}
             if not str(fact.key).startswith("warm_start"):
@@ -101,13 +102,13 @@ async def configs_from_memory(
 
 def merge_warm_starts(
     *,
-    from_wm: List[Dict[str, Any]],
-    from_memory: List[Dict[str, Any]],
+    from_wm: list[dict[str, Any]],
+    from_memory: list[dict[str, Any]],
     max_items: int = 5,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Dedupe warm-start configs (by search_algorithm + models signature)."""
     seen = set()
-    merged: List[Dict[str, Any]] = []
+    merged: list[dict[str, Any]] = []
     for cfg in list(from_memory) + list(from_wm):
         models = cfg.get("models") or cfg.get("model")
         if isinstance(models, str):
@@ -133,7 +134,7 @@ async def collect_warm_start_configs(
     problem_type: str | None,
     top_k: int = 3,
     fact_store: Any | None = None,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     # top_k <= 0 nghĩa là TẮT warm-start hoàn toàn — kể cả nguồn memory
     # (benchmark dựa vào điều này để cô lập các condition).
     if top_k <= 0:

@@ -13,7 +13,7 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import toSlug from "@/utils/toSlug";
 
-export const marketplaceModels: MarketplaceModelDetail[] = [
+const marketplaceModels: MarketplaceModelDetail[] = [
   {
     id: "1",
     slug: "gpt-4-turbo",
@@ -72,6 +72,7 @@ const TABS = [
 export default function MarketplaceDetailPage() {
   const params = useParams();
   const router = useRouter();
+  const [activeTab, setActiveTab] = useState("inference_api");
 
   const model = marketplaceModels.find(
     (m) => m.slug === (params?.model_name as string)
@@ -80,9 +81,6 @@ export default function MarketplaceDetailPage() {
   if (!model) {
     return <div className="p-10">Không tìm thấy model</div>;
   }
-
-  // active tabs
-  const [activeTab, setActiveTab] = useState("inference_api");
 
   return (
     <div className="max-w-6xl mx-auto px-6 py-10 space-y-10">

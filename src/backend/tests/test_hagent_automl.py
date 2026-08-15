@@ -12,14 +12,15 @@ Test categories:
 
 from __future__ import annotations
 
-import json
 import os
+import subprocess
 import sys
+from dataclasses import FrozenInstanceError
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 import httpx
+import pytest
 
 # Đảm bảo import path
 BACKEND_DIR = Path(__file__).parent.parent
@@ -37,6 +38,7 @@ class TestConfigLoading:
 
     def test_load_config_returns_dict(self):
         from hagent.bridge.config import load_config
+
         load_config.cache_clear()
         cfg = load_config()
         assert isinstance(cfg, dict)
@@ -45,12 +47,14 @@ class TestConfigLoading:
 
     def test_llm_section_has_models(self):
         from hagent.bridge.config import get_llm_models
+
         models = get_llm_models()
         assert isinstance(models, list)
         assert len(models) >= 1
 
     def test_llm_models_have_required_fields(self):
         from hagent.bridge.config import get_llm_models
+
         for model in get_llm_models():
             assert "name" in model, f"Model thiếu 'name': {model}"
             assert "provider" in model, f"Model thiếu 'provider': {model}"
@@ -58,18 +62,21 @@ class TestConfigLoading:
 
     def test_agent_config_has_routing(self):
         from hagent.bridge.config import get_routing_config
+
         routing = get_routing_config()
         assert isinstance(routing, dict)
         assert len(routing) >= 1
 
     def test_agent_config_has_suggestions(self):
         from hagent.bridge.config import get_suggestions
+
         suggestions = get_suggestions()
         assert isinstance(suggestions, list)
         assert len(suggestions) >= 1
 
     def test_cache_config(self):
         from hagent.bridge.config import get_cache_config
+
         cache = get_cache_config()
         assert "enabled" in cache
         assert "ttl_seconds" in cache
@@ -78,6 +85,7 @@ class TestConfigLoading:
 
     def test_error_messages(self):
         from hagent.bridge.config import get_error_messages
+
         errors = get_error_messages()
         assert isinstance(errors, dict)
         assert "generic" in errors
@@ -85,6 +93,7 @@ class TestConfigLoading:
 
     def test_prompt_file_exists(self):
         from hagent.bridge.config import load_prompt_file
+
         content = load_prompt_file()
         assert isinstance(content, str)
         assert len(content) > 50
@@ -93,7 +102,6 @@ class TestConfigLoading:
     def test_env_var_override(self):
         """Config hỗ trợ env var override."""
         from hagent.bridge.config import get_agent_config
-        original = get_agent_config()["max_iterations"]
 
         with patch.dict(os.environ, {"AGENT_MAX_ITERATIONS": "99"}):
             overridden = get_agent_config()["max_iterations"]
@@ -109,12 +117,14 @@ class TestLLMConfig:
     """Test multi-provider LLM configuration."""
 
     def test_load_llm_configs(self):
-        from hagent.agent.llm_config import load_llm_configs
+        from hagent.agent.llm import load_llm_configs
+
         configs = load_llm_configs()
         assert len(configs) >= 1
 
     def test_model_config_dataclass(self):
-        from hagent.agent.llm_config import ModelConfig
+        from hagent.agent.llm import ModelConfig
+
         cfg = ModelConfig(
             name="test",
             provider="openai",
@@ -125,30 +135,37 @@ class TestLLMConfig:
         assert cfg.provider == "openai"
 
     def test_resolve_api_key_env_var(self):
-        from hagent.agent.llm_config import ModelConfig
+        from hagent.agent.llm import ModelConfig
+
         with patch.dict(os.environ, {"MY_KEY": "secret123"}):
             cfg = ModelConfig(name="t", provider="openai", model="m", api_key="$MY_KEY")
             assert cfg.resolve_api_key() == "secret123"
 
     def test_resolve_api_key_braces(self):
-        from hagent.agent.llm_config import ModelConfig
+        from hagent.agent.llm import ModelConfig
+
         with patch.dict(os.environ, {"MY_KEY": "secret456"}):
-            cfg = ModelConfig(name="t", provider="openai", model="m", api_key="${MY_KEY}")
+            cfg = ModelConfig(
+                name="t", provider="openai", model="m", api_key="${MY_KEY}"
+            )
             assert cfg.resolve_api_key() == "secret456"
 
     def test_resolve_api_key_literal(self):
-        from hagent.agent.llm_config import ModelConfig
+        from hagent.agent.llm import ModelConfig
+
         cfg = ModelConfig(name="t", provider="openai", model="m", api_key="literal-key")
         assert cfg.resolve_api_key() == "literal-key"
 
     def test_get_default_model_config(self):
-        from hagent.agent.llm_config import get_default_model_config
+        from hagent.agent.llm import get_default_model_config
+
         cfg = get_default_model_config()
         assert cfg.name is not None
         assert cfg.provider in {"openai", "anthropic", "ollama", "openai_compatible"}
 
     def test_list_available_models(self):
-        from hagent.agent.llm_config import list_available_models
+        from hagent.agent.llm import list_available_models
+
         models = list_available_models()
         assert isinstance(models, list)
         for m in models:
@@ -156,24 +173,29 @@ class TestLLMConfig:
             assert "provider" in m
 
     def test_unsupported_provider_raises(self):
-        from hagent.agent.llm_config import ModelConfig, _build_model
+        from hagent.agent.llm import ModelConfig
+
         cfg = ModelConfig(name="t", provider="unknown_provider", model="m")
         with pytest.raises(ValueError, match="không được hỗ trợ"):
-            from hagent.agent.llm_config import create_chat_model
+            from hagent.agent.llm import create_chat_model
+
             # Patch configs to return our bad config
-            with patch("hagent.agent.llm_config.get_default_model_config", return_value=cfg):
+            with patch(
+                "hagent.agent.llm.config.get_default_model_config",
+                return_value=cfg,
+            ):
                 create_chat_model()
 
-    def test_create_chat_model_openai_compatible(self, mock_llm_server, mock_llm_base_url):
+    def test_create_chat_model_openai_compatible(self, mock_llm_server):
         """Tạo model OpenAI-compatible kết nối mock server."""
-        from hagent.agent.llm_config import ModelConfig, _build_model
+        from hagent.agent.llm import ModelConfig, _build_model
 
         cfg = ModelConfig(
             name="ci-mock",
             provider="openai_compatible",
             model="mock-model",
             api_key="test-key",
-            base_url=mock_llm_base_url,
+            base_url=mock_llm_server.api_base_url,
         )
         model = _build_model("openai_compatible", cfg, "test-key", 0.0, 1024)
         assert model is not None
@@ -188,12 +210,14 @@ class TestAgentState:
     """Test AutoMLState schema."""
 
     def test_state_has_messages(self):
-        from hagent.agent.state import AutoMLState
+        from hagent.agent.orchestration import AutoMLState
+
         state: AutoMLState = {"messages": []}
         assert "messages" in state
 
     def test_dataset_context_typing(self):
-        from hagent.agent.state import DatasetContext
+        from hagent.agent.orchestration import DatasetContext
+
         ctx: DatasetContext = {
             "id": "ds_001",
             "name": "iris.csv",
@@ -206,7 +230,8 @@ class TestAgentState:
         assert ctx["problem_type"] == "classification"
 
     def test_job_context_typing(self):
-        from hagent.agent.state import JobContext
+        from hagent.agent.orchestration import JobContext
+
         ctx: JobContext = {
             "id": "job_001",
             "dataset_id": "ds_001",
@@ -228,41 +253,50 @@ class TestCoordinator:
     """Test coordinator routing và prompt loading."""
 
     def test_keyword_route_data_analyst(self):
-        from hagent.agent.coordinator import keyword_route
+        from hagent.agent.orchestration.coordinator import keyword_route
+
         assert keyword_route("Hiển thị danh sách dataset") == "data_analyst"
 
     def test_keyword_route_training(self):
-        from hagent.agent.coordinator import keyword_route
+        from hagent.agent.orchestration.coordinator import keyword_route
+
         assert keyword_route("Bắt đầu huấn luyện model") == "training_monitor"
 
     def test_keyword_route_evaluator(self):
-        from hagent.agent.coordinator import keyword_route
+        from hagent.agent.orchestration.coordinator import keyword_route
+
         assert keyword_route("So sánh kết quả các model") == "evaluator"
 
     def test_keyword_route_model_selector(self):
-        from hagent.agent.coordinator import keyword_route
+        from hagent.agent.orchestration.coordinator import keyword_route
+
         assert keyword_route("Có những thuật toán nào khả dụng?") == "model_selector"
 
     def test_keyword_route_no_match(self):
-        from hagent.agent.coordinator import keyword_route
+        from hagent.agent.orchestration.coordinator import keyword_route
+
         result = keyword_route("Xin chào!")
         # Có thể None hoặc match nhẹ — miễn không crash
         assert result is None or isinstance(result, str)
 
     def test_parse_response_route(self):
-        from hagent.agent.coordinator import parse_coordinator_response
-        target, text = parse_coordinator_response("[ROUTE:data_analyst] Phân tích dataset")
+        from hagent.agent.orchestration.coordinator import parse_coordinator_response
+
+        target, text = parse_coordinator_response(
+            "[ROUTE:data_analyst] Phân tích dataset"
+        )
         assert target == "data_analyst"
         assert "Phân tích" in text
 
     def test_parse_response_direct(self):
-        from hagent.agent.coordinator import parse_coordinator_response
+        from hagent.agent.orchestration.coordinator import parse_coordinator_response
+
         target, text = parse_coordinator_response("Xin chào, tôi là HAgent")
         assert target is None
         assert "HAgent" in text
 
     def test_world_model_formatting(self):
-        from hagent.agent.coordinator import _format_world_model_summary
+        from hagent.agent.orchestration.coordinator import _format_world_model_summary
 
         # Empty
         assert "Chưa có" in _format_world_model_summary(None)
@@ -277,7 +311,8 @@ class TestCoordinator:
         assert "completed" in summary
 
     def test_load_system_prompt(self):
-        from hagent.agent.coordinator import _load_system_prompt
+        from hagent.agent.orchestration.coordinator import _load_system_prompt
+
         prompt = _load_system_prompt(None)
         assert isinstance(prompt, str)
         assert "Chưa có" in prompt  # world model empty placeholder
@@ -293,15 +328,18 @@ class TestAutoMLTools:
 
     def test_all_tools_registered(self):
         from hagent.agent.tools.automl_tools import ALL_TOOLS
+
         assert len(ALL_TOOLS) >= 5
 
     def test_tool_names_unique(self):
         from hagent.agent.tools.automl_tools import ALL_TOOLS
+
         names = [t.name for t in ALL_TOOLS]
         assert len(names) == len(set(names)), f"Duplicate tool names: {names}"
 
     def test_tools_have_descriptions(self):
         from hagent.agent.tools.automl_tools import ALL_TOOLS
+
         for tool in ALL_TOOLS:
             assert tool.description, f"Tool '{tool.name}' thiếu description"
             assert len(tool.description) > 10
@@ -309,30 +347,34 @@ class TestAutoMLTools:
     def test_tool_registries(self):
         from hagent.agent.tools.automl_tools import (
             DATASET_TOOLS,
-            TRAINING_TOOLS,
             MODEL_TOOLS,
             SYSTEM_TOOLS,
+            TRAINING_TOOLS,
         )
+
         assert len(DATASET_TOOLS) >= 2
         assert len(TRAINING_TOOLS) >= 2
         assert len(MODEL_TOOLS) >= 1
         assert len(SYSTEM_TOOLS) >= 1
 
     def test_cache_functions(self):
-        from hagent.agent.tools.automl_tools import (
-            _cache_key,
-            _get_cached,
-            _set_cache,
-            _cache,
-        )
-        _cache.clear()
+        # AUDIT-004: các hàm _cache/_cache_key/_get_cached/_set_cache riêng lẻ
+        # đã bị gộp có chủ đích vào ToolCache tập trung (hagent.agent.tools.cache);
+        # test kiểm tra cùng hành vi miss → set → hit qua API hiện hành.
+        from hagent.agent.tools.cache import get_tool_cache, reset_cache
 
-        key = _cache_key("/test", {"a": 1})
-        assert _get_cached(key) is None
+        reset_cache()
+        try:
+            cache = get_tool_cache()
+            cache.clear()
 
-        _set_cache(key, {"result": "ok"})
-        cached = _get_cached(key)
-        assert cached == {"result": "ok"}
+            assert cache.get("/test", {"a": 1}) is None
+
+            cache.set("/test", {"a": 1}, {"result": "ok"})
+            cached = cache.get("/test", {"a": 1})
+            assert cached == {"result": "ok"}
+        finally:
+            reset_cache()
 
 
 # ══════════════════════════════════════════════════════════
@@ -344,26 +386,30 @@ class TestAgentGraph:
     """Test LangGraph StateGraph build."""
 
     def test_build_graph(self):
-        from hagent.agent.graph import build_automl_graph
+        from hagent.agent.orchestration.graph import build_automl_graph
+
         graph = build_automl_graph()
         assert graph is not None
 
     def test_graph_compiles(self):
-        from hagent.agent.graph import build_automl_graph
+        from hagent.agent.orchestration.graph import build_automl_graph
+
         graph = build_automl_graph()
         compiled = graph.compile()
         assert compiled is not None
 
     def test_should_continue_no_tool_calls(self):
-        from hagent.agent.graph import should_continue
         from langchain_core.messages import AIMessage
+
+        from hagent.agent.orchestration.graph import should_continue
 
         state = {"messages": [AIMessage(content="Hello")]}
         assert should_continue(state) == "end"
 
     def test_should_continue_with_tool_calls(self):
-        from hagent.agent.graph import should_continue
         from langchain_core.messages import AIMessage
+
+        from hagent.agent.orchestration.graph import should_continue
 
         msg = AIMessage(
             content="",
@@ -378,6 +424,202 @@ class TestAgentGraph:
 # ══════════════════════════════════════════════════════════
 
 
+class _FakeProcess:
+    """Process double tối thiểu để kiểm tra ownership và cleanup."""
+
+    def __init__(self):
+        self.returncode = None
+        self.terminated = False
+        self.communicated = False
+
+    def poll(self):
+        return self.returncode
+
+    def terminate(self):
+        self.terminated = True
+        self.returncode = 0
+
+    def wait(self, timeout):
+        del timeout
+        return self.returncode
+
+    def kill(self):
+        self.returncode = -1
+
+    def communicate(self):
+        self.communicated = True
+        return b"", b""
+
+
+class _HungProcess(_FakeProcess):
+    """Process double chỉ dừng sau kill để khóa nhánh timeout."""
+
+    def __init__(self):
+        super().__init__()
+        self.events = []
+        self.killed = False
+
+    def terminate(self):
+        self.terminated = True
+        self.events.append("terminate")
+
+    def wait(self, timeout):
+        self.events.append(("wait", timeout))
+        if not self.killed:
+            raise subprocess.TimeoutExpired(cmd="mock-llm", timeout=timeout)
+        return self.returncode
+
+    def kill(self):
+        self.killed = True
+        self.returncode = -1
+        self.events.append("kill")
+
+    def communicate(self):
+        self.events.append("communicate")
+        return super().communicate()
+
+
+def _raise_runtime_error(message):
+    raise RuntimeError(message)
+
+
+class TestMockLlmFixtureLifecycle:
+    """Khóa contract endpoint, retry và thu hồi process của fixture."""
+
+    def test_endpoint_is_immutable(self):
+        import conftest
+
+        endpoint = conftest.MockLlmEndpoint(
+            root_url="http://127.0.0.1:50001",
+            api_base_url="http://127.0.0.1:50001/v1",
+        )
+
+        with pytest.raises(FrozenInstanceError):
+            endpoint.root_url = "http://127.0.0.1:50002"
+
+    def test_readiness_exception_reaps_process(self, monkeypatch):
+        import conftest
+
+        process = _FakeProcess()
+        monkeypatch.setattr(conftest, "_allocate_loopback_port", lambda: 50001)
+        monkeypatch.setattr(
+            conftest.subprocess, "Popen", lambda *args, **kwargs: process
+        )
+        monkeypatch.setattr(
+            conftest,
+            "_wait_until_ready",
+            lambda *args, **kwargs: _raise_runtime_error("readiness lỗi"),
+        )
+
+        with pytest.raises(RuntimeError, match="readiness lỗi"):
+            conftest._start_mock_server()
+
+        assert process.terminated is True
+        assert process.communicated is True
+
+    def test_failed_attempt_is_reaped_before_retry(self, monkeypatch):
+        import conftest
+
+        first_process = _FakeProcess()
+        second_process = _FakeProcess()
+        processes = iter([first_process, second_process])
+        ports = iter([50001, 50002])
+        readiness = iter([False, True])
+        monkeypatch.setattr(conftest, "_allocate_loopback_port", lambda: next(ports))
+        monkeypatch.setattr(
+            conftest.subprocess, "Popen", lambda *args, **kwargs: next(processes)
+        )
+        monkeypatch.setattr(
+            conftest, "_wait_until_ready", lambda *args, **kwargs: next(readiness)
+        )
+
+        process, endpoint = conftest._start_mock_server()
+
+        assert process is second_process
+        assert endpoint.root_url.endswith(":50002")
+        assert first_process.terminated is True
+        assert first_process.communicated is True
+        assert second_process.terminated is False
+
+    def test_all_attempts_fail_with_bounded_cleanup(self, monkeypatch):
+        import conftest
+
+        processes = [_FakeProcess() for _ in range(conftest.MOCK_SERVER_START_ATTEMPTS)]
+        process_iter = iter(processes)
+        port_iter = iter(range(50001, 50001 + len(processes)))
+        monkeypatch.setattr(
+            conftest, "_allocate_loopback_port", lambda: next(port_iter)
+        )
+        monkeypatch.setattr(
+            conftest.subprocess, "Popen", lambda *args, **kwargs: next(process_iter)
+        )
+        monkeypatch.setattr(
+            conftest, "_wait_until_ready", lambda *args, **kwargs: False
+        )
+        monkeypatch.setattr(conftest.pytest, "fail", _raise_runtime_error)
+
+        with pytest.raises(RuntimeError, match="3 lần thử"):
+            conftest._start_mock_server()
+
+        assert all(process.terminated for process in processes)
+        assert all(process.communicated for process in processes)
+
+    def test_process_creation_error_uses_retry_budget(self, monkeypatch):
+        import conftest
+
+        calls = 0
+
+        def fail_to_start(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            raise OSError("lỗi tạo process")
+
+        monkeypatch.setattr(conftest, "_allocate_loopback_port", lambda: 50001)
+        monkeypatch.setattr(conftest.subprocess, "Popen", fail_to_start)
+        monkeypatch.setattr(conftest.pytest, "fail", _raise_runtime_error)
+
+        with pytest.raises(RuntimeError, match="3 lần thử"):
+            conftest._start_mock_server()
+
+        assert calls == conftest.MOCK_SERVER_START_ATTEMPTS
+
+    def test_fixture_teardown_reaps_successful_process(self, monkeypatch):
+        import conftest
+
+        process = _FakeProcess()
+        endpoint = conftest.MockLlmEndpoint(
+            root_url="http://127.0.0.1:50001",
+            api_base_url="http://127.0.0.1:50001/v1",
+        )
+        monkeypatch.setattr(conftest, "_start_mock_server", lambda: (process, endpoint))
+        fixture = conftest.mock_llm_server.__wrapped__(None)
+
+        assert next(fixture) is endpoint
+        with pytest.raises(StopIteration):
+            next(fixture)
+
+        assert process.terminated is True
+        assert process.communicated is True
+
+    def test_stop_process_kills_child_after_bounded_timeout(self):
+        import conftest
+
+        process = _HungProcess()
+
+        conftest._stop_process(process)
+
+        timeout = conftest.MOCK_SERVER_STOP_TIMEOUT_SECONDS
+        assert process.events == [
+            "terminate",
+            ("wait", timeout),
+            "kill",
+            ("wait", timeout),
+            "communicate",
+        ]
+        assert process.killed is True
+        assert process.communicated is True
+
+
 class TestIntegrationMockLLM:
     """Integration test — agent + mock LLM server."""
 
@@ -385,7 +627,7 @@ class TestIntegrationMockLLM:
     async def test_mock_llm_health(self, mock_llm_server):
         """Mock LLM server phản hồi health check."""
         async with httpx.AsyncClient() as client:
-            resp = await client.get(f"http://127.0.0.1:11435/health")
+            resp = await client.get(f"{mock_llm_server.root_url}/health")
             assert resp.status_code == 200
             data = resp.json()
             assert data["status"] == "ok"
@@ -394,7 +636,7 @@ class TestIntegrationMockLLM:
     async def test_mock_llm_models(self, mock_llm_server):
         """Mock LLM server liệt kê models."""
         async with httpx.AsyncClient() as client:
-            resp = await client.get(f"http://127.0.0.1:11435/v1/models")
+            resp = await client.get(f"{mock_llm_server.api_base_url}/models")
             assert resp.status_code == 200
             data = resp.json()
             assert len(data["data"]) >= 1
@@ -404,7 +646,7 @@ class TestIntegrationMockLLM:
         """Mock LLM server trả về chat completion."""
         async with httpx.AsyncClient() as client:
             resp = await client.post(
-                f"http://127.0.0.1:11435/v1/chat/completions",
+                f"{mock_llm_server.api_base_url}/chat/completions",
                 json={
                     "model": "mock-model",
                     "messages": [{"role": "user", "content": "Xin chào"}],
@@ -430,10 +672,12 @@ class TestIntegrationMockLLM:
         ]
         async with httpx.AsyncClient() as client:
             resp = await client.post(
-                f"http://127.0.0.1:11435/v1/chat/completions",
+                f"{mock_llm_server.api_base_url}/chat/completions",
                 json={
                     "model": "mock-model",
-                    "messages": [{"role": "user", "content": "Hiển thị danh sách dataset"}],
+                    "messages": [
+                        {"role": "user", "content": "Hiển thị danh sách dataset"}
+                    ],
                     "tools": tools,
                 },
             )
@@ -441,7 +685,10 @@ class TestIntegrationMockLLM:
             data = resp.json()
             choice = data["choices"][0]
             assert choice["finish_reason"] == "tool_calls"
-            assert choice["message"]["tool_calls"][0]["function"]["name"] == "list_datasets"
+            assert (
+                choice["message"]["tool_calls"][0]["function"]["name"]
+                == "list_datasets"
+            )
 
 
 # ══════════════════════════════════════════════════════════
@@ -457,7 +704,7 @@ def _ollama_available() -> bool:
     try:
         resp = httpx.get(f"{OLLAMA_URL}/api/tags", timeout=3)
         return resp.status_code == 200
-    except Exception:
+    except httpx.HTTPError:
         return False
 
 
@@ -485,7 +732,12 @@ class TestOllamaIntegration:
                 f"{OLLAMA_URL}/api/chat",
                 json={
                     "model": OLLAMA_MODEL,
-                    "messages": [{"role": "user", "content": "What is 2+2? Answer with just the number."}],
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": "What is 2+2? Answer with just the number.",
+                        }
+                    ],
                     "stream": False,
                 },
             )
@@ -517,8 +769,8 @@ class TestOllamaIntegration:
     @pytest.mark.asyncio
     async def test_ollama_via_langchain(self):
         """Gọi Ollama qua LangChain ChatOllama — đúng integration path."""
-        from langchain_ollama import ChatOllama
         from langchain_core.messages import HumanMessage
+        from langchain_ollama import ChatOllama
 
         llm = ChatOllama(
             model=OLLAMA_MODEL,
@@ -526,16 +778,19 @@ class TestOllamaIntegration:
             temperature=0.0,
             num_predict=100,
         )
-        response = await llm.ainvoke([HumanMessage(content="What is machine learning? Answer in one sentence.")])
+        response = await llm.ainvoke(
+            [HumanMessage(content="What is machine learning? Answer in one sentence.")]
+        )
         content = response.content
         print(f"✓ LangChain+Ollama: {content[:200]}")
         assert len(content) > 10, "Response quá ngắn"
 
     @pytest.mark.asyncio
-    async def test_ollama_via_llm_config(self):
-        """Gọi Ollama qua llm_config factory — đúng production path."""
-        from hagent.agent.llm_config import ModelConfig, _build_model
+    async def test_ollama_via_llm_package(self):
+        """Gọi Ollama qua package factory — đúng production path."""
         from langchain_core.messages import HumanMessage
+
+        from hagent.agent.llm import ModelConfig, _build_model
 
         cfg = ModelConfig(
             name="ollama-ci",
@@ -548,15 +803,16 @@ class TestOllamaIntegration:
         llm = _build_model("ollama", cfg, None, 0.0, 100)
         response = await llm.ainvoke([HumanMessage(content="Say hello")])
         content = response.content
-        print(f"✓ llm_config+Ollama: {content[:200]}")
+        print(f"✓ llm package+Ollama: {content[:200]}")
         assert len(content) > 0
 
     @pytest.mark.asyncio
     async def test_ollama_coordinator_prompt(self):
         """Coordinator system prompt + Ollama model = phản hồi hợp lệ."""
-        from hagent.agent.llm_config import ModelConfig, _build_model
-        from hagent.agent.coordinator import _load_system_prompt
         from langchain_core.messages import HumanMessage, SystemMessage
+
+        from hagent.agent.llm import ModelConfig, _build_model
+        from hagent.agent.orchestration.coordinator import _load_system_prompt
 
         system_prompt = _load_system_prompt(None)
         cfg = ModelConfig(
@@ -568,10 +824,12 @@ class TestOllamaIntegration:
             max_tokens=200,
         )
         llm = _build_model("ollama", cfg, None, 0.0, 200)
-        response = await llm.ainvoke([
-            SystemMessage(content=system_prompt),
-            HumanMessage(content="Xin chào"),
-        ])
+        response = await llm.ainvoke(
+            [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content="Xin chào"),
+            ]
+        )
         content = response.content
         print(f"✓ Coordinator+Ollama: {content[:300]}")
         assert len(content) > 0, "Coordinator không trả lời"
@@ -580,8 +838,9 @@ class TestOllamaIntegration:
     async def test_ollama_response_latency(self):
         """Đo latency — đảm bảo response trong giới hạn chấp nhận được."""
         import time
-        from langchain_ollama import ChatOllama
+
         from langchain_core.messages import HumanMessage
+        from langchain_ollama import ChatOllama
 
         llm = ChatOllama(
             model=OLLAMA_MODEL,
@@ -597,4 +856,3 @@ class TestOllamaIntegration:
         print(f"✓ Latency: {elapsed:.2f}s (response: {response.content[:50]})")
         # CI runner chậm hơn local — cho phép tới 30s
         assert elapsed < 30, f"Response quá chậm: {elapsed:.2f}s"
-

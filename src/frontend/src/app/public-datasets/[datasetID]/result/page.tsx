@@ -1,6 +1,6 @@
 "use client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState } from "react";
 import { AlertCircle, CheckCircle, LoaderCircle } from "lucide-react";
 
 import { useSession } from "next-auth/react";
@@ -15,18 +15,15 @@ type Props = {
 };
 
 const ResultPage = ({ params }: Props) => {
-  const { post } = useApi();
+  const { postIdempotent } = useApi();
 
   const [datasetID, setDatasetID] = useState<string | null>(null);
   const [config, setConfig] = useState<any>(null);
-  const [result, setResult] = useState<any>(null);
-
   const [error, setError] = useState<string | null>(null);
   const [isClient, setIsClient] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
   const { data: session } = useSession();
-  const [jobStatus, setJobStatus] = useState<string | null>(null);
   const router = useRouter();
 
   useEffect(() => {
@@ -103,14 +100,8 @@ const ResultPage = ({ params }: Props) => {
 
       // api 33 -> gửi dữ liệu lên tiến hành train
       try {
-        console.log(JSON.stringify(requestBody));
-
-        const resultData = await post(`/v2/auto/jobs/training`, requestBody);
-
-        setResult(resultData);
-        setJobStatus(resultData.status || null);
-      } catch (err: any) {
-        console.log("Lỗi khi gọi API train:", err);
+        await postIdempotent(`/v2/auto/jobs/training`, requestBody);
+      } catch {
         setError(
           "Có lỗi xảy ra trong quá trình huấn luyện, vui lòng xem lại cấu hình thuộc tính.",
         );
@@ -120,7 +111,7 @@ const ResultPage = ({ params }: Props) => {
     };
 
     trainModel();
-  }, [config]);
+  }, [config, datasetID, postIdempotent, session?.user?.id]);
 
   if (error) {
     return (

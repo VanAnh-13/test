@@ -9,14 +9,13 @@ tools that call the HAutoML REST API directly.
 from __future__ import annotations
 
 import json
-import logging
-import time
 from typing import Any
 
 import httpx
+import structlog
 from langchain_core.tools import tool
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 # ── Config-driven helpers ────────────────────────────────
@@ -25,63 +24,31 @@ logger = logging.getLogger(__name__)
 def _get_base_url() -> str:
     """Lấy HAutoML base URL từ config hautoml.base_url."""
     from hagent.bridge.config import get_hautoml_config
+
     return get_hautoml_config()["base_url"].rstrip("/")
 
 
 def _get_timeout() -> int:
     """Lấy timeout từ agent config."""
     from hagent.bridge.config import get_agent_config
+
     return get_agent_config().get("timeout_seconds", 120)
 
 
 def _auth_headers(token: str | None = None) -> dict[str, str]:
     """Build auth headers — token từ tham số hoặc env var."""
     import os
+
     tok = token or os.getenv("USER_TOKEN", "")
     if tok:
         return {"Authorization": f"Bearer {tok}"}
     return {}
 
 
-# ── Tool result cache ────────────────────────────────────
+# ── Tool result cache (Centralized TTLCache) ──────────────
 
-_cache: dict[str, tuple[float, Any]] = {}
-
-
-def _get_cache_config() -> dict:
-    from hagent.bridge.config import get_cache_config
-    return get_cache_config()
-
-
-def _cache_key(path: str, params: dict | None) -> str:
-    return f"{path}:{json.dumps(params or {}, sort_keys=True)}"
-
-
-def _get_cached(key: str) -> Any | None:
-    """Trả về cached result nếu còn hiệu lực."""
-    cfg = _get_cache_config()
-    if not cfg.get("enabled", False):
-        return None
-    entry = _cache.get(key)
-    if entry and (time.time() - entry[0]) < cfg.get("ttl_seconds", 300):
-        logger.debug("Cache hit: %s", key)
-        return entry[1]
-    return None
-
-
-def _set_cache(key: str, value: Any) -> None:
-    """Lưu kết quả vào cache."""
-    cfg = _get_cache_config()
-    if not cfg.get("enabled", False):
-        return
-    # Evict nếu quá max_entries
-    max_entries = cfg.get("max_entries", 100)
-    if len(_cache) >= max_entries:
-        # Xóa entry cũ nhất
-        oldest_key = min(_cache, key=lambda k: _cache[k][0])
-        del _cache[oldest_key]
-    _cache[key] = (time.time(), value)
-
+from hagent.agent.tools.cache import get_tool_cache
+from hagent.core.types import ToolResponse
 
 # ── HTTP helpers ─────────────────────────────────────────
 
@@ -93,10 +60,10 @@ async def _api_get(
     token: str | None = None,
     use_cache: bool = True,
 ) -> dict[str, Any]:
-    """GET request tới HAutoML API."""
+    """GET request tới HAutoML API (hỗ trợ Centralized ToolCache)."""
+    p = params or {}
     if use_cache:
-        key = _cache_key(path, params)
-        cached = _get_cached(key)
+        cached = get_tool_cache().get(path, p)
         if cached is not None:
             return cached
 
@@ -107,7 +74,7 @@ async def _api_get(
         result = resp.json()
 
     if use_cache:
-        _set_cache(_cache_key(path, params), result)
+        get_tool_cache().set(path, p, result)
     return result
 
 
@@ -115,25 +82,35 @@ async def _api_post(
     path: str,
     *,
     params: dict | None = None,
-    data: dict | None = None,
+    data: Any | None = None,
     token: str | None = None,
+    idempotency_key: str | None = None,
 ) -> dict[str, Any]:
     """POST request tới HAutoML API (không cache mutations)."""
     url = f"{_get_base_url()}{path}"
+    headers = _auth_headers(token)
+    if idempotency_key:
+        headers["Idempotency-Key"] = idempotency_key
     async with httpx.AsyncClient(timeout=_get_timeout()) as client:
-        resp = await client.post(url, params=params, json=data, headers=_auth_headers(token))
+        resp = await client.post(url, params=params, json=data, headers=headers)
         resp.raise_for_status()
         return resp.json()
 
 
 def _result(data: Any) -> str:
-    """Serialize kết quả tool thành JSON string."""
+    """Serialize kết quả tool thành JSON string (hỗ trợ Pydantic models)."""
+    if hasattr(data, "model_dump_json"):
+        return data.model_dump_json()
     return json.dumps(data, ensure_ascii=False, default=str)
 
 
 def _error(exc: Exception) -> str:
-    """Serialize lỗi thành JSON string."""
-    return json.dumps({"error": str(exc)}, ensure_ascii=False)
+    """Serialize lỗi thành typed JSON string thông qua ToolResponse."""
+    return ToolResponse(
+        success=False,
+        error=str(exc),
+        meta={"exception_type": type(exc).__name__},
+    ).model_dump_json()
 
 
 # ── Dataset Tools ────────────────────────────────────────
@@ -157,7 +134,7 @@ async def list_datasets(user_id: str, token: str | None = None) -> str:
             token=token,
         )
         return _result(result)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         return _error(exc)
 
 
@@ -179,7 +156,7 @@ async def get_dataset_info(dataset_id: str, token: str | None = None) -> str:
             token=token,
         )
         return _result(result)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         return _error(exc)
 
 
@@ -196,7 +173,7 @@ async def get_available_models(problem_type: str) -> str:
     try:
         result = await _api_get(f"/api/v1/available-models/{problem_type}")
         return _result(result)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         return _error(exc)
 
 
@@ -229,7 +206,7 @@ async def _fetch_feature_list(
                         names.append(str(name))
             if names:
                 return names
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         logger.debug("v2 features fetch failed: %s", exc)
 
     # Legacy / dataset info
@@ -248,7 +225,7 @@ async def _fetch_feature_list(
                 or []
             )
             return [str(x) for x in feats if x]
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         logger.debug("legacy features fetch failed: %s", exc)
     return []
 
@@ -259,6 +236,7 @@ async def start_training(
     dataset_id: str,
     problem_type: str,
     target_column: str,
+    idempotency_key: str,
     models: list[str] | None = None,
     metric: str | None = None,
     time_limit: int = 300,
@@ -281,6 +259,7 @@ async def start_training(
         time_limit: Giới hạn thời gian (giây), mặc định 300s.
         search_algorithm: grid_search | bayesian_search | genetic_algorithm | ...
         list_feature: Feature columns (optional; auto-resolved if missing).
+        idempotency_key: Action digest ổn định do runtime cấp cho lần train này.
         token: JWT token (tùy chọn).
 
     Returns:
@@ -324,42 +303,49 @@ async def start_training(
         if models:
             body["config"]["models"] = models
 
-        # Primary: distributed training API (creates job in Mongo + Kafka)
-        try:
-            result = await _api_post(
-                "/v2/auto/jobs/training",
-                data=body,
-                token=token,
-            )
-            return _result(result)
-        except Exception as v2_exc:
-            logger.warning(
-                "v2 /jobs/training failed (%s); trying legacy train endpoint",
-                v2_exc,
-            )
-
-        # Legacy fallback (expects different shape — best effort for older deploys)
-        legacy = {
-            "data": [],
-            "config": {
-                "choose": search,
-                "metric_sort": metric_sort,
-                "list_feature": features,
-                "target": target_column,
-                "problem_type": problem_type,
-                "search_algorithm": search,
-                "max_time": int(time_limit or 300),
-                "models": models or [],
-            },
-        }
+        # Mutation chỉ đi qua một endpoint; lỗi không được phép tạo job thứ hai.
         result = await _api_post(
-            "/train-from-requestbody-json/",
-            params={"userId": user_id, "id_data": dataset_id},
-            data=legacy,
+            "/v2/auto/jobs/training",
+            data=body,
+            token=token,
+            idempotency_key=idempotency_key,
+        )
+        return _result(result)
+    except Exception as exc:  # noqa: BLE001
+        return _error(exc)
+
+
+@tool
+async def lookup_training_job(
+    idempotency_key: str,
+    token: str | None = None,
+) -> str:
+    """Đối soát training job bằng action digest đã dùng khi submit."""
+    try:
+        result = await _api_get(
+            f"/v2/auto/jobs/by-idempotency/{idempotency_key}",
+            token=token,
+            use_cache=False,
+        )
+        return _result(result)
+    except Exception as exc:  # noqa: BLE001
+        return _error(exc)
+
+
+@tool
+async def get_training_results(
+    job_ids: list[str],
+    token: str | None = None,
+) -> str:
+    """Đọc training evidence typed của các job thuộc người dùng hiện tại."""
+    try:
+        result = await _api_post(
+            "/v2/auto/jobs/results",
+            data=job_ids,
             token=token,
         )
         return _result(result)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         return _error(exc)
 
 
@@ -405,7 +391,7 @@ async def get_features(
                         **{k: v for k, v in result.items() if k != "features"},
                     }
                 )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             logger.debug("v2 get_features failed: %s", exc)
 
         # Fallback: dataset info
@@ -431,7 +417,7 @@ async def get_features(
                 }
             )
         return _result(result)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         return _error(exc)
 
 
@@ -450,10 +436,10 @@ async def get_metrics(problem_type: str) -> str:
         return _result(
             {
                 "problem_type": problem_type,
-                "metrics": result if isinstance(result, list) else result,
+                "metrics": result,
             }
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         return _error(exc)
 
 
@@ -477,9 +463,13 @@ async def preview_data(
             token=token,
         )
         if isinstance(result, dict):
-            result = {**result, "dataset_id": dataset_id, "id": result.get("id", dataset_id)}
+            result = {
+                **result,
+                "dataset_id": dataset_id,
+                "id": result.get("id", dataset_id),
+            }
         return _result(result)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         return _error(exc)
 
 
@@ -507,7 +497,7 @@ async def get_world_state(user_id: str, token: str | None = None) -> str:
                 "jobs": {},
             }
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         return _error(exc)
 
 
@@ -529,7 +519,7 @@ async def get_job_info(job_id: str, token: str | None = None) -> str:
             token=token,
         )
         return _result(result)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         return _error(exc)
 
 
@@ -551,7 +541,7 @@ async def list_jobs(user_id: str, token: str | None = None) -> str:
             token=token,
         )
         return _result(result)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         return _error(exc)
 
 
@@ -565,7 +555,7 @@ async def check_system_health() -> str:
     try:
         result = await _api_get("/home", use_cache=False)
         return _result({"status": "ok", **result})
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         return _result({"status": "error", "error": str(exc)})
 
 
@@ -585,14 +575,14 @@ async def cancel_job(job_id: str, token: str | None = None) -> str:
                 token=token,
             )
             return _result(result)
-        except Exception:
+        except Exception:  # noqa: BLE001
             result = await _api_post(
                 "/cancel-job",
                 params={"id": job_id},
                 token=token,
             )
             return _result(result)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         return _error(exc)
 
 
@@ -637,7 +627,7 @@ async def predict_batch(
             else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
         async with httpx.AsyncClient(timeout=_get_timeout()) as client:
-            with open(file_path, "rb") as f:
+            with open(file_path, "rb") as f:  # noqa: ASYNC230
                 resp = await client.post(
                     url,
                     headers=_auth_headers(token),
@@ -656,7 +646,7 @@ async def predict_batch(
                     "note": "Binary prediction file returned by API",
                 }
             )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         return _error(exc)
 
 

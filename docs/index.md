@@ -109,7 +109,7 @@ cp src/frontend/temp.env src/frontend/.env
 ```bash
 pip install -r requirements.txt # Cài đặt các thư viện cần thiết
 
-python app.py # Khởi chạỵ API server
+python -m server.application # Khởi chạy API server
 python -m cluster.worker # Kích hoạt worker xử lý tác vụ
 ```
 

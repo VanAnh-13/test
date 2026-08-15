@@ -78,7 +78,7 @@ const TrainingHistory = () => {
     };
 
     fetchTrainingJobs();
-  }, [session?.user?.id]);
+  }, [post, session?.user?.id]);
 
   const handleSortByDate = () => {
     const sortedJobs = [...jobs].sort((a, b) => {

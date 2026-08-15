@@ -47,7 +47,8 @@ class FakeOutcomeModel:
         self.calls += 1
         self.seen_dataset_meta.append(dataset_meta)
         return OutcomePrediction(
-            mean=float(self.score_fn(params)), std=self.std,
+            mean=float(self.score_fn(params)),
+            std=self.std,
             meta={"predictor": "fake"},
         )
 
@@ -137,9 +138,9 @@ class TestCemConfigPlanner:
         explore = CemConfigV1Planner({"seed": 0, "exploration_weight": 0.5})
         m = VarStd(lambda p: 0)
         assert (
-            greedy.plan_campaign_configs(base_params={}, outcome_model=m, n_return=1)[0][
-                "search_algorithm"
-            ]
+            greedy.plan_campaign_configs(base_params={}, outcome_model=m, n_return=1)[
+                0
+            ]["search_algorithm"]
             != "genetic_algorithm"
         )
         assert (
@@ -169,7 +170,11 @@ class TestCemConfigPlanner:
 
     def test_respects_custom_space(self):
         planner = CemConfigV1Planner(
-            {"search_algorithms": ["grid_search"], "time_limit_options": [42], "seed": 0}
+            {
+                "search_algorithms": ["grid_search"],
+                "time_limit_options": [42],
+                "seed": 0,
+            }
         )
         out = planner.plan_campaign_configs(
             base_params={}, outcome_model=FakeOutcomeModel(_bayes600_best), n_return=2
@@ -245,7 +250,9 @@ class TestModelSubsetDim:
 
     def test_categorical_dims_from_config(self):
         def cv_score(params):
-            return _bayes600_best(params) + (0.1 if params.get("cv_folds") == 5 else 0.0)
+            return _bayes600_best(params) + (
+                0.1 if params.get("cv_folds") == 5 else 0.0
+            )
 
         planner = CemConfigV1Planner(
             {"seed": 0, "categorical_dims": {"cv_folds": [3, 5, 10]}}
@@ -312,7 +319,9 @@ class TestBuilderIntegration:
         model = FakeOutcomeModel(_bayes600_best)
         camp = run(
             build_campaign(
-                GOAL, user_id="u1", config={"n_job_candidates": 4},
+                GOAL,
+                user_id="u1",
+                config={"n_job_candidates": 4},
                 outcome_model=model,
             )
         )
@@ -347,7 +356,9 @@ class TestBuilderIntegration:
         """outcome_model=None phải tắt hẳn — không rơi về checkpoint đĩa."""
         camp = run(
             build_campaign(
-                GOAL, user_id="u1", config={"n_job_candidates": 3},
+                GOAL,
+                user_id="u1",
+                config={"n_job_candidates": 3},
                 outcome_model=None,
             )
         )
@@ -358,7 +369,9 @@ class TestBuilderIntegration:
         rng = np.random.default_rng(0)
         samples = []
         for _ in range(120):
-            algo = str(rng.choice(["grid_search", "bayesian_search", "genetic_algorithm"]))
+            algo = str(
+                rng.choice(["grid_search", "bayesian_search", "genetic_algorithm"])
+            )
             t = int(rng.choice([180, 300, 600]))
             samples.append(
                 {
@@ -377,7 +390,9 @@ class TestBuilderIntegration:
         head = train_outcome_head(samples, config=dict(HEAD_CFG), epochs=80, seed=0)
         camp = run(
             build_campaign(
-                GOAL, user_id="u1", config={"n_job_candidates": 3},
+                GOAL,
+                user_id="u1",
+                config={"n_job_candidates": 3},
                 outcome_model=head,
             )
         )

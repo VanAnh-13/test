@@ -10,10 +10,12 @@ Checkpoint: thư mục chứa member_{i}.npz. is_ready khi ≥1 member sẵn sà
 
 from __future__ import annotations
 
-import logging
 import math
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any
+
+import structlog
 
 from hagent.world.predictor.outcome_head_v1 import (
     OutcomeHeadV1,
@@ -21,7 +23,7 @@ from hagent.world.predictor.outcome_head_v1 import (
     train_outcome_head,
 )
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 _MEMBER_PREFIX = "member_"
 
@@ -33,7 +35,7 @@ class OutcomeEnsemble:
         self.config = dict(config or {})
         self.k = max(1, int(self.config.get("k", 5)))
         self.checkpoint_dir = self.config.get("checkpoint_dir")
-        self.members: List[OutcomeHeadV1] = []
+        self.members: list[OutcomeHeadV1] = []
 
         if self.checkpoint_dir:
             self._try_load(str(self.checkpoint_dir))
@@ -44,7 +46,7 @@ class OutcomeEnsemble:
     def is_ready(self) -> bool:
         return any(m.is_ready for m in self.members)
 
-    def _member_config(self) -> dict:
+    def member_config(self) -> dict:
         cfg = dict(self.config)
         cfg.pop("checkpoint_dir", None)
         cfg.pop("checkpoint_path", None)
@@ -56,9 +58,9 @@ class OutcomeEnsemble:
         if not d.is_dir():
             logger.info("Outcome ensemble checkpoint dir missing: %s", directory)
             return
-        loaded: List[OutcomeHeadV1] = []
+        loaded: list[OutcomeHeadV1] = []
         for p in sorted(d.glob(f"{_MEMBER_PREFIX}*.npz")):
-            cfg = self._member_config()
+            cfg = self.member_config()
             cfg["checkpoint_path"] = str(p)
             head = OutcomeHeadV1(cfg)
             if head.is_ready:
@@ -81,10 +83,10 @@ class OutcomeEnsemble:
 
     def predict(
         self,
-        params: Dict[str, Any],
-        dataset_meta: Dict[str, Any] | None = None,
+        params: dict[str, Any],
+        dataset_meta: dict[str, Any] | None = None,
         z: Sequence[float] | None = None,
-    ) -> Optional[OutcomePrediction]:
+    ) -> OutcomePrediction | None:
         preds = [
             p
             for m in self.members
@@ -114,7 +116,7 @@ class OutcomeEnsemble:
 
 
 def train_outcome_ensemble(
-    samples: List[Dict[str, Any]],
+    samples: list[dict[str, Any]],
     *,
     config: dict | None = None,
     k: int | None = None,
@@ -125,7 +127,7 @@ def train_outcome_ensemble(
     """Train K members trên cùng samples với seed lệch nhau."""
     ens = OutcomeEnsemble(dict(config or {}))
     n_members = max(1, int(k if k is not None else ens.k))
-    member_cfg = ens._member_config()
+    member_cfg = ens.member_config()
     ens.members = [
         train_outcome_head(
             samples, config=dict(member_cfg), epochs=epochs, lr=lr, seed=seed + i

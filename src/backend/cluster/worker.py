@@ -1,30 +1,63 @@
-import pickle
 import asyncio
-import os
-import tempfile
-import shutil
-import queue
 import logging
 import multiprocessing as mp
-import psutil
-import numpy as np
-import httpx
+import os
+import pickle
+import queue
+import shutil
+import tempfile
 import time
-import uvicorn
-from fastapi import FastAPI
-
-from dotenv import load_dotenv
 from contextlib import asynccontextmanager
 
-from automl.v2.minio import minIOStorage
-from automl.engine import train_process
+import httpx
+import numpy as np
+import psutil
+import uvicorn
+from dotenv import load_dotenv
+from fastapi import Depends, FastAPI
 
-# Import machine learning models
-from cluster import *
-
-
-# Load file .env
+# Nạp .env TRƯỚC các import nội bộ: automl.v2.minio / cluster_auth đọc biến
+# môi trường ngay lúc import.
 load_dotenv()
+
+from automl.engine import train_process
+from automl.v2.cluster_auth import (
+    CLUSTER_SHARED_SECRET,  # noqa: F401 — re-export dùng bởi test cluster auth
+    cluster_auth_headers,
+    verify_cluster_secret,
+)
+from automl.v2.minio import minIOStorage
+from cluster import (
+    SVC,
+    DecisionTreeClassifier,
+    DecisionTreeRegressor,
+    ExtraTreesClassifier,
+    GaussianNB,
+    GradientBoostingRegressor,
+    HistGradientBoostingClassifier,
+    KNeighborsClassifier,
+    LinearRegression,
+    LogisticRegression,
+    RandomForestClassifier,
+    RandomForestRegressor,
+    XGBRegressor,
+)
+
+"""
+EXCEPTIONS
+"""
+
+
+class WorkerError(RuntimeError):
+    """Lỗi chung của worker khi thực thi task huấn luyện."""
+
+
+class DataFetchError(WorkerError):
+    """Lỗi khi tải dữ liệu cache từ MinIO."""
+
+
+class TrainingSubprocessError(WorkerError):
+    """Lỗi phát sinh từ subprocess huấn luyện."""
 
 
 """
@@ -43,6 +76,10 @@ MASTER_URL = f"http://{MASTER_HOST}:{MASTER_PORT}"
 
 DEFAULT_CPU_CORES = 2
 BYTES_IN_GB = 1024 ** 3
+
+# -- AUDIT-002: Cluster Internal Auth --
+# Cùng cơ chế shared-secret với automl/v2/master.py để chặn truy cập không xác
+# thực vào /check-for-work, /cancel-task. Nguồn dùng chung: automl/v2/cluster_auth.py.
 
 
 # MAPPING
@@ -100,7 +137,7 @@ class LRUDatasetCache:
             data_buffer.close()
 
         except Exception as e:
-            raise Exception(f"Failed to fetch data from MinIO: {str(e)}")
+            raise DataFetchError(f"Failed to fetch data from MinIO: {str(e)}") from e
 
         # Exit old data if it's full
         if len(self.cache) >= self.max_size:
@@ -153,6 +190,19 @@ def _training_worker(result_queue: mp.Queue, x_path, y_path, metrics, metric_sor
         best_model_id, best_model_obj, best_score, best_params, model_scores, _ = train_process(
             X, y, metrics, metric_sort, models_to_train, problem_type, search_algorithm, max_time
         )
+        selected_result = next(
+            (
+                item
+                for item in model_scores
+                if item.get("model_id") == best_model_id
+            ),
+            None,
+        )
+        if not isinstance(selected_result, dict) or not isinstance(
+            selected_result.get("evaluation"),
+            dict,
+        ):
+            raise ValueError("Selected model không có evaluation evidence")
 
         model_bytes = pickle.dumps(best_model_obj)
         result_queue.put({
@@ -161,7 +211,9 @@ def _training_worker(result_queue: mp.Queue, x_path, y_path, metrics, metric_sor
             "model_bytes": model_bytes,
             "best_score": best_score,
             "best_params": best_params,
-            "model_scores": model_scores
+            "model_scores": model_scores,
+            "selected_scores": selected_result.get("scores", {}),
+            "evaluation": selected_result["evaluation"],
         })
     except Exception as e:
         result_queue.put({"success": False, "error": str(e)})
@@ -280,14 +332,15 @@ async def execute_training_task(task: dict):
                 "job_id": task["job_id"],
                 "model_name": model_info["model"],
                 "score": proc_result["best_score"],
-                "scores": proc_result["model_scores"][0]["scores"],
+                "scores": proc_result["selected_scores"],
                 "best_params": proc_result["best_params"],
+                "evaluation": proc_result["evaluation"],
                 "bandwidth_observed": bw_observed,
                 "model": {"bucket_name": "temp", "object_name": f"{task_id}.pkl"},
                 "worker_url": WORKER_URL
             }
         else:
-            raise Exception(proc_result["error"])
+            raise TrainingSubprocessError(proc_result["error"])
 
     except Exception as e:
         _current_process = None
@@ -312,7 +365,7 @@ async def execute_training_task(task: dict):
                 result_queue.close()
                 result_queue.join_thread()
             except Exception:
-                pass
+                logging.warning("[Worker] Không đóng được result_queue", exc_info=True)
 
         # Dọn dẹp temp files (memmap) dù thành công hay thất bại
         if tmp_dir and os.path.exists(tmp_dir):
@@ -337,7 +390,7 @@ async def polling_loop(client: httpx.AsyncClient):
             await wake_up_event.wait()
 
         except asyncio.CancelledError:
-            logging.error(f"[Worker] 'wait()' was cancelled. Worker will be shut down")
+            logging.error("[Worker] 'wait()' was cancelled. Worker will be shut down")
             raise
         except Exception as e:
             logging.error(f"[Worker] Error when wake up: {str(e)}")
@@ -353,21 +406,27 @@ async def polling_loop(client: httpx.AsyncClient):
                     "cpu_cores": cpu_cores,
                     "ram_gb": ram_gb
                 },
-                timeout=5.0
+                headers=cluster_auth_headers(),
+                timeout=5.0,
             )
             task = response.json().get("task")
             if task:
-                print(f"[Worker] Received task. Training")
+                logging.info("[Worker] Received task. Training")
                 start_time = time.perf_counter()
                 result = await execute_training_task(task)
                 logging.info(f"Task executed in {(time.perf_counter() - start_time):.2f}s")
 
-                await client.post(f"{MASTER_URL}/task/submit", json=result, timeout=10.0)
+                await client.post(
+                    f"{MASTER_URL}/task/submit",
+                    json=result,
+                    headers=cluster_auth_headers(),
+                    timeout=10.0,
+                )
             else:
-                print(f"[Worker] No tasks. Return to sleep")
+                logging.info("[Worker] No tasks. Return to sleep")
                 wake_up_event.clear()
 
-        except httpx.RequestError as e:
+        except httpx.RequestError:
             logging.warning("Cannot connect to Master. Retrying in 30s...")
             await asyncio.sleep(30)
         except Exception as e:
@@ -386,7 +445,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="AutoML Worker", lifespan=lifespan)
 
 
-@app.get("/check-for-work")
+@app.get("/check-for-work", dependencies=[Depends(verify_cluster_secret)])
 async def check_for_work():
     wake_up_event.set()
     return {"status": "starting"}
@@ -397,7 +456,7 @@ async def ping():
     return {"status": "OK"}
 
 
-@app.post("/cancel-task")
+@app.post("/cancel-task", dependencies=[Depends(verify_cluster_secret)])
 async def cancel_task(task_id: str = ""):
     """Master gọi khi job hết thời gian. Worker kill subprocess để giải phóng RAM."""
     global _current_process, _current_task_id

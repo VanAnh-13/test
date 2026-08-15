@@ -9,20 +9,19 @@ SRP: Chỉ xử lý domain evaluation/comparison.
 from __future__ import annotations
 
 import json
-import logging
 from typing import Any
 
+import structlog
 from langchain_core.messages import AIMessage
 
-from hagent.agent.state import AutoMLState, EvaluationResult
+from hagent.agent.orchestration import AutoMLState, EvaluationResult
 from hagent.agent.subagents import SubAgent
 from hagent.agent.tools.automl_tools import get_job_info, list_jobs
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class EvaluatorAgent(SubAgent):
-
     @property
     def name(self) -> str:
         return "evaluator"

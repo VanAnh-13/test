@@ -2,7 +2,6 @@
 
 import { memo } from "react";
 import { TableRow, TableCell } from "@/components/ui/table";
-import { useRouter } from "next/navigation";
 import DatasetActions from "./DatasetAction";
 
 export type Dataset = {
@@ -27,8 +26,6 @@ const formatDate = (timestamp?: number) => {
 };
 
 const DatasetRow = ({ dataset, onEdit, onDelete }: Props) => {
-  const router = useRouter();
-
   return (
     <TableRow className="hover:bg-muted/50 transition">
       <TableCell className="py-3 px-4 font-medium text-gray-800">

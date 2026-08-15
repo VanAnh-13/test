@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -10,8 +11,17 @@ import pytest
 from fastapi import HTTPException
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from hagent.agent import graph as graph_module
 from hagent.agent import runtime as runtime_module
+from hagent.agent.orchestration import graph as graph_module
+
+
+def test_sse_stream_is_owned_by_transport_package():
+    from hagent.agent.transport import sse_stream
+
+    agent_dir = Path(__file__).parents[1] / "hagent" / "agent"
+
+    assert sse_stream.__module__ == "hagent.agent.transport.streaming"
+    assert not (agent_dir / "streaming.py").exists()
 
 
 async def _collect(iterator):
@@ -34,6 +44,7 @@ class _Registry:
 class _Middleware:
     def __init__(self):
         self.pre_state = None
+        self.post_state = None
         self.post_result = None
 
     async def run_pre(self, state):
@@ -41,6 +52,7 @@ class _Middleware:
         return state
 
     async def run_post(self, state, result):
+        self.post_state = state
         self.post_result = dict(result)
         return result
 
@@ -48,9 +60,11 @@ class _Middleware:
 class _FinalStateGraph:
     def __init__(self):
         self.initial_state = None
+        self.context = None
 
-    async def astream_events(self, initial_state, version="v2"):
+    async def astream_events(self, initial_state, version="v2", *, context=None):
         self.initial_state = initial_state
+        self.context = context
         yield {
             "event": "on_chat_model_stream",
             "name": "coordinator",
@@ -93,9 +107,10 @@ class _FinalStateGraph:
 
 @pytest.mark.asyncio
 async def test_stream_agent_done_uses_root_final_state_and_resets_context(monkeypatch):
-    from hagent.agent import llm_config, middlewares
-    from hagent.agent import registry as registry_module
+    from hagent.agent import middlewares
+    from hagent.agent.llm import config as llm_config
     from hagent.agent.middlewares import usage_tracker
+    from hagent.agent.orchestration import registry as registry_module
 
     stub_graph = _FinalStateGraph()
     middleware = _Middleware()
@@ -108,17 +123,20 @@ async def test_stream_agent_done_uses_root_final_state_and_resets_context(monkey
     outer_tracker = usage_tracker.UsageTracker()
     outer_usage_token = usage_tracker.set_current_tracker(outer_tracker)
     outer_model_token = llm_config.set_current_model_name("outer-model")
+    world_store = object()
+    wm_service = object()
     try:
         events = await _collect(
             graph_module.stream_agent(
                 "current",
                 user_id="owner",
+                user_token="request-secret",
                 history=[
                     {"role": "user", "content": "first"},
                     {"role": "assistant", "content": "answer"},
                 ],
-                world_store=object(),
-                wm_service=object(),
+                world_store=world_store,
+                wm_service=wm_service,
                 model_name="ci-mock",
             )
         )
@@ -157,15 +175,28 @@ async def test_stream_agent_done_uses_root_final_state_and_resets_context(monkey
         HumanMessage,
     ]
     assert [message.content for message in messages] == ["first", "answer", "current"]
+    assert stub_graph.context.principal_id == "owner"
+    assert stub_graph.context.credential == "request-secret"
+    assert "user_token" not in stub_graph.initial_state
+    assert "_wm_service" not in stub_graph.initial_state
+    assert "_world_store" not in stub_graph.initial_state
+    assert "request-secret" not in repr(stub_graph.initial_state)
+    assert middleware.pre_state is not stub_graph.initial_state
+    assert middleware.pre_state["_wm_service"] is wm_service
+    assert middleware.pre_state["_world_store"] is world_store
+    assert middleware.post_state["_wm_service"] is wm_service
+    assert middleware.post_state["_world_store"] is world_store
+
 
 @pytest.mark.asyncio
 async def test_stream_agent_failure_resets_request_context(monkeypatch):
-    from hagent.agent import llm_config, middlewares
-    from hagent.agent import registry as registry_module
+    from hagent.agent import middlewares
+    from hagent.agent.llm import config as llm_config
     from hagent.agent.middlewares import usage_tracker
+    from hagent.agent.orchestration import registry as registry_module
 
     class _FailingGraph:
-        async def astream_events(self, initial_state, version="v2"):
+        async def astream_events(self, initial_state, version="v2", *, context=None):
             raise RuntimeError("graph failed")
             if False:
                 yield {}
@@ -203,17 +234,19 @@ async def test_stream_agent_failure_resets_request_context(monkeypatch):
         usage_tracker.reset_current_tracker(outer_usage_token)
         llm_config.reset_current_model_name(outer_model_token)
 
+
 @pytest.mark.asyncio
 async def test_stream_agent_cancellation_propagates_after_context_cleanup(monkeypatch):
-    from hagent.agent import llm_config, middlewares
-    from hagent.agent import registry as registry_module
+    from hagent.agent import middlewares
+    from hagent.agent.llm import config as llm_config
     from hagent.agent.middlewares import usage_tracker
+    from hagent.agent.orchestration import registry as registry_module
 
     started = asyncio.Event()
     cleanup_calls = []
 
     class _BlockingGraph:
-        async def astream_events(self, initial_state, version="v2"):
+        async def astream_events(self, initial_state, version="v2", *, context=None):
             started.set()
             await asyncio.Future()
             if False:
@@ -266,7 +299,7 @@ async def test_sse_stream_emits_typed_monotonic_frames_and_one_terminal(monkeypa
 
     runtime = runtime_module.LegacyGraphRuntime(event_source=fake_event_source)
     monkeypatch.setattr(runtime_module, "get_agent_runtime", lambda: runtime)
-    from hagent.agent.streaming import sse_stream
+    from hagent.agent.transport import sse_stream
 
     frames = await _collect(sse_stream("hello", conversation_id="conversation-1"))
     parsed = [_parse_frame(frame) for frame in frames]
@@ -288,7 +321,7 @@ async def test_sse_stream_converts_failure_to_safe_error_terminal(monkeypatch):
 
     runtime = runtime_module.LegacyGraphRuntime(event_source=failing_event_source)
     monkeypatch.setattr(runtime_module, "get_agent_runtime", lambda: runtime)
-    from hagent.agent.streaming import sse_stream
+    from hagent.agent.transport import sse_stream
 
     frames = await _collect(sse_stream("hello"))
     assert len(frames) == 1
@@ -300,6 +333,7 @@ async def test_sse_stream_converts_failure_to_safe_error_terminal(monkeypatch):
     }
     assert "credential-value-must-not-leak" not in frames[0]
 
+
 @pytest.mark.asyncio
 async def test_sse_stream_serialization_failure_still_emits_error_terminal(monkeypatch):
     async def unserializable_event_source(*args, **kwargs):
@@ -309,12 +343,13 @@ async def test_sse_stream_serialization_failure_still_emits_error_terminal(monke
         event_source=unserializable_event_source
     )
     monkeypatch.setattr(runtime_module, "get_agent_runtime", lambda: runtime)
-    from hagent.agent.streaming import sse_stream
+    from hagent.agent.transport import sse_stream
 
     frames = await _collect(sse_stream("hello"))
     assert len(frames) == 1
     event, event_id, data = _parse_frame(frames[0])
     assert (event, event_id, data["type"]) == ("error", 1, "error")
+
 
 @pytest.mark.asyncio
 async def test_sse_stream_propagates_cancellation_and_closes_agent(monkeypatch):
@@ -332,7 +367,7 @@ async def test_sse_stream_propagates_cancellation_and_closes_agent(monkeypatch):
 
     runtime = runtime_module.LegacyGraphRuntime(event_source=blocking_event_source)
     monkeypatch.setattr(runtime_module, "get_agent_runtime", lambda: runtime)
-    from hagent.agent.streaming import sse_stream
+    from hagent.agent.transport import sse_stream
 
     task = asyncio.create_task(_collect(sse_stream("hello")))
     await asyncio.wait_for(started.wait(), timeout=1)
@@ -344,8 +379,8 @@ async def test_sse_stream_propagates_cancellation_and_closes_agent(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_agent_run_stream_is_stateless_and_forwards_chat_contract(monkeypatch):
-    from hagent import chat_router
-    from hagent.agent import streaming
+    from hagent.agent import transport
+    from hagent.chat import router as chat_router
 
     captured = {}
 
@@ -360,11 +395,11 @@ async def test_agent_run_stream_is_stateless_and_forwards_chat_contract(monkeypa
     async def fake_sse_stream(message, **kwargs):
         captured["message"] = message
         captured.update(kwargs)
-        yield "event: done\nid: 1\ndata: {\"type\": \"done\"}\n\n"
+        yield 'event: done\nid: 1\ndata: {"type": "done"}\n\n'
 
     add_message = AsyncMock()
     monkeypatch.setattr(chat_router, "_load_world_model", load_world_model)
-    monkeypatch.setattr(streaming, "sse_stream", fake_sse_stream)
+    monkeypatch.setattr(transport, "sse_stream", fake_sse_stream)
     monkeypatch.setattr(chat_router.chat_store, "add_message", add_message)
 
     response = await chat_router.agent_run_stream(
@@ -407,7 +442,7 @@ async def test_agent_run_stream_is_stateless_and_forwards_chat_contract(monkeypa
 
 @pytest.mark.asyncio
 async def test_agent_run_stream_rejects_unknown_model_before_stream(monkeypatch):
-    from hagent import chat_router
+    from hagent.chat import router as chat_router
 
     monkeypatch.setattr(chat_router, "_load_world_model", AsyncMock(return_value=None))
     with pytest.raises(HTTPException) as exc:

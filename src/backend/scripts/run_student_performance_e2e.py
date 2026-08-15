@@ -20,14 +20,17 @@ import argparse
 import asyncio
 import json
 import os
+import socket
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, BinaryIO
 
 BACKEND = Path(__file__).resolve().parent.parent
 if str(BACKEND) not in sys.path:
@@ -52,15 +55,23 @@ EXPECTED_MODEL_RMSE = {
     "SVR": 2.15,
 }
 
+LOOPBACK_HOST = "127.0.0.1"
+MOCK_SERVER_START_ATTEMPTS = 3
+MOCK_SERVER_START_TIMEOUT_SECONDS = 5.0
+MOCK_SERVER_REQUEST_TIMEOUT_SECONDS = 0.5
+MOCK_SERVER_POLL_INTERVAL_SECONDS = 0.05
+MOCK_SERVER_STOP_TIMEOUT_SECONDS = 2.0
+MOCK_SERVER_DIAGNOSTIC_LIMIT = 500
+
 
 @dataclass
 class CheckResult:
     name: str
     ok: bool
     detail: str = ""
-    data: Dict[str, Any] = field(default_factory=dict)
+    data: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
@@ -68,11 +79,11 @@ class CheckResult:
 class LayerReport:
     layer: str
     ok: bool
-    checks: List[CheckResult] = field(default_factory=list)
+    checks: list[CheckResult] = field(default_factory=list)
     elapsed_seconds: float = 0.0
-    extra: Dict[str, Any] = field(default_factory=dict)
+    extra: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "layer": self.layer,
             "ok": self.ok,
@@ -82,10 +93,32 @@ class LayerReport:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class MockServerEndpoint:
+    """Endpoint loopback bất biến dùng chung cho mock server và HTTP client."""
+
+    base_url: str
+    port: int
+
+    def __post_init__(self) -> None:
+        expected_url = f"http://{LOOPBACK_HOST}:{self.port}"
+        if not 1 <= self.port <= 65535 or self.base_url != expected_url:
+            raise ValueError("Endpoint mock server không hợp lệ")
+
+
+@dataclass(slots=True)
+class MockServerHandle:
+    """Quyền sở hữu process và output tạm của một lần khởi động mock server."""
+
+    process: subprocess.Popen[bytes]
+    endpoint: MockServerEndpoint
+    output: BinaryIO
+
+
 def _http_json(
     method: str,
     url: str,
-    body: Optional[dict] = None,
+    body: dict | None = None,
     timeout: float = 30.0,
 ) -> Any:
     data = None
@@ -99,7 +132,7 @@ def _http_json(
         return json.loads(raw) if raw else {}
 
 
-def _assert(checks: List[CheckResult], name: str, ok: bool, detail: str = "", **data):
+def _assert(checks: list[CheckResult], name: str, ok: bool, detail: str = "", **data):
     checks.append(CheckResult(name=name, ok=bool(ok), detail=detail, data=dict(data)))
     status = "✓" if ok else "✗"
     print(f"  {status} {name}" + (f" — {detail}" if detail else ""))
@@ -119,7 +152,7 @@ async def run_harness_layer() -> LayerReport:
         tags=["student"],
     )
     elapsed = time.time() - t0
-    checks: List[CheckResult] = []
+    checks: list[CheckResult] = []
 
     n = int(report.get("n") or 0)
     n_failed = int(report.get("n_failed") or 0)
@@ -162,45 +195,155 @@ async def run_harness_layer() -> LayerReport:
 # ── Layer: mock-api ──────────────────────────────────────
 
 
+def _allocate_loopback_port() -> int:
+    """Yêu cầu hệ điều hành cấp một TCP port loopback đang trống."""
+    with socket.socket() as candidate:
+        candidate.bind((LOOPBACK_HOST, 0))
+        return int(candidate.getsockname()[1])
+
+
+def _spawn_mock_server(endpoint: MockServerEndpoint) -> MockServerHandle:
+    """Tạo child với encoding riêng và output không thể làm đầy pipe."""
+    script = BACKEND / "scripts" / "mock_hautoml_server.py"
+    # Handle sở hữu file đến khi process dừng nên không thể dùng context manager tại đây.
+    output = tempfile.TemporaryFile()  # noqa: SIM115
+    child_env = os.environ.copy()
+    child_env["PYTHONUTF8"] = "1"
+    child_env["PYTHONIOENCODING"] = "utf-8"
+    try:
+        process = subprocess.Popen(
+            [sys.executable, str(script), "--port", str(endpoint.port)],
+            cwd=str(BACKEND),
+            stdout=output,
+            stderr=subprocess.STDOUT,
+            env=child_env,
+        )
+    except BaseException:
+        output.close()
+        raise
+    return MockServerHandle(process=process, endpoint=endpoint, output=output)
+
+
+def _read_diagnostic(output: BinaryIO) -> str:
+    """Đọc phần đuôi output với giới hạn cố định và thay byte lỗi an toàn."""
+    output.flush()
+    output.seek(0, os.SEEK_END)
+    size = output.tell()
+    output.seek(max(0, size - MOCK_SERVER_DIAGNOSTIC_LIMIT))
+    return output.read(MOCK_SERVER_DIAGNOSTIC_LIMIT).decode(
+        "utf-8",
+        errors="replace",
+    )
+
+
+def _stop_mock_server(handle: MockServerHandle) -> str:
+    """Thu hồi child có timeout, kill fallback và luôn đóng output tạm."""
+    diagnostic = ""
+    try:
+        if handle.process.poll() is None:
+            handle.process.terminate()
+            try:
+                handle.process.wait(timeout=MOCK_SERVER_STOP_TIMEOUT_SECONDS)
+            except subprocess.TimeoutExpired:
+                handle.process.kill()
+                try:
+                    handle.process.wait(timeout=MOCK_SERVER_STOP_TIMEOUT_SECONDS)
+                except subprocess.TimeoutExpired:
+                    pass
+        diagnostic = _read_diagnostic(handle.output)
+    finally:
+        handle.output.close()
+    return diagnostic
+
+
+def _wait_until_ready(handle: MockServerHandle) -> bool:
+    """Chờ health có giới hạn và dừng ngay khi child đã thoát."""
+    deadline = time.monotonic() + MOCK_SERVER_START_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        if handle.process.poll() is not None:
+            return False
+        try:
+            health = _http_json(
+                "GET",
+                f"{handle.endpoint.base_url}/home",
+                timeout=MOCK_SERVER_REQUEST_TIMEOUT_SECONDS,
+            )
+            if health.get("status") == "ok":
+                return True
+        except (
+            json.JSONDecodeError,
+            OSError,
+            TimeoutError,
+            urllib.error.URLError,
+        ):
+            pass
+        time.sleep(MOCK_SERVER_POLL_INTERVAL_SECONDS)
+    return False
+
+
+def _start_mock_server(*, port: int = 0) -> MockServerHandle:
+    """Khởi động mock server với port động và retry bind/process hữu hạn."""
+    if not 0 <= port <= 65535:
+        raise ValueError("Port mock server không hợp lệ")
+
+    diagnostics: list[str] = []
+    for attempt in range(1, MOCK_SERVER_START_ATTEMPTS + 1):
+        selected_port = port or _allocate_loopback_port()
+        endpoint = MockServerEndpoint(
+            base_url=f"http://{LOOPBACK_HOST}:{selected_port}",
+            port=selected_port,
+        )
+        try:
+            handle = _spawn_mock_server(endpoint)
+        except OSError as exc:
+            diagnostics.append(
+                f"lần {attempt}: không tạo được process ({type(exc).__name__})"
+            )
+            continue
+
+        try:
+            ready = _wait_until_ready(handle)
+        except BaseException:
+            _stop_mock_server(handle)
+            raise
+        if ready:
+            return handle
+
+        detail = _stop_mock_server(handle).strip() or "không có output"
+        diagnostics.append(f"lần {attempt}: exit={handle.process.returncode}; {detail}")
+
+    detail = " | ".join(diagnostics)[-MOCK_SERVER_DIAGNOSTIC_LIMIT:]
+    raise RuntimeError(
+        f"Mock HAutoML server không khởi động sau "
+        f"{MOCK_SERVER_START_ATTEMPTS} lần thử. {detail}"
+    )
+
+
 def run_mock_api_layer(
     *,
-    base_url: str,
+    base_url: str | None,
     models: Sequence[str],
     start_server: bool,
-    port: int,
+    port: int = 0,
 ) -> LayerReport:
-    print(f"\n═══ Layer: mock-api ({base_url}) ═══")
-    checks: List[CheckResult] = []
+    checks: list[CheckResult] = []
     t0 = time.time()
-    proc: Optional[subprocess.Popen] = None
-    extra: Dict[str, Any] = {}
+    server_handle: MockServerHandle | None = None
+    extra: dict[str, Any] = {}
 
     try:
         if start_server:
-            script = BACKEND / "scripts" / "mock_hautoml_server.py"
-            proc = subprocess.Popen(
-                [sys.executable, str(script), "--port", str(port)],
-                cwd=str(BACKEND),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-            )
-            # Wait for health
-            ready = False
-            for _ in range(40):
-                try:
-                    _http_json("GET", f"{base_url}/home", timeout=2)
-                    ready = True
-                    break
-                except Exception:
-                    time.sleep(0.25)
-            _assert(checks, "mock_server_ready", ready, f"port={port}")
-            if not ready:
-                return LayerReport(
-                    layer="mock-api",
-                    ok=False,
-                    checks=checks,
-                    elapsed_seconds=round(time.time() - t0, 3),
-                )
+            server_handle = _start_mock_server(port=port)
+            endpoint = server_handle.endpoint
+            base_url = endpoint.base_url
+            extra["endpoint"] = asdict(endpoint)
+            _assert(checks, "mock_server_ready", True, f"port={endpoint.port}")
+        elif not base_url:
+            raise ValueError("base_url là bắt buộc khi không khởi động mock server")
+        else:
+            base_url = base_url.rstrip("/")
+
+        print(f"\n═══ Layer: mock-api ({base_url}) ═══")
 
         # 1) Health
         try:
@@ -211,7 +354,13 @@ def run_mock_api_layer(
                 health.get("status") == "ok",
                 str(health)[:120],
             )
-        except Exception as exc:
+        except (
+            OSError,
+            TimeoutError,
+            UnicodeError,
+            ValueError,
+            urllib.error.URLError,
+        ) as exc:
             _assert(checks, "health", False, str(exc))
             return LayerReport(
                 layer="mock-api",
@@ -250,7 +399,8 @@ def run_mock_api_layer(
         _assert(
             checks,
             "info_shape",
-            info.get("n_rows") == STUDENT_N_ROWS and info.get("n_cols") == STUDENT_N_COLS,
+            info.get("n_rows") == STUDENT_N_ROWS
+            and info.get("n_cols") == STUDENT_N_COLS,
             f"shape={info.get('n_rows')}x{info.get('n_cols')}",
         )
         feats = info.get("features") or []
@@ -322,7 +472,12 @@ def run_mock_api_layer(
             (mr.get("model") if isinstance(mr, dict) else None) for mr in model_results
         }
         for m in models:
-            _assert(checks, f"trained_{m}", m in got_models, f"got={sorted(got_models - {None})}")
+            _assert(
+                checks,
+                f"trained_{m}",
+                m in got_models,
+                f"got={sorted(got_models - {None})}",
+            )
 
         # Per-model RMSE matches fixture table
         for mr in model_results:
@@ -367,15 +522,12 @@ def run_mock_api_layer(
             jobs = []
         _assert(checks, "list_jobs_nonempty", len(jobs) >= 1, f"n_jobs={len(jobs)}")
 
-    except Exception as exc:
+    # Layer boundary phải chuyển mọi lỗi dependency thành báo cáo thay vì làm vỡ CLI.
+    except Exception as exc:  # noqa: BLE001
         _assert(checks, "mock_api_exception", False, str(exc))
     finally:
-        if proc is not None:
-            proc.terminate()
-            try:
-                proc.wait(timeout=5)
-            except Exception:
-                proc.kill()
+        if server_handle is not None:
+            _stop_mock_server(server_handle)
 
     ok = all(c.ok for c in checks)
     return LayerReport(
@@ -392,9 +544,9 @@ def run_mock_api_layer(
 
 async def run_agent_layer(*, user_id: str, models: Sequence[str]) -> LayerReport:
     print("\n═══ Layer: agent (live HAgent graph) ═══")
-    from hagent.agent.graph import run_agent
+    from hagent.agent.orchestration.graph import run_agent
 
-    checks: List[CheckResult] = []
+    checks: list[CheckResult] = []
     t0 = time.time()
     models_s = ", ".join(models)
     messages = [
@@ -406,7 +558,7 @@ async def run_agent_layer(*, user_id: str, models: Sequence[str]) -> LayerReport
         ),
         "So sánh kết quả training vừa xong. Model nào tốt nhất?",
     ]
-    steps: List[Dict[str, Any]] = []
+    steps: list[dict[str, Any]] = []
 
     try:
         for i, msg in enumerate(messages, 1):
@@ -447,7 +599,8 @@ async def run_agent_layer(*, user_id: str, models: Sequence[str]) -> LayerReport
             or "best" in payload_blob.lower(),
             f"tools={train_step.get('tool_calls')}",
         )
-    except Exception as exc:
+    # Layer boundary phải giữ lỗi agent trong báo cáo tổng hợp của E2E.
+    except Exception as exc:  # noqa: BLE001
         _assert(checks, "agent_exception", False, str(exc))
 
     ok = all(c.ok for c in checks)
@@ -463,14 +616,14 @@ async def run_agent_layer(*, user_id: str, models: Sequence[str]) -> LayerReport
 # ── CLI ──────────────────────────────────────────────────
 
 
-def _parse_layers(raw: str) -> List[str]:
+def _parse_layers(raw: str) -> list[str]:
     parts = [p.strip().lower() for p in raw.split(",") if p.strip()]
     if "all" in parts:
         return ["harness", "mock-api", "agent"]
     return parts
 
 
-def main(argv: Optional[Sequence[str]] = None) -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Student Performance realistic CI/CD E2E"
     )
@@ -481,10 +634,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
     parser.add_argument(
         "--base-url",
-        default=os.getenv("HAUTOML_BASE_URL", "http://127.0.0.1:8585"),
-        help="Mock HAutoML base URL",
+        default=os.getenv("HAUTOML_BASE_URL"),
+        help="HAutoML URL khi dùng --no-start-server",
     )
-    parser.add_argument("--port", type=int, default=8585, help="Mock server port")
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=0,
+        help="Mock server port; 0 để hệ điều hành tự cấp",
+    )
     parser.add_argument(
         "--no-start-server",
         action="store_true",
@@ -502,7 +660,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     layers = _parse_layers(args.layers)
     models = [m.strip() for m in args.models.split(",") if m.strip()]
-    reports: List[LayerReport] = []
+    reports: list[LayerReport] = []
 
     print("=" * 64)
     print("  Student Performance — CI/CD E2E")
@@ -517,7 +675,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if "mock-api" in layers:
         reports.append(
             run_mock_api_layer(
-                base_url=args.base_url.rstrip("/"),
+                base_url=args.base_url,
                 models=models,
                 start_server=not args.no_start_server,
                 port=args.port,
@@ -540,9 +698,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "n_layers": len(reports),
         "n_failed_layers": sum(1 for r in reports if not r.ok),
         "n_checks": sum(len(r.checks) for r in reports),
-        "n_failed_checks": sum(
-            1 for r in reports for c in r.checks if not c.ok
-        ),
+        "n_failed_checks": sum(1 for r in reports for c in r.checks if not c.ok),
     }
 
     # Markdown summary
@@ -550,8 +706,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "# Student Performance E2E",
         "",
         f"**Overall:** {'PASS ✓' if overall_ok else 'FAIL ✗'}",
-        f"**Dataset:** `{STUDENT_DATASET_ID}` · target `{STUDENT_TARGET}` · "
-        f"shape {STUDENT_N_ROWS}×{STUDENT_N_COLS}",
+        (
+            f"**Dataset:** `{STUDENT_DATASET_ID}` · target `{STUDENT_TARGET}` · "
+            f"shape {STUDENT_N_ROWS}×{STUDENT_N_COLS}"
+        ),
         f"**Models:** {', '.join(models)} · expected best: `{EXPECTED_BEST_MODEL}`",
         "",
         "| Layer | Status | Checks | Time |",
@@ -581,15 +739,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         for layer in slim.get("layers") or []:
             extra = layer.get("extra") or {}
             if "report" in extra:
-                extra = {
-                    k: v
-                    for k, v in extra.items()
-                    if k != "report"
-                }
+                extra = {k: v for k, v in extra.items() if k != "report"}
                 extra["harness_n"] = (layer.get("extra") or {}).get("n")
-                extra["harness_n_failed"] = (layer.get("extra") or {}).get(
-                    "n_failed"
-                )
+                extra["harness_n_failed"] = (layer.get("extra") or {}).get("n_failed")
                 layer["extra"] = extra
         path.write_text(
             json.dumps(slim, ensure_ascii=False, indent=2, default=str),

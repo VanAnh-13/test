@@ -16,6 +16,9 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 
+from hagent.agent.constraints import validate_action, validate_plan_steps
+from hagent.agent.planning.goal_parser import is_simple_query, parse_goal
+from hagent.world.query import features_of, format_for_prompt, past_best_jobs
 from hagent.world.schema import (
     AutoMLAction,
     AutoMLObservation,
@@ -23,12 +26,9 @@ from hagent.world.schema import (
     WorldState,
 )
 from hagent.world.service import WorldModelService
-from hagent.world.surprise import compute_surprise, latent_distance
 from hagent.world.state_store import WorldStateStore
+from hagent.world.surprise import compute_surprise, latent_distance
 from hagent.world.updater import apply_plan_event, apply_tool_output
-from hagent.world.query import features_of, format_for_prompt, past_best_jobs
-from hagent.agent.planning.goal_parser import is_simple_query, parse_goal
-from hagent.agent.constraints import validate_action, validate_plan_steps
 
 
 def _service(**overrides) -> WorldModelService:
@@ -99,9 +99,7 @@ class TestEncoder:
         wm = _service()
         o = _obs()
         z = wm.encode(o)
-        zg = wm.encode_goal(
-            {"goal_type": "train", "problem_type": "classification"}, o
-        )
+        zg = wm.encode_goal({"goal_type": "train", "problem_type": "classification"}, o)
         assert zg.dim == z.dim
         assert zg.vector != z.vector
 
@@ -111,7 +109,9 @@ class TestPredictor:
         wm = _service()
         o = _obs()
         z = wm.encode(o)
-        z2 = wm.predict(z, AutoMLAction(type="start_training", params={"dataset_id": "ds1"}))
+        z2 = wm.predict(
+            z, AutoMLAction(type="start_training", params={"dataset_id": "ds1"})
+        )
         assert z2.dim == z.dim
         assert len(z2.vector) == z.dim
 
@@ -129,7 +129,9 @@ class TestSurprise:
         wm = _service()
         o = _obs()
         z = wm.encode(o)
-        s = compute_surprise(z, z, {"metric": "l2", "thresholds": {"medium": 0.1, "high": 0.3}})
+        s = compute_surprise(
+            z, z, {"metric": "l2", "thresholds": {"medium": 0.1, "high": 0.3}}
+        )
         assert s.value == pytest.approx(0.0, abs=1e-9)
         assert s.level == "low"
 
@@ -180,7 +182,12 @@ class TestPlanner:
         types = [s.action.type for s in plans[0].steps]
         assert any(
             t in types
-            for t in ("list_datasets", "get_dataset_info", "get_features", "preview_data")
+            for t in (
+                "list_datasets",
+                "get_dataset_info",
+                "get_features",
+                "preview_data",
+            )
         )
 
 

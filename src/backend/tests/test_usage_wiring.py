@@ -9,7 +9,7 @@ import asyncio
 from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, LLMResult
 
-from hagent.agent.llm_config import create_chat_model
+from hagent.agent.llm import create_chat_model
 from hagent.agent.middlewares.usage_tracker import (
     UsageTracker,
     UsageTrackingCallback,
@@ -30,10 +30,16 @@ def run(coro):
 def _fake_llm_end(tracker_cb: UsageTrackingCallback, n_in=10, n_out=5, model="m"):
     msg = AIMessage(
         content="ok",
-        usage_metadata={"input_tokens": n_in, "output_tokens": n_out, "total_tokens": n_in + n_out},
+        usage_metadata={
+            "input_tokens": n_in,
+            "output_tokens": n_out,
+            "total_tokens": n_in + n_out,
+        },
         response_metadata={"model_name": model},
     )
-    tracker_cb.on_llm_end(LLMResult(generations=[[ChatGeneration(message=msg)]], llm_output={}))
+    tracker_cb.on_llm_end(
+        LLMResult(generations=[[ChatGeneration(message=msg)]], llm_output={})
+    )
 
 
 class TestContextvarLifecycle:
@@ -114,7 +120,7 @@ class TestRunAgentMergesUsage:
     def test_cost_metrics_contains_usage(self, monkeypatch):
         """run_agent trả cost_metrics có các trường usage (qua graph stub +
         LLM call giả lập trong node)."""
-        import hagent.agent.graph as graph_mod
+        import hagent.agent.orchestration.graph as graph_mod
 
         class _StubGraph:
             async def astream_events(self, state, version="v2"):

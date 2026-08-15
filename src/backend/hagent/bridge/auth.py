@@ -2,19 +2,19 @@
 HAgent Bridge — Xác thực JWT
 
 Sử dụng chung SECRET_KEY và ALGORITHM với HAutoML backend.
-Cấu hình tải từ hagent.yaml — KHÔNG hard-code.
+Cấu hình tải từ hagent.yaml.
 """
 
-import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
+import structlog
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jwt import PyJWTError, decode
 
 from .config import get_auth_config
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 security = HTTPBearer(auto_error=False)
 
@@ -33,7 +33,7 @@ class TokenPayload:
     @property
     def is_expired(self) -> bool:
         """Kiểm tra token đã hết hạn chưa."""
-        return datetime.now(timezone.utc).timestamp() > self.exp
+        return datetime.now(UTC).timestamp() > self.exp
 
 
 def verify_jwt_token(token: str) -> TokenPayload:

@@ -97,9 +97,7 @@ async def test_google_callback_fail_closed_khi_thieu_frontend_url(monkeypatch):
 async def test_oauth_code_chi_trao_doi_duoc_mot_lan(monkeypatch):
     user_id = ObjectId()
     login_codes = SimpleNamespace(
-        find_one_and_delete=AsyncMock(
-            side_effect=[{"user_id": user_id}, None]
-        )
+        find_one_and_delete=AsyncMock(side_effect=[{"user_id": user_id}, None])
     )
     users = SimpleNamespace(
         find_one=AsyncMock(
@@ -117,7 +115,9 @@ async def test_oauth_code_chi_trao_doi_duoc_mot_lan(monkeypatch):
     monkeypatch.setattr(
         routers.jwt_service, "create_refresh_token", Mock(return_value="refresh")
     )
-    request = schema.OAuthCodeExchangeRequest(code="opaque-code-du-32-ky-tu-an-toan-001")
+    request = schema.OAuthCodeExchangeRequest(
+        code="opaque-code-du-32-ky-tu-an-toan-001"
+    )
 
     token = await routers.exchange_oauth_code(request, db)
 

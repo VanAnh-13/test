@@ -1,18 +1,40 @@
 from bson.objectid import ObjectId
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
-from bson import ObjectId
 from pymongo.asynchronous.database import AsyncDatabase
 import csv
+import logging
 
 import base64
 import pandas as pd
 import io
-import time
 from datetime import datetime, timezone
 import uuid
 
 from automl.v2.minio import minIOStorage
+
+
+logger = logging.getLogger(__name__)
+
+
+class DataError(RuntimeError):
+    """Lỗi chung khi thao tác với dataset."""
+
+
+class UserNotFoundError(DataError):
+    """Không tìm thấy người dùng tương ứng."""
+
+
+class DatasetNotFoundError(DataError):
+    """Không tìm thấy dataset tương ứng."""
+
+
+class FileReadError(DataError):
+    """Lỗi khi đọc file dữ liệu tải lên."""
+
+
+class DatasetPersistenceError(DataError):
+    """Lỗi khi lưu hoặc xóa dataset trong MinIO/MongoDB."""
 
 
 # Hàm lấy danh sách data
@@ -84,7 +106,7 @@ async def upload_data_to_minio(file_data, dataName: str, dataType, userId, db: A
         # Lấy thông tin người dùng từ userId
         user = await user_collection.find_one({"_id": ObjectId(userId)})
         if not user:
-            raise Exception(f"Not found user")
+            raise UserNotFoundError("Not found user")
 
 
         file_content_bytes = await file_data.read()
@@ -116,7 +138,7 @@ async def upload_data_to_minio(file_data, dataName: str, dataType, userId, db: A
                     on_bad_lines='skip' # Bỏ qua dòng lỗi
                 )
         except Exception as e:
-            raise Exception(f"Error when read file {str(e)}")
+            raise FileReadError(f"Error when read file {str(e)}") from e
         
         # Xóa các cột có tên là Unnamed (do thừa dấu ; hoặc , gây ra)
         df = df.loc[:, ~df.columns.str.contains('Unnamed')]
@@ -166,9 +188,12 @@ async def upload_data_to_minio(file_data, dataName: str, dataType, userId, db: A
             serialize_mongo_doc(data_to_insert)
             return data_to_insert
         else:
-            raise Exception(f"Error when insert data to mongo")
+            raise DatasetPersistenceError("Error when insert data to mongo")
+    except DataError:
+        raise
     except Exception as e:
-        raise Exception(f"Error when upload dataset: {str(e)}")
+        logger.exception("Lỗi khi upload dataset")
+        raise DatasetPersistenceError("Error when upload dataset") from e
 
 
 async def update_dataset_to_minio_by_id(dataset_id: str, db: AsyncDatabase, dataName: str = None, dataType: str = None, file_data=None):
@@ -178,7 +203,7 @@ async def update_dataset_to_minio_by_id(dataset_id: str, db: AsyncDatabase, data
         # Lấy bản ghi hiện tại để so sánh
         current_data = await data_collection.find_one({"_id": ObjectId(dataset_id)})
         if not current_data:
-            raise Exception(f"Not found dataset")
+            raise DatasetNotFoundError("Not found dataset")
 
         update_fields = {}
         data_changed = False
@@ -205,8 +230,9 @@ async def update_dataset_to_minio_by_id(dataset_id: str, db: AsyncDatabase, data
             try:
                 with minIOStorage.get_object(bucket_name, object_name) as parquet_stream:
                     df_retrieved = pd.read_parquet(parquet_stream)
-            except Exception as e:
+            except Exception:
                 # Xử lý trường hợp không tìm thấy file cũ (NoSuchKey)
+                logger.warning("Không đọc được dataset cũ từ MinIO", exc_info=True)
                 df_retrieved = None
 
             if df_retrieved is not None and not df.equals(df_retrieved):
@@ -230,15 +256,18 @@ async def update_dataset_to_minio_by_id(dataset_id: str, db: AsyncDatabase, data
             
         return data_changed
 
+    except DataError:
+        raise
     except Exception as e:
-        raise Exception(f"Error: {str(e)}")
+        logger.exception("Lỗi khi cập nhật dataset")
+        raise DatasetPersistenceError("Error when update dataset") from e
 
 
 async def delete_dataset_at_minio_by_id(dataset_id: str, db: AsyncDatabase):
     data_collection = db.tbl_Data
     dataset = await data_collection.find_one({"_id": ObjectId(dataset_id)}, {"data_link": 1})
     if not dataset:
-        raise Exception(f"Not found dataset")
+        raise DatasetNotFoundError("Not found dataset")
     
     data_link = dataset.get("data_link", {})
     bucket_name = data_link.get("bucket_name")
@@ -260,10 +289,13 @@ async def delete_dataset_at_minio_by_id(dataset_id: str, db: AsyncDatabase):
             if dataset_mongo_result.deleted_count == 1:
                 return True
             else:
-                raise Exception("Removed MinIO file, but error when removing MongoDB metadata")
+                raise DatasetPersistenceError("Removed MinIO file, but error when removing MongoDB metadata")
         else:
-            raise Exception("Remove MinIO file failure")
+            raise DatasetPersistenceError("Remove MinIO file failure")
 
+    except DataError:
+        raise
     except Exception as e:
-        raise Exception(f"Error when removing: {str(e)}")
+        logger.exception("Lỗi khi xóa dataset")
+        raise DatasetPersistenceError("Error when removing dataset") from e
 

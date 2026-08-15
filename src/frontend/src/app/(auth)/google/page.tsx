@@ -1,10 +1,10 @@
 "use client";
 
 import { signIn } from "next-auth/react";
-import { useEffect } from "react";
+import { Suspense, useEffect } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 
-export default function GoogleCallbackPage() {
+function GoogleCallbackContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
@@ -26,4 +26,12 @@ export default function GoogleCallbackPage() {
   }, [authorizationCode, router]);
 
   return <p>Đang đăng nhập bằng Google...</p>;
+}
+
+export default function GoogleCallbackPage() {
+  return (
+    <Suspense fallback={<p role="status">Đang xử lý đăng nhập Google...</p>}>
+      <GoogleCallbackContent />
+    </Suspense>
+  );
 }

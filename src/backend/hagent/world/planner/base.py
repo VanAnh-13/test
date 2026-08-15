@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from typing import List, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
-from hagent.world.schema import AutoMLAction, GoalSpec, LatentState, PlanResult
+from hagent.world.schema import GoalSpec, LatentState, PlanResult
 
 
 @runtime_checkable
@@ -15,8 +15,8 @@ class WorldPlanner(Protocol):
         z_goal: LatentState,
         *,
         goal: GoalSpec,
-        action_space: List[str],
+        action_space: list[str],
         observation_context: dict | None = None,
-    ) -> List[PlanResult]:
+    ) -> list[PlanResult]:
         """Return top plan candidates ranked by latent cost."""
         ...

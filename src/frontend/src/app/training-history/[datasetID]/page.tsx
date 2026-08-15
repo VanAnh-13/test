@@ -54,19 +54,20 @@ const ResultPage = ({ params }: Props) => {
   type MetricOb = Record<string, string>;
   const [metrics, setMetrics] = useState<MetricOb>({});
 
-  const getMetrics = useCallback(async (type: string) => {
-    try {
-      const data = await get(`/v2/auto/metrics?problem_type=${type}`);
+  const getMetrics = useCallback(
+    async (type: string) => {
+      try {
+        const data = await get(`/v2/auto/metrics?problem_type=${type}`);
+        setMetrics(data.metrics);
+      } catch (err) {
+        console.error("Lỗi khi gọi API:", err);
+        alert("Không thể tải dữ liệu huấn luyện.");
+      }
+    },
+    [get],
+  );
 
-      console.log(data.metrics);
-      setMetrics(data.metrics);
-    } catch (err) {
-      console.error("Lỗi khi gọi API:", err);
-      alert("Không thể tải dữ liệu huấn luyện.");
-    }
-  }, []);
-
-  // Fetch data train từ API đầu tiên
+  // Lấy kết quả huấn luyện từ API.
   const fetchDataResult = useCallback(async () => {
     if (datasetID) {
       setIsLoading(true);
@@ -96,47 +97,31 @@ const ResultPage = ({ params }: Props) => {
         setIsLoading(false);
       }
     }
-  }, [datasetID]);
+  }, [datasetID, getMetrics, post]);
 
   useEffect(() => {
     fetchDataResult();
   }, [datasetID, fetchDataResult]);
 
-  if (error) {
-    return (
-      <div className="flex items-center justify-center min-h-screen bg-muted/50 px-4">
-        <Card className="w-full max-w-md shadow-lg border border-red-300">
-          <CardHeader className="flex flex-row items-center gap-3">
-            <AlertCircle className="text-red-500" />
-            <CardTitle className="text-red-600 text-lg">
-              Đã xảy ra lỗi
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-gray-700">{error}</p>
-          </CardContent>
-        </Card>
-      </div>
-    );
-  }
+  // Cấu hình biểu đồ chỉ đổi khi danh sách độ đo thay đổi.
+  const chartConfig = useMemo(() => {
+    const randomColor = () =>
+      `hsl(${Math.floor(Math.random() * 360)}, 70%, 45%)`;
 
-  // Setup biểu đồ
-  // Chart config
-  const randomColor = () => `hsl(${Math.floor(Math.random() * 360)}, 70%, 45%)`;
+    return Object.entries(metrics).reduce(
+      (config: any, [key, value]) => {
+        config[key] = {
+          label: value,
+          value,
+          color: randomColor(),
+        };
+        return config;
+      },
+      {},
+    ) satisfies ChartConfig;
+  }, [metrics]);
 
-  const chartConfig = Object.entries(metrics).reduce(
-    (config: any, [key, value]) => {
-      config[key] = {
-        label: value, // <-- HIỂN THỊ CHỮ NÀY
-        value: value, // dùng để map scores
-        color: randomColor(),
-      };
-      return config;
-    },
-    {},
-  ) satisfies ChartConfig;
-
-  // Chart data
+  // Dữ liệu biểu đồ phụ thuộc vào kết quả và cấu hình đã ổn định.
   const chartData = useMemo(() => {
     if (!result?.orther_model_scores) return [];
 
@@ -160,6 +145,24 @@ const ResultPage = ({ params }: Props) => {
         return row;
       });
   }, [result, chartConfig]);
+
+  if (error) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-muted/50 px-4">
+        <Card className="w-full max-w-md shadow-lg border border-red-300">
+          <CardHeader className="flex flex-row items-center gap-3">
+            <AlertCircle className="text-red-500" />
+            <CardTitle className="text-red-600 text-lg">
+              Đã xảy ra lỗi
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-gray-700">{error}</p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="relative p-6">

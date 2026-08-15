@@ -11,20 +11,19 @@ DIP: LLM factory inject từ base class.
 from __future__ import annotations
 
 import json
-import logging
 from typing import Any
 
+import structlog
 from langchain_core.messages import AIMessage
 
-from hagent.agent.state import AutoMLState, DatasetContext
+from hagent.agent.orchestration import AutoMLState, DatasetContext
 from hagent.agent.subagents import SubAgent
 from hagent.agent.tools.automl_tools import DATASET_TOOLS
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class DataAnalystAgent(SubAgent):
-
     @property
     def name(self) -> str:
         return "data_analyst"

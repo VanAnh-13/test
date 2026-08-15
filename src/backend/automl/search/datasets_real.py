@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 
 # name -> (kind, spec). kind: 'sklearn' | 'csv'
-REGISTRY: Dict[str, Dict[str, Any]] = {
+REGISTRY: dict[str, dict[str, Any]] = {
     "iris": {"kind": "sklearn", "loader": "load_iris"},
     "wine": {"kind": "sklearn", "loader": "load_wine"},
     "breast_cancer": {"kind": "sklearn", "loader": "load_breast_cancer"},
@@ -81,7 +81,7 @@ def _encode_frame(df: pd.DataFrame, target: str) -> tuple:
     return X, y, normalized
 
 
-def load_dataset(name: str) -> Dict[str, Any]:
+def load_dataset(name: str) -> dict[str, Any]:
     """Nạp một dataset thật; raise KeyError/FileNotFoundError nếu không có."""
     if name not in REGISTRY:
         raise KeyError(f"Unknown dataset {name!r}. Available: {', '.join(REGISTRY)}")
@@ -115,13 +115,13 @@ def load_dataset(name: str) -> Dict[str, Any]:
         "source": source,
         "n_rows": int(X.shape[0]),
         "n_cols": int(X.shape[1]),
-        "n_classes": int(len(np.unique(y))),
+        "n_classes": len(np.unique(y)),
     }
 
 
-def load_real_datasets(names: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+def load_real_datasets(names: list[str] | None = None) -> list[dict[str, Any]]:
     """Nạp nhiều dataset; bỏ qua (kèm cảnh báo) bộ nào không nạp được."""
-    out: List[Dict[str, Any]] = []
+    out: list[dict[str, Any]] = []
     for name in names or list(REGISTRY):
         try:
             out.append(load_dataset(name))
@@ -130,7 +130,7 @@ def load_real_datasets(names: Optional[List[str]] = None) -> List[Dict[str, Any]
     return out
 
 
-def available_datasets(include_large: bool = True) -> List[str]:
+def available_datasets(include_large: bool = True) -> list[str]:
     if include_large:
         return list(REGISTRY)
     return [n for n, spec in REGISTRY.items() if not spec.get("large")]

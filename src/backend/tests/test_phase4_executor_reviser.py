@@ -16,7 +16,10 @@ from hagent.agent.execution.reviser import (
     reviser_route,
 )
 from hagent.agent.execution.tool_runner import set_tool_invoker
-from hagent.agent.graph import _should_run_plan_executor, coordinator_route
+from hagent.agent.orchestration.graph import (
+    _should_run_plan_executor,
+    coordinator_route,
+)
 
 
 def run(coro):
@@ -28,11 +31,11 @@ def _reset_invoker(monkeypatch):
     set_tool_invoker(None)
     # Tắt campaign và hierarchy để kiểm thử tập trung vào executor.
     monkeypatch.setattr(
-        "hagent.agent.graph._campaign_enabled",
+        "hagent.agent.orchestration.graph._campaign_enabled",
         lambda: False,
     )
     monkeypatch.setattr(
-        "hagent.agent.graph._hierarchy_live_enabled",
+        "hagent.agent.orchestration.graph._hierarchy_live_enabled",
         lambda: False,
     )
     yield
@@ -209,7 +212,7 @@ class TestPlanExecutor:
                 return {"datasets": []}
 
         monkeypatch.setattr(
-            "hagent.agent.registry.get_tool_map",
+            "hagent.agent.orchestration.registry.get_tool_map",
             lambda: {"list_datasets": _ListDatasetsTool()},
         )
         st = _base_state(user_id="owner", user_token="request-token")
@@ -248,7 +251,7 @@ class TestPlanExecutor:
 
         monkeypatch.setenv("USER_TOKEN", "ambient-process-token")
         monkeypatch.setattr(
-            "hagent.agent.registry.get_tool_map",
+            "hagent.agent.orchestration.registry.get_tool_map",
             lambda: {"list_datasets": _ListDatasetsTool()},
         )
         st = _base_state(user_id="owner", user_token=None)
@@ -282,11 +285,11 @@ class TestReviser:
                 {"action": {"type": "start_training", "params": {}}},
             ],
         }
-        patched = _patch_plan_for_error(plan, "dataset_id required", {"dataset_id": "ds1"})
+        patched = _patch_plan_for_error(
+            plan, "dataset_id required", {"dataset_id": "ds1"}
+        )
         assert patched is not None
-        types = [
-            (s.get("action") or {}).get("type") for s in patched["steps"]
-        ]
+        types = [(s.get("action") or {}).get("type") for s in patched["steps"]]
         assert "list_datasets" in types or "get_dataset_info" in types
 
     def test_reviser_budget(self):

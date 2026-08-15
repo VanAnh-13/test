@@ -1,12 +1,10 @@
 """
-Structured world-model queries for planner / verifier / agents.
+Các truy vấn World Model có cấu trúc cho bộ lập kế hoạch, kiểm tra và agent.
 
 Prefer these helpers over ad-hoc dict key access.
 """
 
 from __future__ import annotations
-
-from typing import Any, Dict, List, Optional
 
 from hagent.world.schema import (
     AutoMLObservation,
@@ -28,20 +26,20 @@ def _as_mapping(wm: WorldState | AutoMLObservation | dict) -> dict:
 
 def get_dataset(
     wm: WorldState | AutoMLObservation | dict, dataset_id: str
-) -> Optional[DatasetEntry]:
+) -> DatasetEntry | None:
     data = _as_mapping(wm)
     datasets = data.get("datasets") or {}
     return datasets.get(dataset_id)
 
 
-def list_dataset_ids(wm: WorldState | AutoMLObservation | dict) -> List[str]:
+def list_dataset_ids(wm: WorldState | AutoMLObservation | dict) -> list[str]:
     data = _as_mapping(wm)
     return list((data.get("datasets") or {}).keys())
 
 
 def features_of(
     wm: WorldState | AutoMLObservation | dict, dataset_id: str
-) -> List[str]:
+) -> list[str]:
     ds = get_dataset(wm, dataset_id) or {}
     feats = ds.get("features") or []
     return list(feats) if isinstance(feats, list) else []
@@ -52,7 +50,7 @@ def past_best_jobs(
     *,
     problem_type: str | None = None,
     top_k: int = 5,
-) -> List[JobEntry]:
+) -> list[JobEntry]:
     data = _as_mapping(wm)
     jobs = list((data.get("jobs") or {}).values())
 
@@ -84,7 +82,7 @@ def past_best_jobs(
     return filtered[:top_k]
 
 
-def active_plan(wm: WorldState | dict) -> Optional[PlanEntry]:
+def active_plan(wm: WorldState | dict) -> PlanEntry | None:
     data = _as_mapping(wm)
     plan_id = data.get("active_plan_id")
     plans = data.get("plans") or {}
@@ -93,7 +91,7 @@ def active_plan(wm: WorldState | dict) -> Optional[PlanEntry]:
     return None
 
 
-def open_goals(wm: WorldState | dict) -> List[GoalEntry]:
+def open_goals(wm: WorldState | dict) -> list[GoalEntry]:
     data = _as_mapping(wm)
     goals = data.get("goals") or []
     return [
@@ -112,7 +110,7 @@ def format_for_prompt(
 ) -> str:
     """Compact markdown summary for system prompts."""
     data = _as_mapping(wm)
-    lines: List[str] = []
+    lines: list[str] = []
     datasets = data.get("datasets") or {}
     jobs = data.get("jobs") or {}
 

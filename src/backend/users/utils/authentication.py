@@ -3,16 +3,11 @@ import os
 from datetime import datetime, timedelta, timezone
 
 # Third party libraries
-from dotenv import load_dotenv
 from jwt import PyJWTError, decode, encode
-
-# Load .env file
-load_dotenv()
 
 
 class JWTService:
     def __init__(self) -> None:
-        self.__secret_key: str = os.getenv('SECRET_KEY', '')
         self.__algorithm: str = os.getenv('ALGORITHM', 'HS256')
         self.__access_exp: timedelta = timedelta(minutes=int(os.getenv('ACCESS_EXPIRE', 1)))
         self.__refresh_exp: timedelta = timedelta(days=int(os.getenv('REFRESH_EXPIRE', 1)))
@@ -21,6 +16,13 @@ class JWTService:
         self.__password_reset_exp: timedelta = timedelta(
             minutes=int(os.getenv('PASSWORD_RESET_EXPIRE_MINUTES', 5))
         )
+
+    @property
+    def __secret_key(self) -> str:
+        # Đọc env tại thời điểm ký/verify, không cache lúc khởi tạo:
+        # singleton module-level có thể được tạo trước khi SECRET_KEY được set
+        # (vd: test set env sau import), cache sớm khiến key rỗng vĩnh viễn.
+        return os.getenv('SECRET_KEY', '')
 
     def create_access_token(self, data: dict) -> str:
         """

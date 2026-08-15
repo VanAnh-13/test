@@ -10,15 +10,18 @@ Chưa có checkpoint → predict trả None, caller giữ nguyên thứ tự var
 
 from __future__ import annotations
 
-import logging
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any
 
 import numpy as np
+import structlog
 
-logger = logging.getLogger(__name__)
+from hagent.world.predictor.base import load_mlp_weights
+
+logger = structlog.get_logger(__name__)
 
 _DEFAULT_SEARCH_ALGOS = ["grid_search", "bayesian_search", "genetic_algorithm"]
 _DEFAULT_PROBLEM_TYPES = ["classification", "regression"]
@@ -55,7 +58,7 @@ def _sigmoid(x: float) -> float:
     return float(1.0 / (1.0 + math.exp(-max(-60.0, min(60.0, x)))))
 
 
-def outcome_feature_config(config: dict | None = None) -> Dict[str, Any]:
+def outcome_feature_config(config: dict | None = None) -> dict[str, Any]:
     """Chuẩn hóa config feature — một nguồn duy nhất cho cả train và predict."""
     cfg = dict(config or {})
     return {
@@ -75,8 +78,8 @@ def outcome_feature_config(config: dict | None = None) -> Dict[str, Any]:
 
 
 def outcome_features(
-    params: Dict[str, Any],
-    dataset_meta: Dict[str, Any] | None = None,
+    params: dict[str, Any],
+    dataset_meta: dict[str, Any] | None = None,
     z: Sequence[float] | None = None,
     config: dict | None = None,
 ) -> np.ndarray:
@@ -94,7 +97,7 @@ def outcome_features(
     algo_oh = _one_hot_with_unknown(
         params.get("search_algorithm"), fc["search_algorithms"]
     )
-    parts: List[np.ndarray] = [
+    parts: list[np.ndarray] = [
         algo_oh,
         _one_hot_with_unknown(params.get("problem_type"), fc["problem_types"]),
         _one_hot_with_unknown(params.get("metric"), fc["metrics"]),
@@ -189,9 +192,9 @@ class OutcomePrediction:
 
     mean: float
     std: float
-    meta: Dict[str, Any] = field(default_factory=dict)
+    meta: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {"mean": self.mean, "std": self.std, "meta": dict(self.meta)}
 
 
@@ -207,10 +210,10 @@ class OutcomeHeadV1:
         self.feature_cfg = outcome_feature_config(self.config)
         self.hidden_dim = int(self.config.get("hidden_dim", 64))
         self.checkpoint_path = self.config.get("checkpoint_path")
-        self._W1: Optional[np.ndarray] = None
-        self._b1: Optional[np.ndarray] = None
-        self._W2: Optional[np.ndarray] = None
-        self._b2: Optional[np.ndarray] = None
+        self._W1: np.ndarray | None = None
+        self._b1: np.ndarray | None = None
+        self._W2: np.ndarray | None = None
+        self._b2: np.ndarray | None = None
         self._loaded = False
 
         if self.checkpoint_path:
@@ -262,10 +265,7 @@ class OutcomeHeadV1:
             return
         try:
             data = np.load(str(p), allow_pickle=True)
-            self._W1 = np.asarray(data["W1"], dtype=np.float64)
-            self._b1 = np.asarray(data["b1"], dtype=np.float64)
-            self._W2 = np.asarray(data["W2"], dtype=np.float64)
-            self._b2 = np.asarray(data["b2"], dtype=np.float64)
+            self._W1, self._b1, self._W2, self._b2 = load_mlp_weights(data)
             for key in ("search_algorithms", "problem_types", "metrics", "model_vocab"):
                 if key in data:
                     self.feature_cfg[key] = [str(x) for x in data[key].tolist()]
@@ -287,7 +287,7 @@ class OutcomeHeadV1:
 
     # ── Inference ────────────────────────────────────────
 
-    def _forward(self, x: np.ndarray) -> Tuple[float, float, np.ndarray]:
+    def _forward(self, x: np.ndarray) -> tuple[float, float, np.ndarray]:
         assert self._W1 is not None and self._b1 is not None
         assert self._W2 is not None and self._b2 is not None
         h = np.tanh(self._W1 @ x + self._b1)
@@ -298,10 +298,10 @@ class OutcomeHeadV1:
 
     def predict(
         self,
-        params: Dict[str, Any],
-        dataset_meta: Dict[str, Any] | None = None,
+        params: dict[str, Any],
+        dataset_meta: dict[str, Any] | None = None,
         z: Sequence[float] | None = None,
-    ) -> Optional[OutcomePrediction]:
+    ) -> OutcomePrediction | None:
         if not self.is_ready:
             return None
         x = outcome_features(params, dataset_meta, z, self.feature_cfg)
@@ -324,7 +324,7 @@ class OutcomeHeadV1:
 
 
 def train_outcome_head(
-    samples: List[Dict[str, Any]],
+    samples: list[dict[str, Any]],
     *,
     config: dict | None = None,
     epochs: int = 200,
@@ -344,8 +344,8 @@ def train_outcome_head(
     head.init_random(seed=seed)
     fc = head.feature_cfg
 
-    xs: List[np.ndarray] = []
-    ys: List[float] = []
+    xs: list[np.ndarray] = []
+    ys: list[float] = []
     for s in samples:
         try:
             y = float(s["best_score"])
@@ -367,7 +367,7 @@ def train_outcome_head(
 
     rng = np.random.default_rng(seed)
     order = np.arange(len(xs))
-    history: List[float] = []
+    history: list[float] = []
     if warmup_epochs is None:
         warmup_epochs = max(1, epochs // 3)
     assert head._W1 is not None
@@ -414,14 +414,14 @@ def train_outcome_head(
 
 
 def extract_outcome_samples(
-    trajectory_docs: List[Dict[str, Any]],
-) -> List[Dict[str, Any]]:
+    trajectory_docs: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     """
     Lấy sample (params, dataset_meta, z, best_score) từ trajectory docs:
     quét jobs completed trong next_observation, dedup theo job id (giữ bản ghi
     mới nhất — docs được duyệt theo thứ tự, bản sau ghi đè bản trước).
     """
-    by_job: Dict[str, Dict[str, Any]] = {}
+    by_job: dict[str, dict[str, Any]] = {}
     for doc in trajectory_docs or []:
         obs = doc.get("next_observation") or doc.get("observation") or {}
         jobs = obs.get("jobs") or {}
@@ -450,13 +450,13 @@ def extract_outcome_samples(
 
 
 def rank_variants_by_outcome(
-    variants: List[Any],
+    variants: list[Any],
     *,
     head: OutcomeHeadV1 | None,
-    dataset_meta: Dict[str, Any] | None = None,
+    dataset_meta: dict[str, Any] | None = None,
     z: Sequence[float] | None = None,
     higher_is_better: bool = True,
-) -> List[Tuple[Any, Optional[OutcomePrediction]]]:
+) -> list[tuple[Any, OutcomePrediction | None]]:
     """
     Xếp hạng CampaignVariant theo mean dự đoán (giảm dần khi higher_is_better).
     Head chưa sẵn sàng → giữ nguyên thứ tự, prediction None.
@@ -464,7 +464,7 @@ def rank_variants_by_outcome(
     if head is None or not head.is_ready:
         return [(v, None) for v in variants]
 
-    scored: List[Tuple[Any, Optional[OutcomePrediction]]] = []
+    scored: list[tuple[Any, OutcomePrediction | None]] = []
     for v in variants:
         params = getattr(v, "params", None)
         if params is None and isinstance(v, dict):
@@ -472,7 +472,7 @@ def rank_variants_by_outcome(
         pred = head.predict(dict(params or {}), dataset_meta, z)
         scored.append((v, pred))
 
-    def sort_key(item: Tuple[Any, Optional[OutcomePrediction]]) -> float:
+    def sort_key(item: tuple[Any, OutcomePrediction | None]) -> float:
         pred = item[1]
         if pred is None:
             return float("-inf") if higher_is_better else float("inf")

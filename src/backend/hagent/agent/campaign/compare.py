@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from hagent.agent.campaign.schema import Campaign, CampaignVariant
 
@@ -31,14 +31,14 @@ def compare_campaign(
     *,
     metric: str | None = None,
     higher_is_better: bool = True,
-) -> Tuple[Optional[CampaignVariant], List[Dict[str, Any]]]:
+) -> tuple[CampaignVariant | None, list[dict[str, Any]]]:
     """
     Rank completed variants. Returns (best, comparison_table).
     Failed variants rank last.
     """
     metric = metric or (campaign.goal or {}).get("metric")
-    rows: List[Dict[str, Any]] = []
-    completed: List[CampaignVariant] = []
+    rows: list[dict[str, Any]] = []
+    completed: list[CampaignVariant] = []
 
     for v in campaign.variants:
         score = _variant_score(v, metric)
@@ -94,7 +94,7 @@ def compare_campaign(
     return best, rows
 
 
-def best_config_payload(best: CampaignVariant, goal: dict) -> Dict[str, Any]:
+def best_config_payload(best: CampaignVariant, goal: dict) -> dict[str, Any]:
     """Serializable config for memory warm-start write-back."""
     return {
         "problem_type": best.params.get("problem_type") or goal.get("problem_type"),

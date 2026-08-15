@@ -11,13 +11,14 @@ Chỉ dùng statistics.NormalDist (stdlib) — không thêm dependency.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from statistics import NormalDist
-from typing import Any, Iterable, List, Sequence, Tuple
+from typing import Any
 
 _NORMAL = NormalDist()
 
 
-def _mean_std(pred: Any) -> Tuple[float, float]:
+def _mean_std(pred: Any) -> tuple[float, float]:
     """Chấp nhận OutcomePrediction, dict {mean,std} hoặc tuple (mean, std)."""
     if hasattr(pred, "mean") and hasattr(pred, "std"):
         return float(pred.mean), float(pred.std)
@@ -29,12 +30,12 @@ def _mean_std(pred: Any) -> Tuple[float, float]:
 
 def _pairs(
     predictions: Sequence[Any], targets: Sequence[float]
-) -> List[Tuple[float, float, float]]:
+) -> list[tuple[float, float, float]]:
     if len(predictions) != len(targets):
         raise ValueError(
             f"predictions ({len(predictions)}) và targets ({len(targets)}) phải cùng độ dài"
         )
-    out: List[Tuple[float, float, float]] = []
+    out: list[tuple[float, float, float]] = []
     for pred, y in zip(predictions, targets):
         mu, sigma = _mean_std(pred)
         out.append((mu, max(sigma, 1e-12), float(y)))
@@ -58,9 +59,11 @@ def interval_coverage(
     return hits / len(pairs)
 
 
-def pit_values(predictions: Sequence[Any], targets: Sequence[float]) -> List[float]:
+def pit_values(predictions: Sequence[Any], targets: Sequence[float]) -> list[float]:
     """uᵢ = Φ((yᵢ − μᵢ)/σᵢ) — nếu model calibrated thì u ~ Uniform(0,1)."""
-    return [_NORMAL.cdf((y - mu) / sigma) for mu, sigma, y in _pairs(predictions, targets)]
+    return [
+        _NORMAL.cdf((y - mu) / sigma) for mu, sigma, y in _pairs(predictions, targets)
+    ]
 
 
 def expected_calibration_error(
@@ -89,7 +92,7 @@ def reliability_table(
     targets: Sequence[float],
     *,
     levels: Iterable[float] = (0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9),
-) -> List[dict]:
+) -> list[dict]:
     """Bảng (nominal central coverage, empirical coverage) cho reliability plot."""
     rows = []
     for level in levels:

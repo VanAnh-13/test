@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any
 
 from hagent.agent.harness.schema import AgentRunResult
 
 
-def summarize_results(results: List[AgentRunResult]) -> List[Dict[str, Any]]:
-    buckets: Dict[str, List[AgentRunResult]] = {}
+def summarize_results(results: list[AgentRunResult]) -> list[dict[str, Any]]:
+    buckets: dict[str, list[AgentRunResult]] = {}
     for r in results:
         key = f"{r.layer}:{r.mode}"
         buckets.setdefault(key, []).append(r)
@@ -36,7 +36,7 @@ def summarize_results(results: List[AgentRunResult]) -> List[Dict[str, Any]]:
     return summaries
 
 
-def build_report(results: List[AgentRunResult], **meta: Any) -> Dict[str, Any]:
+def build_report(results: list[AgentRunResult], **meta: Any) -> dict[str, Any]:
     return {
         "results": [r.to_dict() for r in results],
         "summaries": summarize_results(results),
@@ -46,7 +46,7 @@ def build_report(results: List[AgentRunResult], **meta: Any) -> Dict[str, Any]:
     }
 
 
-def report_markdown(report: Dict[str, Any]) -> str:
+def report_markdown(report: dict[str, Any]) -> str:
     lines = [
         "# Agent Harness Report",
         "",

@@ -1,0 +1,227 @@
+# ══════════════════════════════════════════════════════════
+# HAgent — Cấu hình Agent Orchestration & Multi-Agent
+# ══════════════════════════════════════════════════════════
+
+agent:
+  # Đường dẫn tới system prompt (Markdown)
+  system_prompt_path: "./prompts/coordinator.md"
+
+  # Đường dẫn tới SOUL.md (nhân cách agent)
+  soul_path: "./SOUL.md"
+
+  # Phase-4/5 planning (latent WM + executor loop)
+  planning:
+    enabled: true
+    ground_on_world_model: true
+    execute_plans: true
+    max_revisions: 2
+    revise_on_high_surprise: true
+    # Actions that legitimately change the world a lot — do not auto-revise
+    surprise_ignore_actions:
+      - "start_training"
+      - "list_datasets"
+      - "list_jobs"
+      - "get_world_state"
+    skip_planner_for_simple_queries: true
+    simple_query_keywords:
+      - "xin chào"
+      - "hello"
+      - "hi "
+      - "bạn là ai"
+      - "who are you"
+      - "cảm ơn"
+      - "thanks"
+
+  # Phase-6 multi-candidate training campaigns
+  campaign:
+    enabled: true
+    n_job_candidates: 3
+    max_concurrent_jobs: 2
+    warm_start_top_k: 3
+    prefer_for_goal_types:
+      - "train"
+    search_algorithms:
+      - "grid_search"
+      - "bayesian_search"
+      - "genetic_algorithm"
+      - "random_search"
+      - "successive_halving"
+    time_limit_options: [180, 300, 600]
+    max_monitor_ticks: 50
+    # World-model hooks trong builder: đề xuất variant bằng CEM + xếp thứ tự
+    # submit theo outcome dự đoán (chỉ kích hoạt khi model có checkpoint)
+    wm_variant_proposal: true
+    wm_rank_variants: true
+    # Vòng mở rộng theo outcome surprise (surprise-driven replanning trên
+    # agent thật). Mặc định TẮT — bật cho điều kiện thí nghiệm C.
+    surprise_extension:
+      enabled: false
+      max_rounds: 1
+      n_extra: 2
+      exploration_weight: 0.5
+
+  # Adaptive hierarchical goals (live controller + smart-skip)
+  hierarchy:
+    enabled: true
+    live_controller: true   # wire hierarchy node into graph
+    smart_skip: true        # skip leaves already satisfied by World Model
+    abort_on_leaf_fail: false
+    templates:
+      train:
+        - goal_type: analyze
+          description: "Inspect dataset features"
+        - goal_type: select
+          description: "Select models/metrics"
+        - goal_type: train
+          description: "Run training campaign/jobs"
+        - goal_type: evaluate
+          description: "Compare results"
+      evaluate:
+        - goal_type: monitor
+          description: "List/check jobs"
+        - goal_type: evaluate
+          description: "Compare best models"
+
+  eval:
+    default_modes:
+      - single_shot
+      - plan_executor
+      - campaign
+      - hierarchical
+    default_tags:
+      - tabular
+
+  # Agent harness (offline + graph + optional api)
+  harness:
+    default_layers:
+      - offline
+      - graph
+    default_offline_modes:
+      - single_shot
+      - plan_executor
+      - campaign
+      - hierarchical
+    smoke_tags:
+      - smoke
+
+  # ── Sub-agents Registry ──────────────────────────────
+  # Khai báo tất cả sub-agents tại đây.
+  # Python code đọc config này để build graph — KHÔNG hardcode.
+  subagents:
+    data_analyst:
+      module: "hagent.agent.subagents.data_analyst"
+      node_function: "data_analyst_node"
+      prompt_file: "data_analyst.md"
+      tools:
+        - "list_datasets"
+        - "get_dataset_info"
+
+    model_selector:
+      module: "hagent.agent.subagents.model_selector"
+      node_function: "model_selector_node"
+      prompt_file: "model_selector.md"
+      tools:
+        - "get_available_models"
+        - "get_dataset_info"
+
+    training_monitor:
+      module: "hagent.agent.subagents.training_monitor"
+      node_function: "training_monitor_node"
+      prompt_file: "training_monitor.md"
+      tools:
+        - "start_training"
+        - "get_job_info"
+        - "list_jobs"
+
+    evaluator:
+      module: "hagent.agent.subagents.evaluator"
+      node_function: "evaluator_node"
+      prompt_file: "evaluator.md"
+      tools:
+        - "get_job_info"
+        - "list_jobs"
+
+  # Cấu hình routing keywords cho từng sub-agent
+  # (dùng để quick-route trước khi gọi LLM)
+  routing:
+    data_analyst:
+      keywords:
+        - "dataset"
+        - "data"
+        - "dữ liệu"
+        - "phân tích"
+        - "analyze"
+        - "feature"
+        - "cột"
+        - "column"
+        - "thống kê"
+        - "statistics"
+        - "preview"
+        - "xem trước"
+        - "liệt kê"
+        - "danh sách"
+        - "list"
+
+    model_selector:
+      keywords:
+        - "model"
+        - "thuật toán"
+        - "algorithm"
+        - "chọn model"
+        - "đề xuất"
+        - "suggest"
+        - "recommend"
+        - "phù hợp"
+        - "so sánh thuật toán"
+        - "có những"
+        - "khả dụng"
+        - "available"
+
+    training_monitor:
+      keywords:
+        - "train"
+        - "huấn luyện"
+        - "training"
+        - "job"
+        - "start"
+        - "bắt đầu"
+        - "trạng thái"
+        - "status"
+        - "chạy"
+        - "submit"
+        - "theo dõi"
+        - "monitor"
+
+    evaluator:
+      keywords:
+        - "evaluate"
+        - "đánh giá"
+        - "so sánh"
+        - "compare"
+        - "kết quả"
+        - "result"
+        - "best"
+        - "tốt nhất"
+        - "accuracy"
+        - "f1"
+        - "score"
+        - "benchmark"
+        - "deploy"
+
+  # Gợi ý chat mặc định
+  suggestions:
+    - "📊 Hiển thị danh sách dataset của tôi"
+    - "🚀 Huấn luyện model phân loại mới"
+    - "📈 Có những thuật toán ML nào khả dụng?"
+    - "🔍 Kiểm tra trạng thái các job training"
+    - "💡 Giúp tôi chọn model phù hợp"
+
+  # Caching cho tool results
+  cache:
+    enabled: true
+    ttl_seconds: 300  # 5 phút
+    max_entries: 100
+
+  # Giới hạn agent loop
+  max_iterations: 10
+  timeout_seconds: 120

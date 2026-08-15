@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-import logging
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
+
+import structlog
 
 from hagent.world.schema import AutoMLAction
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 async def campaign_wm_step(
@@ -19,7 +20,7 @@ async def campaign_wm_step(
     params: dict | None = None,
     goal: dict | None = None,
     next_world_model: dict | None = None,
-) -> Tuple[dict | None, dict | None]:
+) -> tuple[dict | None, dict | None]:
     """
     Encode → predict → surprise after a campaign tool action.
 
@@ -114,7 +115,7 @@ def campaign_outcome_surprise(
     z: Any | None = None,
     outcome_model: Any | None = None,
     surprise_config: dict | None = None,
-) -> Optional[dict]:
+) -> dict | None:
     """
     Outcome-space surprise cho variant vừa hoàn thành.
 

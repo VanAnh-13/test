@@ -1,19 +1,19 @@
 import Image from "next/image";
 import MemberLab from "@/components/memberLab/MemberLab";
 import { Mail, MapPin } from "lucide-react";
-import { FaFacebook, FaYoutube, FaLinkedin } from "react-icons/fa";
+import { FaFacebook, FaYoutube } from "react-icons/fa";
 import Link from "next/link";
 import ImageCarousel from "@/components/homeCarousel/ImageCarousel";
 
 export default function Home() {
   return (
     <>
-      {/* Header Section */}
+      {/* Khu vực đầu trang */}
       <section id="home" className="w-full relative">
         <ImageCarousel />
       </section>
 
-      {/* Introduction Section */}
+      {/* Khu vực giới thiệu */}
       <section
         id="introduction"
         className="py-16 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto"
@@ -22,25 +22,25 @@ export default function Home() {
           Giới thiệu
         </h2>
 
-        {/* Video + Poem Block */}
+        {/* Khối video và bài thơ */}
         <div className="flex flex-col md:flex-row gap-8 md:gap-12 mb-20">
-          {/* Poem */}
+          {/* Bài thơ */}
           <div className="w-full md:w-1/3 flex items-center justify-center md:justify-start text-center md:text-left text-gray-800 dark:text-gray-200">
             <div>
               <p className="text-xl leading-relaxed italic mb-4">
-                "Không có việc gì khó
+                &quot;Không có việc gì khó
                 <br />
                 Chỉ sợ lòng không bền
                 <br />
                 Đào núi và lấp biển
                 <br />
-                Quyết chí ắt làm nên"
+                Quyết chí ắt làm nên&quot;
               </p>
               <p className="font-semibold">– Chủ tịch Hồ Chí Minh</p>
             </div>
           </div>
 
-          {/* Video */}
+          {/* Video giới thiệu */}
           <div className="w-full md:w-2/3 aspect-video">
             <iframe
               className="w-full h-full rounded-lg shadow-md border-0"
@@ -53,7 +53,7 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Block 1 */}
+        {/* Khối nội dung thứ nhất */}
         <div className="flex flex-col md:flex-row items-center gap-8 mb-16">
           <div className="flex-shrink-0">
             <Image
@@ -82,7 +82,7 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Block 2 */}
+        {/* Khối nội dung thứ hai */}
         <div className="flex flex-col-reverse md:flex-row items-center gap-8">
           <div className="text-justify text-gray-700 dark:text-gray-300">
             <h3 className="text-2xl font-semibold mb-4 text-gray-900 dark:text-white">
@@ -110,7 +110,7 @@ export default function Home() {
         </div>
       </section>
 
-      {/* About Us Section */}
+      {/* Khu vực giới thiệu nhóm */}
       <section id="about-us" className="bg-gray-100 dark:bg-background py-16">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <h2 className="text-3xl font-bold text-center mb-6 text-gray-900 dark:text-white">
@@ -129,7 +129,7 @@ export default function Home() {
 
       <footer id="contact" className="py-12 bg-white dark:bg-background">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 grid grid-cols-1 md:grid-cols-2 gap-8">
-          {/* Left column: Company Info */}
+          {/* Cột trái: thông tin đơn vị */}
           <div className="flex flex-col justify-between">
             <div>
               <Image
@@ -182,7 +182,7 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Right column: Google Map */}
+          {/* Cột phải: bản đồ Google */}
           <div>
             <iframe
               title="OptivisionLab Location"

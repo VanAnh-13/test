@@ -2,11 +2,11 @@
 HAgent Bridge — Quản lý Cuộc hội thoại (MongoDB)
 
 Lưu trữ và truy xuất lịch sử hội thoại trong MongoDB.
-Cấu hình tải từ hagent.yaml — KHÔNG hard-code.
+Cấu hình tải từ hagent.yaml.
 """
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from pymongo import ASCENDING
@@ -19,12 +19,24 @@ _client: AsyncIOMotorClient | None = None
 _db: AsyncIOMotorDatabase | None = None
 
 
+def _normalize_mongodb_uri(configured: object) -> str:
+    """Chuẩn hóa cấu hình cũ mà không ghi lại giá trị nhạy cảm vào lỗi."""
+    if not isinstance(configured, str) or not configured.strip():
+        raise ValueError("Cấu hình kết nối MongoDB không hợp lệ")
+    value = configured.strip()
+    if value.startswith(("mongodb://", "mongodb+srv://")):
+        return value
+    if "://" in value:
+        raise ValueError("Cấu hình kết nối MongoDB không hợp lệ")
+    return f"mongodb://{value}"
+
+
 async def init_db():
     """Khởi tạo kết nối MongoDB và tạo các index cần thiết."""
     global _client, _db
     mongo_cfg = get_mongodb_config()
 
-    _client = AsyncIOMotorClient(f"mongodb://{mongo_cfg['connect']}")
+    _client = AsyncIOMotorClient(_normalize_mongodb_uri(mongo_cfg.get("connect")))
     _db = _client[mongo_cfg["db_name"]]
 
     # Tạo TTL index — tự động xóa cuộc hội thoại sau N giờ (từ YAML)
@@ -62,7 +74,7 @@ def _get_collection():
 async def create_conversation(user_id: str) -> str:
     """Tạo cuộc hội thoại mới và trả về ID."""
     conversation_id = uuid.uuid4().hex
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     doc = {
         "conversation_id": conversation_id,
@@ -106,7 +118,7 @@ async def add_message(
     model: str = "",
 ) -> None:
     """Thêm một tin nhắn vào cuộc hội thoại."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     message = {
         "role": role,
         "content": content,
@@ -156,7 +168,7 @@ async def add_assistant_message_once(
         raise ValueError("message_id is required")
 
     owner = str(user_id)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     message = {
         "message_id": message_id,
         "role": "assistant",

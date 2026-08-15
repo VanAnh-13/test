@@ -1,0 +1,91 @@
+# ══════════════════════════════════════════════════════════
+# HAgent — Cấu hình LLM Providers
+# ══════════════════════════════════════════════════════════
+
+# ── LLM Providers ────────────────────────────────────────
+llm:
+  # Model mặc định khi không chỉ định tên
+  # Override bằng env var LLM_DEFAULT_MODEL nếu cần (CI/CD)
+  default_model: "${LLM_DEFAULT_MODEL:-openai-gpt4o-mini}"
+
+  # Token/cost tracking cho thí nghiệm (USD per 1M tokens; model local để trống = 0)
+  usage_tracking:
+    enabled: true
+    pricing:
+      gpt-4o-mini:
+        input_per_1m: 0.15
+        output_per_1m: 0.60
+      gpt-4o:
+        input_per_1m: 2.50
+        output_per_1m: 10.00
+      claude-sonnet-4-20250514:
+        input_per_1m: 3.00
+        output_per_1m: 15.00
+
+  models:
+    - name: "openai-gpt4o-mini"
+      provider: "openai"
+      model: "gpt-4o-mini"
+      api_key: "${OPENAI_API_KEY}"
+      temperature: 0.0
+      max_tokens: 4096
+      default: true
+
+    - name: "openai-gpt4o"
+      provider: "openai"
+      model: "gpt-4o"
+      api_key: "${OPENAI_API_KEY}"
+      temperature: 0.0
+      max_tokens: 8192
+
+    - name: "anthropic-sonnet"
+      provider: "anthropic"
+      model: "claude-sonnet-4-20250514"
+      api_key: "${ANTHROPIC_API_KEY}"
+      temperature: 0.0
+      max_tokens: 4096
+
+    - name: "ollama-llama"
+      provider: "ollama"
+      model: "llama3.1"
+      base_url: "${OLLAMA_BASE_URL:-http://localhost:11434}"
+      temperature: 0.0
+      max_tokens: 4096
+
+    # Meta AI (OpenAI-compatible, endpoint riêng của user) — key qua env,
+    # KHÔNG BAO GIỜ đặt key literal ở đây: repo public
+    - name: "meta-ai"
+      provider: "openai_compatible"
+      model: "${META_AI_MODEL:-muse-spark-1.1}"
+      base_url: "${META_AI_BASE_URL:-https://api.meta.ai/v1}"
+      api_key: "${META_AI_API_KEY}"
+      temperature: 0.0
+      max_tokens: 4096
+
+    # Mock LLM cho test/CI — trỏ vào tests/mock_llm_server.py (OpenAI-compatible).
+    # PHẢI là entry thật: resolve model giờ strict, tên không đăng ký sẽ raise
+    # (trước đây ci-mock sống nhờ fallback âm thầm về openai-gpt4o-mini).
+    - name: "ci-mock"
+      provider: "openai_compatible"
+      model: "mock-model"
+      base_url: "${MOCK_LLM_URL:-http://127.0.0.1:11435/v1}"
+      api_key: "test-key-not-real"
+      temperature: 0.0
+      max_tokens: 1024
+
+    # Ollama CI — dùng trong GitHub Actions
+    - name: "ollama-ci"
+      provider: "ollama"
+      model: "${OLLAMA_MODEL:-qwen2.5:14b}"
+      base_url: "${OLLAMA_BASE_URL:-http://localhost:11434}"
+      temperature: 0.0
+      max_tokens: 4096
+
+    # Bất kỳ endpoint OpenAI-compatible nào (vLLM, LM Studio, etc.)
+    - name: "local-compatible"
+      provider: "openai_compatible"
+      model: "${LOCAL_MODEL_NAME:-default}"
+      api_key: "${LOCAL_API_KEY:-not-needed}"
+      base_url: "${LOCAL_BASE_URL:-http://localhost:8000/v1}"
+      temperature: 0.0
+      max_tokens: 4096

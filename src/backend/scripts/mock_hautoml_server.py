@@ -13,15 +13,13 @@ Simulate đầy đủ API endpoints:
 
 from __future__ import annotations
 
-import json
-import time
-import uuid
 import argparse
+import json
 import random
 import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
-from urllib.parse import urlparse, parse_qs
-
+import uuid
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from urllib.parse import parse_qs, urlparse
 
 # ── Mock Data ────────────────────────────────────────────
 
@@ -32,12 +30,39 @@ STUDENT_DATASET = {
     "n_rows": 395,
     "n_cols": 33,
     "features": [
-        "school", "sex", "age", "address", "famsize", "Pstatus",
-        "Medu", "Fedu", "Mjob", "Fjob", "reason", "guardian",
-        "traveltime", "studytime", "failures", "schoolsup",
-        "famsup", "paid", "activities", "nursery", "higher",
-        "internet", "romantic", "famrel", "freetime", "goout",
-        "Dalc", "Walc", "health", "absences", "G1", "G2", "G3",
+        "school",
+        "sex",
+        "age",
+        "address",
+        "famsize",
+        "Pstatus",
+        "Medu",
+        "Fedu",
+        "Mjob",
+        "Fjob",
+        "reason",
+        "guardian",
+        "traveltime",
+        "studytime",
+        "failures",
+        "schoolsup",
+        "famsup",
+        "paid",
+        "activities",
+        "nursery",
+        "higher",
+        "internet",
+        "romantic",
+        "famrel",
+        "freetime",
+        "goout",
+        "Dalc",
+        "Walc",
+        "health",
+        "absences",
+        "G1",
+        "G2",
+        "G3",
     ],
     "target": "G3",
     "problem_type": "regression",
@@ -63,7 +88,11 @@ AVAILABLE_MODELS = {
                 "category": "gradient_boosting",
                 "hyperparameters": {
                     "n_estimators": {"type": "int", "default": 100, "range": [10, 500]},
-                    "learning_rate": {"type": "float", "default": 0.1, "range": [0.01, 1.0]},
+                    "learning_rate": {
+                        "type": "float",
+                        "default": 0.1,
+                        "range": [0.01, 1.0],
+                    },
                 },
             },
             {
@@ -72,7 +101,11 @@ AVAILABLE_MODELS = {
                 "category": "svm",
                 "hyperparameters": {
                     "C": {"type": "float", "default": 1.0, "range": [0.01, 100]},
-                    "kernel": {"type": "str", "default": "rbf", "options": ["linear", "rbf", "poly"]},
+                    "kernel": {
+                        "type": "str",
+                        "default": "rbf",
+                        "options": ["linear", "rbf", "poly"],
+                    },
                 },
             },
             {
@@ -124,7 +157,6 @@ active_jobs: dict[str, dict] = {}
 
 
 class MockHandler(BaseHTTPRequestHandler):
-
     def _send_json(self, data, status=200):
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
@@ -147,7 +179,9 @@ class MockHandler(BaseHTTPRequestHandler):
 
         # Health check
         if path == "/home":
-            self._send_json({"status": "ok", "service": "HAutoML-Mock", "version": "ci"})
+            self._send_json(
+                {"status": "ok", "service": "HAutoML-Mock", "version": "ci"}
+            )
 
         # Available models
         elif path.startswith("/api/v1/available-models/"):
@@ -192,10 +226,12 @@ class MockHandler(BaseHTTPRequestHandler):
 
         # List datasets
         if path == "/get-list-data-by-userid":
-            self._send_json({
-                "datasets": [STUDENT_DATASET],
-                "total": 1,
-            })
+            self._send_json(
+                {
+                    "datasets": [STUDENT_DATASET],
+                    "total": 1,
+                }
+            )
 
         # Start training — v2 distributed (canonical) + legacy body
         elif path in ("/train-from-requestbody-json/", "/v2/auto/jobs/training"):
@@ -213,17 +249,15 @@ class MockHandler(BaseHTTPRequestHandler):
             else:
                 user_id = params.get("userId", ["ci_user"])[0]
                 dataset_id = params.get("id_data", [""])[0]
-                cfg = body.get("config") if isinstance(body.get("config"), dict) else body
+                cfg = (
+                    body.get("config") if isinstance(body.get("config"), dict) else body
+                )
                 models = (
                     (cfg or {}).get("models")
                     or body.get("models")
                     or ["RandomForestRegressor", "XGBRegressor", "SVR"]
                 )
-                target = (
-                    (cfg or {}).get("target")
-                    or body.get("target_column")
-                    or "G3"
-                )
+                target = (cfg or {}).get("target") or body.get("target_column") or "G3"
                 problem_type = (
                     (cfg or {}).get("problem_type")
                     or body.get("problem_type")
@@ -246,7 +280,9 @@ class MockHandler(BaseHTTPRequestHandler):
             job_data = {
                 "id": job_id,
                 "job_id": job_id,
-                "status": "success" if path == "/v2/auto/jobs/training" else "completed",
+                "status": "success"
+                if path == "/v2/auto/jobs/training"
+                else "completed",
                 "message": "Training job initiated successfully",
                 "user_id": user_id,
                 "dataset_id": dataset_id,
@@ -264,7 +300,9 @@ class MockHandler(BaseHTTPRequestHandler):
             active_jobs[job_id] = {**job_data, "status": "completed"}
 
             self._send_json(job_data)
-            print(f"  ✓ Training started: {job_id} | models={models} | best={best_model}")
+            print(
+                f"  OK Training started: {job_id} | models={models} | best={best_model}"
+            )
 
         # Job info
         elif path == "/get-job-info":
@@ -290,12 +328,12 @@ class MockHandler(BaseHTTPRequestHandler):
 
 
 def start_server(port: int = 8585, background: bool = False):
-    server = HTTPServer(("0.0.0.0", port), MockHandler)
-    print(f"✓ Mock HAutoML Server running on port {port}")
-    print(f"  Endpoints: /home, /get-list-data-by-userid, /get-data-info,")
-    print(f"  /api/v1/available-models/{{type}}, /train-from-requestbody-json/,")
-    print(f"  /get-job-info, /get-list-job-by-userId")
-    print(f"  Dataset: Student Performance (395 rows × 33 cols)")
+    server = HTTPServer(("127.0.0.1", port), MockHandler)
+    print(f"OK Mock HAutoML Server running on port {port}")
+    print("  Endpoints: /home, /get-list-data-by-userid, /get-data-info,")
+    print("  /api/v1/available-models/{type}, /train-from-requestbody-json/,")
+    print("  /get-job-info, /get-list-job-by-userId")
+    print("  Dataset: Student Performance (395 rows × 33 cols)")
     print()
 
     if background:

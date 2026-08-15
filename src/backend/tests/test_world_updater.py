@@ -1,6 +1,6 @@
-import unittest
-import sys
 import os
+import sys
+import unittest
 
 # Đảm bảo có thể import từ backend (cwd) khi chạy test trực tiếp
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -8,8 +8,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from hagent.world.schema import WorldState
 from hagent.world.updater import apply_tool_output
 
-class TestWorldUpdater(unittest.TestCase):
 
+class TestWorldUpdater(unittest.TestCase):
     def setUp(self):
         self.state = WorldState(user_id="test_user")
 
@@ -53,5 +53,6 @@ class TestWorldUpdater(unittest.TestCase):
         self.assertIsInstance(result["created_at"], str)
         self.assertIsInstance(result["updated_at"], str)
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     unittest.main()

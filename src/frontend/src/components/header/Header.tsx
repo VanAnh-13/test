@@ -1,7 +1,13 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
+import Image from "next/image";
 import Link from "next/link";
+import { signIn, signOut, useSession } from "next-auth/react";
+import { LogOut, Menu, User2, X } from "lucide-react";
+import { FaGithub } from "react-icons/fa";
+
+import ModeToggle from "@/components/mode-toggle";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -12,12 +18,14 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { signIn, signOut, useSession } from "next-auth/react";
-import { GithubIcon, LogOut, Menu, User2, X } from "lucide-react";
-import Image from "next/image";
-import ModeToggle from "@/components/mode-toggle";
-import { FaGithub } from "react-icons/fa";
 import { useApi } from "@/hooks/useApi";
+
+const navigationItems = [
+  { label: "TRANG CHỦ", href: "#home" },
+  { label: "GIỚI THIỆU", href: "#introduction" },
+  { label: "VỀ CHÚNG TÔI", href: "#about-us" },
+  { label: "LIÊN HỆ", href: "#contact" },
+] as const;
 
 export default function Header() {
   const { get } = useApi();
@@ -26,157 +34,139 @@ export default function Header() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
+    let active = true;
+    let objectUrl: string | null = null;
+
     const fetchAvatar = async () => {
-      if (session?.user?.username) {
-        try {
-          const blob = await get(
-            `${process.env.NEXT_PUBLIC_BASE_API}/get_avatar/${session.user.username}`,
-            { responseType: "blob" },
-          );
-
-          // Kiểm tra blob rỗng
-          if (!blob || blob.size === 0) {
-            setAvatarUrl("");
-            return;
-          }
-
-          // tạo url từ blob
-          const url = URL.createObjectURL(blob);
-          setAvatarUrl(url);
-        } catch (error) {
-          console.log("Avatar fetch error:", error);
-        }
+      if (!session?.user?.username) return;
+      try {
+        const blob = await get(
+          `${process.env.NEXT_PUBLIC_BASE_API}/get_avatar/${session.user.username}`,
+          { responseType: "blob" },
+        );
+        if (!active) return;
+        if (objectUrl) URL.revokeObjectURL(objectUrl);
+        objectUrl = blob?.size ? URL.createObjectURL(blob) : null;
+        setAvatarUrl(objectUrl ?? "");
+      } catch (error) {
+        if (active) setAvatarUrl("");
+        console.warn("Không thể tải avatar", {
+          errorType: error instanceof Error ? error.name : "UnknownError",
+        });
       }
     };
 
-    fetchAvatar();
-    const handleAvatarUpdate = () => fetchAvatar();
+    void fetchAvatar();
+    const handleAvatarUpdate = () => void fetchAvatar();
     window.addEventListener("avatar-updated", handleAvatarUpdate);
-    return () =>
+    return () => {
+      active = false;
       window.removeEventListener("avatar-updated", handleAvatarUpdate);
-  }, [session?.user?.username]);
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [get, session?.user?.username]);
 
   return (
-    <header className="w-full h-16 border-b px-4 md:px-6 flex items-center justify-between z-50 bg-background">
-      <Link
-        href="/"
-        className="flex items-center gap-2 shrink-0"
-        prefetch={false}
-      >
-        <Image src="/image.png" priority width={120} height={120} alt="logo" />
+    <header className="relative z-50 flex h-16 w-full items-center justify-between border-b bg-background px-4 md:px-6">
+      <Link href="/" className="flex shrink-0 items-center gap-2" prefetch={false}>
+        <Image src="/image.png" priority width={120} height={120} alt="HAutoML" />
       </Link>
 
-      <div className="hidden md:flex items-center gap-10">
+      <nav className="hidden items-center gap-6 lg:flex xl:gap-10" aria-label="Điều hướng chính">
         {!session &&
-          ["TRANG CHỦ", "GIỚI THIỆU", "VỀ CHÚNG TÔI", "LIÊN HỆ"].map(
-            (item, idx) => {
-              const hrefs = ["#home", "#introduction", "#about-us", "#contact"];
-              return (
-                <Link
-                  key={item}
-                  href={{
-                    pathname: "/",
-                    hash: hrefs[idx].replace("#", ""),
-                  }}
-                  scroll={true}
-                  onClick={() => setMobileMenuOpen(false)}
-                  className="block text-base font-medium text-center py-3 text-foreground hover:text-[#376FF9] transition-colors duration-200"
-                >
-                  {item}
-                </Link>
-              );
-            },
-          )}
-      </div>
+          navigationItems.map((item) => (
+            <Link
+              key={item.label}
+              href={{ pathname: "/", hash: item.href.slice(1) }}
+              className="py-3 text-center text-sm font-medium text-foreground transition-colors hover:text-blue-600 motion-reduce:transition-none"
+            >
+              {item.label}
+            </Link>
+          ))}
+      </nav>
 
-      <div className="flex items-center gap-3">
+      <div className="flex shrink-0 items-center gap-2 sm:gap-3">
         <Link
           href="https://github.com/optivisionlab/AutoML"
           target="_blank"
           rel="noopener noreferrer"
-          className="text-gray-700 dark:text-gray-300 hover:text-black dark:hover:text-white transition-colors"
+          aria-label="Mở mã nguồn HAutoML trên GitHub"
+          className="text-gray-700 transition-colors hover:text-black focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:text-gray-300 dark:hover:text-white motion-reduce:transition-none"
         >
-          <FaGithub className="w-8 h-8" />
+          <FaGithub className="size-7 sm:size-8" aria-hidden="true" />
         </Link>
         <ModeToggle />
 
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            {session ? (
-              <Avatar className="cursor-pointer">
-                <AvatarImage src={avatarUrl ?? undefined} alt="avatar" />
-                <AvatarFallback className="bg-gray-100">
-                  <User2 className="w-6 h-6" />
-                </AvatarFallback>
-              </Avatar>
-            ) : (
-              <div className="hidden md:flex items-center space-x-4">
-                <Button
-                  onClick={() => signIn()}
-                  className="bg-[#376FF9] text-white hover:bg-[#2F5ED6] text-base"
-                >
-                  ĐĂNG NHẬP
-                </Button>
-                {/* <span >Hoặc</span> */}
-                <Button className="bg-[#376FF9] text-white hover:bg-[#2F5ED6]">
-                  <Link href={"/register"} className="text-base">
-                    ĐĂNG KÝ
-                  </Link>
-                </Button>
-              </div>
-            )}
-          </DropdownMenuTrigger>
-          {session && (
-            <DropdownMenuContent>
+        {session ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button type="button" aria-label="Mở menu tài khoản">
+                <Avatar className="cursor-pointer">
+                  <AvatarImage src={avatarUrl ?? undefined} alt="Ảnh đại diện" />
+                  <AvatarFallback className="bg-gray-100">
+                    <User2 className="size-6" aria-hidden="true" />
+                  </AvatarFallback>
+                </Avatar>
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
               <DropdownMenuLabel>{session.user?.username}</DropdownMenuLabel>
               <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => signOut()}>
-                Đăng xuất <LogOut size={16} className="ml-2 text-red-600" />
+              <DropdownMenuItem onClick={() => void signOut()}>
+                Đăng xuất <LogOut className="ml-2 size-4 text-red-600" aria-hidden="true" />
               </DropdownMenuItem>
             </DropdownMenuContent>
-          )}
-        </DropdownMenu>
+          </DropdownMenu>
+        ) : (
+          <div className="hidden items-center gap-3 lg:flex">
+            <Button type="button" onClick={() => void signIn()}>
+              ĐĂNG NHẬP
+            </Button>
+            <Button asChild>
+              <Link href="/register">ĐĂNG KÝ</Link>
+            </Button>
+          </div>
+        )}
 
-        <button
-          className="md:hidden ml-2"
-          onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-        >
-          {mobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
-        </button>
+        {!session && (
+          <button
+            type="button"
+            className="ml-1 rounded-md p-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:hidden"
+            aria-label={mobileMenuOpen ? "Đóng menu" : "Mở menu"}
+            aria-expanded={mobileMenuOpen}
+            aria-controls="mobile-navigation"
+            onClick={() => setMobileMenuOpen((current) => !current)}
+          >
+            {mobileMenuOpen ? <X aria-hidden="true" /> : <Menu aria-hidden="true" />}
+          </button>
+        )}
       </div>
 
-      {/* Mobile Menu */}
       {mobileMenuOpen && !session && (
-        <div className="absolute top-16 left-0 w-full bg-background px-4 py-3 flex flex-col gap-3 md:hidden z-40 shadow-md border-t">
-          {["Trang chủ", "Giới thiệu", "Về chúng tôi", "Liên hệ"].map(
-            (item, idx) => {
-              const hrefs = ["#home", "#introduction", "#about-us", "#contact"];
-              return (
-                <Link
-                  key={idx}
-                  href={hrefs[idx]}
-                  className="w-full text-center py-4 border-b border-gray-200 last:border-none text-sm font-medium text-foreground hover:text-[#376FF9] hover:bg-gray-100 transition-colors duration-200"
-                  onClick={() => setMobileMenuOpen(false)}
-                >
-                  {item}
-                </Link>
-              );
-            },
-          )}
-
-          <Button
-            onClick={() => signIn()}
-            className="w-full bg-[#376FF9] text-white hover:bg-[#2F5ED6]"
-          >
+        <nav
+          id="mobile-navigation"
+          aria-label="Điều hướng mobile"
+          className="absolute left-0 top-16 z-40 flex w-full flex-col gap-2 border-t bg-background px-4 py-3 shadow-md lg:hidden"
+        >
+          {navigationItems.map((item) => (
+            <Link
+              key={item.label}
+              href={item.href}
+              className="w-full border-b border-border py-3 text-center text-sm font-medium last:border-0 hover:bg-muted hover:text-blue-600"
+              onClick={() => setMobileMenuOpen(false)}
+            >
+              {item.label}
+            </Link>
+          ))}
+          <Button type="button" className="w-full" onClick={() => void signIn()}>
             Đăng nhập
           </Button>
-
-          <Link href="/register" className="w-full">
-            <Button className="w-full bg-[#376FF9] text-white hover:bg-[#2F5ED6]">
+          <Button asChild className="w-full">
+            <Link href="/register" onClick={() => setMobileMenuOpen(false)}>
               Đăng ký
-            </Button>
-          </Link>
-        </div>
+            </Link>
+          </Button>
+        </nav>
       )}
     </header>
   );

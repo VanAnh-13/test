@@ -1,13 +1,10 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 
-// Step wrapper
+// Khung dùng chung cho một bước chọn mô hình.
 interface StepProps {
   title: string;
   options: { value: string; label: string; disabled?: boolean }[];

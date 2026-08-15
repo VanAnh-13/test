@@ -27,7 +27,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 BACKEND = Path(__file__).resolve().parent.parent
 MANIFEST_SCHEMA_VERSION = 1
@@ -51,7 +51,7 @@ if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
 
 
-def load_docs_jsonl(path: str) -> List[Dict[str, Any]]:
+def load_docs_jsonl(path: str) -> list[dict[str, Any]]:
     docs = []
     with open(path, encoding="utf-8") as fh:
         for line in fh:
@@ -61,7 +61,7 @@ def load_docs_jsonl(path: str) -> List[Dict[str, Any]]:
     return docs
 
 
-def load_docs_mongo(limit: int) -> List[Dict[str, Any]]:
+def load_docs_mongo(limit: int) -> list[dict[str, Any]]:
     import asyncio
 
     from pymongo import AsyncMongoClient
@@ -88,6 +88,7 @@ def sha256_of(path: Path) -> str:
     h.update(path.read_bytes())
     return h.hexdigest()
 
+
 def _full_sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -106,12 +107,11 @@ def _is_sha256(value: Any) -> bool:
         and all(c in "0123456789abcdef" for c in value)
     )
 
+
 def _atomic_write_json(path: Path, value: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = path.with_name(f"{path.name}.tmp")
-    payload = (
-        json.dumps(value, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
-    )
+    payload = json.dumps(value, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
     try:
         with temp_path.open("w", encoding="utf-8", newline="\n") as fh:
             fh.write(payload)
@@ -121,7 +121,6 @@ def _atomic_write_json(path: Path, value: dict[str, Any]) -> None:
     except BaseException:
         temp_path.unlink(missing_ok=True)
         raise
-
 
 
 def _normalize_checkpoint_archive(path: Path) -> None:
@@ -162,9 +161,7 @@ def _checkpoint_metadata(path: Path) -> dict[str, Any]:
                 {
                     "meta_profile": str(archive["meta_profile"].item()),
                     "hidden_dim": int(archive["hidden_dim"].item()),
-                    "time_limit_norm": float(
-                        archive["time_limit_norm"].item()
-                    ),
+                    "time_limit_norm": float(archive["time_limit_norm"].item()),
                     "use_latent": bool(archive["use_latent"].item()),
                     "latent_dim": int(archive["latent_dim"].item()),
                 }
@@ -187,6 +184,7 @@ def _expected_checkpoint_metadata(config: dict[str, Any]) -> dict[str, Any]:
         "use_latent": feature_config["use_latent"],
         "latent_dim": feature_config["latent_dim"],
     }
+
 
 def validate_checkpoint_manifest(
     head_path: str | Path,
@@ -258,10 +256,7 @@ def validate_checkpoint_manifest(
         raise ValueError("Invalid checkpoint manifest: training fields")
     if any(type(training[field]) is not int for field in required_training_fields):
         raise ValueError("Invalid checkpoint manifest: training field types")
-    if any(
-        training[field] < 1
-        for field in ("epochs", "ensemble_size", "min_samples")
-    ):
+    if any(training[field] < 1 for field in ("epochs", "ensemble_size", "min_samples")):
         raise ValueError("Invalid checkpoint manifest: training field values")
     if training["n_trajectory_docs"] < 0 or training["n_samples"] < 0:
         raise ValueError("Invalid checkpoint manifest: training sample counts")
@@ -296,9 +291,7 @@ def validate_checkpoint_manifest(
     if not isinstance(member_records, list):
         raise TypeError("Invalid checkpoint manifest: ensemble_members must be a list")
     declared_names = [
-        record.get("filename")
-        for record in member_records
-        if isinstance(record, dict)
+        record.get("filename") for record in member_records if isinstance(record, dict)
     ]
     if declared_names != expected_names:
         raise ValueError("Invalid checkpoint manifest: declared member set mismatch")
@@ -306,40 +299,31 @@ def validate_checkpoint_manifest(
         digest = record.get("sha256")
         member_path = ensemble / record["filename"]
         if not _is_sha256(digest) or digest != _full_sha256(member_path):
-            raise ValueError(f"Invalid checkpoint manifest: hash mismatch for {member_path.name}")
+            raise ValueError(
+                f"Invalid checkpoint manifest: hash mismatch for {member_path.name}"
+            )
 
     expected_metadata = {
         "outcome_head": _expected_checkpoint_metadata(config["outcome_head"]),
-        "outcome_ensemble": _expected_checkpoint_metadata(
-            config["outcome_ensemble"]
-        ),
+        "outcome_ensemble": _expected_checkpoint_metadata(config["outcome_ensemble"]),
     }
 
     def validate_metadata(path: Path, component: str) -> None:
         expected = expected_metadata[component]
         declared_vocabulary = vocabulary[component]
-        expected_vocabulary = {
-            field: expected[field] for field in VOCABULARY_FIELDS
-        }
+        expected_vocabulary = {field: expected[field] for field in VOCABULARY_FIELDS}
         if declared_vocabulary != expected_vocabulary:
             raise ValueError(
                 "Invalid checkpoint manifest: checkpoint vocabulary mismatch"
             )
         actual = _checkpoint_metadata(path)
-        actual_vocabulary = {
-            field: actual[field] for field in VOCABULARY_FIELDS
-        }
+        actual_vocabulary = {field: actual[field] for field in VOCABULARY_FIELDS}
         if actual_vocabulary != declared_vocabulary:
             raise ValueError(
                 "Invalid checkpoint manifest: checkpoint vocabulary mismatch"
             )
-        if any(
-            actual[field] != expected[field]
-            for field in CHECKPOINT_CONFIG_FIELDS
-        ):
-            raise ValueError(
-                "Invalid checkpoint manifest: checkpoint config mismatch"
-            )
+        if any(actual[field] != expected[field] for field in CHECKPOINT_CONFIG_FIELDS):
+            raise ValueError("Invalid checkpoint manifest: checkpoint config mismatch")
 
     validate_metadata(head, "outcome_head")
     for member_name in expected_names:
@@ -348,7 +332,7 @@ def validate_checkpoint_manifest(
 
 
 def train_from_docs(
-    docs: List[Dict[str, Any]],
+    docs: list[dict[str, Any]],
     *,
     head_path: str | None = None,
     ensemble_dir: str | None = None,
@@ -358,7 +342,7 @@ def train_from_docs(
     min_samples: int = 8,
     source_sha256: str | None = None,
     dry_run: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Trích sample → train head + ensemble → ghi checkpoint. Trả manifest."""
     from hagent.bridge.config import get_world_model_config
     from hagent.world.predictor.ensemble import train_outcome_ensemble
@@ -368,7 +352,7 @@ def train_from_docs(
     )
 
     samples = extract_outcome_samples(docs)
-    report: Dict[str, Any] = {
+    report: dict[str, Any] = {
         "n_trajectory_docs": len(docs),
         "n_samples": len(samples),
     }
@@ -397,9 +381,7 @@ def train_from_docs(
         ens_out = BACKEND / ens_out
 
     head = train_outcome_head(samples, config=head_cfg, epochs=epochs, seed=seed)
-    ens = train_outcome_ensemble(
-        samples, config=ens_cfg, k=k, epochs=epochs, seed=seed
-    )
+    ens = train_outcome_ensemble(samples, config=ens_cfg, k=k, epochs=epochs, seed=seed)
     member_count = len(ens.members)
     manifest_path = ens_out / MANIFEST_FILENAME
     source_digest = source_sha256 or _canonical_sha256(docs)
@@ -408,17 +390,13 @@ def train_from_docs(
     if member_count < 1:
         raise RuntimeError("Outcome ensemble training produced no members")
     effective_head_cfg = {
-        key: value
-        for key, value in head_cfg.items()
-        if key != "checkpoint_path"
+        key: value for key, value in head_cfg.items() if key != "checkpoint_path"
     }
     effective_head_cfg.update(head.feature_cfg)
     effective_head_cfg["hidden_dim"] = head.hidden_dim
     first_member = ens.members[0]
     effective_ens_cfg = {
-        key: value
-        for key, value in ens_cfg.items()
-        if key != "checkpoint_dir"
+        key: value for key, value in ens_cfg.items() if key != "checkpoint_dir"
     }
     effective_ens_cfg.update(first_member.feature_cfg)
     effective_ens_cfg["hidden_dim"] = first_member.hidden_dim
@@ -429,10 +407,7 @@ def train_from_docs(
     }
     config_digest = _canonical_sha256(config)
     vocabulary = {
-        component: {
-            field: feature_config[field]
-            for field in VOCABULARY_FIELDS
-        }
+        component: {field: feature_config[field] for field in VOCABULARY_FIELDS}
         for component, feature_config in (
             ("outcome_head", head.feature_cfg),
             ("outcome_ensemble", first_member.feature_cfg),
@@ -505,6 +480,7 @@ def train_from_docs(
     )
     return report
 
+
 # Backward-compatible name used by existing callers.
 train_and_save = train_from_docs
 
@@ -513,12 +489,18 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Train outcome model checkpoints")
     parser.add_argument("--source", choices=["mongo", "jsonl"], default="mongo")
     parser.add_argument("--jsonl", help="File JSONL trajectory docs (source=jsonl)")
-    parser.add_argument("--limit", type=int, default=10000, help="Giới hạn docs từ Mongo")
+    parser.add_argument(
+        "--limit", type=int, default=10000, help="Giới hạn docs từ Mongo"
+    )
     parser.add_argument("--out-head", dest="out_head", help="Override checkpoint_path")
-    parser.add_argument("--out-ensemble", dest="out_ensemble", help="Override checkpoint_dir")
+    parser.add_argument(
+        "--out-ensemble", dest="out_ensemble", help="Override checkpoint_dir"
+    )
     parser.add_argument("--epochs", type=int, default=200)
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--k", type=int, default=None, help="Số member ensemble (mặc định theo yaml)")
+    parser.add_argument(
+        "--k", type=int, default=None, help="Số member ensemble (mặc định theo yaml)"
+    )
     parser.add_argument("--min-samples", type=int, default=8, dest="min_samples")
     parser.add_argument("--dry-run", action="store_true", help="Chỉ đếm sample")
     args = parser.parse_args()

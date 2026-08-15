@@ -1,24 +1,25 @@
 """
-Reviser node — patch / re-plan when executor hits validate fail, tool error, or high surprise.
+Node sửa hoặc lập lại plan khi kiểm tra thất bại, công cụ lỗi hay surprise cao.
 """
 
 from __future__ import annotations
 
-import logging
-from typing import Any, Dict, List
+import structlog
 
 try:
     from langchain_core.messages import AIMessage
 except ImportError:  # pragma: no cover
+
     class AIMessage:  # type: ignore[no-redef]
         def __init__(self, content: str = "", **kwargs):
             self.content = content
             self.type = "ai"
 
-from hagent.agent.planning.plan_adapter import plan_results_to_state_update
-from hagent.agent.state import AutoMLState
 
-logger = logging.getLogger(__name__)
+from hagent.agent.orchestration import AutoMLState
+from hagent.agent.planning.plan_adapter import plan_results_to_state_update
+
+logger = structlog.get_logger(__name__)
 
 
 def _max_revisions() -> int:
@@ -26,7 +27,10 @@ def _max_revisions() -> int:
         from hagent.bridge.config import get_planning_config
 
         return int(get_planning_config().get("max_revisions", 2))
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 - cấu hình tùy chọn giữ giá trị dự phòng
+        logger.debug(
+            "Không đọc được cấu hình max_revisions", error_type=type(exc).__name__
+        )
         return 2
 
 
@@ -36,10 +40,10 @@ def _patch_plan_for_error(
     goal: dict | None,
 ) -> dict | None:
     """
-    Deterministic patches without LLM:
-    - missing dataset → prepend list_datasets / get_dataset_info
-    - bad target → drop start_training target, prepend get_features
-    - job info missing → prepend list_jobs
+    Các patch xác định không dùng LLM:
+    - thiếu tập dữ liệu thì thêm list_datasets hoặc get_dataset_info vào đầu;
+    - mục tiêu sai thì bỏ target của start_training và thêm get_features vào đầu;
+    - thiếu thông tin job thì thêm list_jobs vào đầu.
     """
     if not plan:
         return None
@@ -59,7 +63,10 @@ def _patch_plan_for_error(
     def _prepend(action_type: str, params: dict | None = None) -> None:
         new_steps.insert(
             0,
-            {"action": {"type": action_type, "params": dict(params or {})}, "agent": None},
+            {
+                "action": {"type": action_type, "params": dict(params or {})},
+                "agent": None,
+            },
         )
 
     if "dataset_id" in err or "not in world model" in err:
@@ -69,19 +76,20 @@ def _patch_plan_for_error(
             ds = (goal or {}).get("dataset_id")
             _prepend("get_dataset_info", {"dataset_id": ds} if ds else {})
 
-    if "target_column" in err or "features" in err:
-        if not _has("get_features"):
-            ds = (goal or {}).get("dataset_id")
-            _prepend("get_features", {"dataset_id": ds} if ds else {})
+    if ("target_column" in err or "features" in err) and not _has("get_features"):
+        ds = (goal or {}).get("dataset_id")
+        _prepend("get_features", {"dataset_id": ds} if ds else {})
 
-    if "job_id" in err:
-        if not _has("list_jobs"):
-            _prepend("list_jobs")
+    if "job_id" in err and not _has("list_jobs"):
+        _prepend("list_jobs")
 
-    if "high surprise" in err:
-        # Soft: re-order — ensure analyze before train
-        if _has("start_training") and not _has("get_dataset_info"):
-            _prepend("get_dataset_info")
+    # Sắp xếp mềm để bảo đảm phân tích trước khi huấn luyện.
+    if (
+        "high surprise" in err
+        and _has("start_training")
+        and not _has("get_dataset_info")
+    ):
+        _prepend("get_dataset_info")
 
     if new_steps == steps:
         return None
@@ -94,12 +102,16 @@ def _patch_plan_for_error(
 
 
 async def reviser_node(state: AutoMLState) -> dict:
-    """Revise plan or abort when revision budget exhausted."""
+    """Sửa plan hoặc dừng khi đã dùng hết ngân sách sửa đổi."""
     max_rev = _max_revisions()
     count = int(state.get("revision_count") or 0) + 1
     error = state.get("last_step_error") or "unknown error"
     goal = state.get("goal") if isinstance(state.get("goal"), dict) else {}
-    plan = state.get("selected_plan") if isinstance(state.get("selected_plan"), dict) else {}
+    plan = (
+        state.get("selected_plan")
+        if isinstance(state.get("selected_plan"), dict)
+        else {}
+    )
     events = list(state.get("execution_events") or [])
     cost = dict(state.get("cost_metrics") or {})
     cost["revisions"] = count
@@ -133,10 +145,10 @@ async def reviser_node(state: AutoMLState) -> dict:
             },
         }
 
-    # 1) Deterministic patch
+    # 1. Áp dụng patch xác định.
     patched = _patch_plan_for_error(plan, error, goal)
 
-    # 2) If patch weak, re-run CEM-lite with failure hint in goal description
+    # 2. Nếu patch chưa đủ, chạy lại CEM-lite với gợi ý lỗi trong mô tả goal.
     if patched is None:
         try:
             from hagent.world.service import WorldModelService
@@ -145,10 +157,9 @@ async def reviser_node(state: AutoMLState) -> dict:
             snap = state.get("world_model") or {"user_id": state.get("user_id") or ""}
             g = dict(goal or {})
             g["description"] = (
-                str(g.get("description") or "")
-                + f" | previous_failure: {error}"
+                str(g.get("description") or "") + f" | previous_failure: {error}"
             )
-            # Force non-respond
+            # Buộc goal không đi theo nhánh phản hồi trực tiếp.
             if g.get("goal_type") in (None, "respond"):
                 g["goal_type"] = "train"
             obs = wm.observation_from_snapshot(
@@ -183,9 +194,9 @@ async def reviser_node(state: AutoMLState) -> dict:
                     "cost_metrics": cost,
                     **{k: v for k, v in update.items() if k != "plan_entries"},
                 }
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - lỗi lập lại plan chuyển sang patch cũ
             logger.warning("CEM replan failed: %s", exc)
-            patched = plan  # fall through
+            patched = plan  # tiếp tục bằng plan hiện tại
 
     if patched is None:
         patched = plan
@@ -195,9 +206,7 @@ async def reviser_node(state: AutoMLState) -> dict:
             "type": "revise_patch",
             "revision": count,
             "steps": [
-                (s.get("action") or {}).get("type")
-                if isinstance(s, dict)
-                else None
+                (s.get("action") or {}).get("type") if isinstance(s, dict) else None
                 for s in (patched.get("steps") or [])
             ],
         }
@@ -206,9 +215,7 @@ async def reviser_node(state: AutoMLState) -> dict:
     return {
         "messages": [
             AIMessage(
-                content=(
-                    f"Revise #{count}/{max_rev}: đã chỉnh plan sau lỗi `{error}`."
-                )
+                content=(f"Revise #{count}/{max_rev}: đã chỉnh plan sau lỗi `{error}`.")
             )
         ],
         "selected_plan": patched,

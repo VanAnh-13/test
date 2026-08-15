@@ -61,7 +61,7 @@ const Page = () => {
     };
 
     fetchData();
-  }, []);
+  }, [post]);
 
   return (
     <Card className="max-w-6xl mx-auto mt-8 shadow-md dark:bg-[#171717]">

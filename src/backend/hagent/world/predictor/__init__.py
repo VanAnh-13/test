@@ -21,19 +21,20 @@ from hagent.world.predictor.outcome_head_v1 import (
 from hagent.world.predictor.tabular_transition_v1 import TabularTransitionV1Predictor
 
 __all__ = [
-    "WorldPredictor",
-    "create_predictor",
-    "create_outcome_head",
-    "create_outcome_ensemble",
-    "OutcomeEnsemble",
-    "train_outcome_ensemble",
-    "TabularTransitionV1Predictor",
     "DynamicsEnsemble",
-    "train_dynamics_ensemble",
+    "NeuralJepaV1Predictor",
+    "OutcomeEnsemble",
     "OutcomeHeadV1",
     "OutcomePrediction",
+    "TabularTransitionV1Predictor",
+    "WorldPredictor",
+    "create_outcome_ensemble",
+    "create_outcome_head",
+    "create_predictor",
     "extract_outcome_samples",
     "outcome_features",
     "rank_variants_by_outcome",
+    "train_dynamics_ensemble",
+    "train_outcome_ensemble",
     "train_outcome_head",
 ]

@@ -2,4 +2,4 @@
 
 from .search_strategy_factory import SearchStrategyFactory
 
-__all__ = ['SearchStrategyFactory']
+__all__ = ["SearchStrategyFactory"]

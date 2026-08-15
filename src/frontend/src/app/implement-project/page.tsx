@@ -66,25 +66,24 @@ const ImplementProject = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 5;
 
-  const fetchTrainingJobs = async () => {
-    if (!session?.user?.id) return;
-    setLoading(true);
-    try {
-      const data = await post(
-        `/get-list-job-by-userId?user_id=${session.user.id}`,
-      );
-
-      setJobs(data || []);
-    } catch (err) {
-      console.error("Lỗi khi lấy lịch sử huấn luyện:", err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   useEffect(() => {
-    fetchTrainingJobs();
-  }, [session?.user?.id]);
+    const userId = session?.user?.id;
+    if (!userId) return;
+
+    const fetchTrainingJobs = async () => {
+      setLoading(true);
+      try {
+        const data = await post(`/get-list-job-by-userId?user_id=${userId}`);
+        setJobs(data || []);
+      } catch (err) {
+        console.error("Lỗi khi lấy lịch sử huấn luyện:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    void fetchTrainingJobs();
+  }, [post, session?.user?.id]);
 
   const handleConfirm = async () => {
     if (!selectedJobId) return;

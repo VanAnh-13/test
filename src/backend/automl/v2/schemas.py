@@ -1,5 +1,6 @@
 from pydantic import BaseModel
 
+
 class InputRequest(BaseModel):
     id_data: str
     id_user: str
@@ -14,24 +15,22 @@ class InputRequest(BaseModel):
                     "config": {
                         "choose": "new_model",
                         "metric_sort": "accuracy",
-                        "list_feature": [
-                            "A",
-                            "B",
-                            "..."
-                        ],
+                        "list_feature": ["A", "B", "..."],
                         "problem_type": "",
                         "search_algorithm": "",
                         "target": "Revenue",
-                        "max_time": 900
-                    }
+                        "max_time": 900,
+                    },
                 }
             ]
         }
     }
 
+
 class UserInfo(BaseModel):
     id: str
     name: str
+
 
 class DataInfo(BaseModel):
     id: str

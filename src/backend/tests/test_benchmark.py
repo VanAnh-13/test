@@ -106,7 +106,10 @@ class TestSimulatedEnv:
 
     def test_optimum_definition(self):
         prof = DatasetProfile(
-            name="x", base=0.5, algo_bonus={"a": 0.1, "b": 0.3}, time_coef=0.05,
+            name="x",
+            base=0.5,
+            algo_bonus={"a": 0.1, "b": 0.3},
+            time_coef=0.05,
             noise=0.0,
         )
         assert prof.optimum == pytest.approx(0.85)
@@ -123,12 +126,17 @@ class TestRunCondition:
         assert len(res["curve"]) == 8
         assert res["curve"] == best_so_far_curve(res["scores"])
         assert all(
-            res["curve"][i] <= res["curve"][i + 1]
-            for i in range(len(res["curve"]) - 1)
+            res["curve"][i] <= res["curve"][i + 1] for i in range(len(res["curve"]) - 1)
         )
 
     def test_all_conditions_run(self):
-        for cond in ("wm", "no_wm", "random", "fixed_grid_search", "fixed_bayesian_search"):
+        for cond in (
+            "wm",
+            "no_wm",
+            "random",
+            "fixed_grid_search",
+            "fixed_bayesian_search",
+        ):
             res = run_condition(cond, "synth_flat", budget_jobs=6, seed=0)
             assert res["condition"] == cond
             assert res["jobs_used"] == 6
@@ -152,7 +160,9 @@ class TestRunCondition:
     def test_wm_beats_fixed_grid_on_strong_signal(self):
         """Trên profile tín hiệu mạnh, wm phải hơn fixed grid (không bonus)."""
         wm = run_condition("wm", "synth_strong", budget_jobs=12, seed=0)
-        fixed = run_condition("fixed_grid_search", "synth_strong", budget_jobs=12, seed=0)
+        fixed = run_condition(
+            "fixed_grid_search", "synth_strong", budget_jobs=12, seed=0
+        )
         assert wm["final_best"] > fixed["final_best"]
 
     def test_wm_reaches_95pct_on_strong_signal(self):
@@ -200,9 +210,7 @@ class TestReviewFixes:
     def test_metrics_use_expected_scores_not_noisy_max(self):
         """fixed_grid trên synth_noisy phải có regret LỚN (steering tệ),
         không bị max-of-noise che mất."""
-        res = run_condition(
-            "fixed_grid_search", "synth_noisy", budget_jobs=20, seed=0
-        )
+        res = run_condition("fixed_grid_search", "synth_noisy", budget_jobs=20, seed=0)
         prof = PROFILES["synth_noisy"]
         # expected score của grid@600 thấp hơn optimum đúng bằng bonus bayesian
         assert res["final_best"] == pytest.approx(
@@ -221,7 +229,6 @@ class TestReviewFixes:
 
     def test_warm_start_top_k_zero_disables_all_sources(self):
         """top_k=0 phải tắt cả warm-start từ memory (chống nhiễm chéo)."""
-        import asyncio
         import tempfile
 
         from hagent.agent.campaign.warm_start import collect_warm_start_configs
@@ -257,7 +264,9 @@ class TestReviewFixes:
         # optimum = base + best algo + full time + best model effect
         assert prof.optimum == pytest.approx(0.55 + 0.05 + 0.04 + 0.15)
         # chọn đúng model tốt nhất > quét cả catalog (dilution)
-        best_only = prof.expected_score("bayesian_search", 600, ["RandomForestClassifier"])
+        best_only = prof.expected_score(
+            "bayesian_search", 600, ["RandomForestClassifier"]
+        )
         default_all = prof.expected_score("bayesian_search", 600, None)
         assert best_only - default_all == pytest.approx(0.02 * 3)
 

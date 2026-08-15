@@ -16,16 +16,19 @@ Hỗ trợ endpoints:
 
 from __future__ import annotations
 
+import argparse
+import asyncio
 import json
+import os
+import re
 import time
 import uuid
-import argparse
-import re
-from typing import Any
+from collections.abc import AsyncIterator
 
 import uvicorn
 from fastapi import FastAPI
-from pydantic import BaseModel
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 
 app = FastAPI(title="Mock LLM Server (CI)")
 
@@ -40,11 +43,11 @@ class ChatMessage(BaseModel):
 
 class ChatCompletionRequest(BaseModel):
     model: str = "mock-model"
-    messages: list[ChatMessage] = []
+    messages: list[ChatMessage] = Field(default_factory=list)
     temperature: float = 0.0
     max_tokens: int = 1024
     tools: list[dict] | None = None
-    tool_choice: str | None = None
+    tool_choice: str | dict | None = None
     stream: bool = False
 
 
@@ -77,12 +80,14 @@ _TOOL_CALL_PATTERNS: list[tuple[list[str], dict]] = [
         ["train", "huấn luyện", "training", "start"],
         {
             "name": "start_training",
-            "arguments": json.dumps({
-                "user_id": "test_user_123",
-                "dataset_id": "ds_001",
-                "problem_type": "classification",
-                "target_column": "target",
-            }),
+            "arguments": json.dumps(
+                {
+                    "user_id": "test_user_123",
+                    "dataset_id": "ds_001",
+                    "problem_type": "classification",
+                    "target_column": "target",
+                }
+            ),
         },
     ),
     (
@@ -133,6 +138,91 @@ def _generate_text_response(user_message: str) -> str:
     return "Tôi là HAgent. Tôi có thể giúp bạn quản lý datasets, huấn luyện models, và theo dõi jobs trên HAutoML."
 
 
+def _e2e_text_response(messages: list[ChatMessage]) -> str | None:
+    """Return deterministic markers used by the Docker contract smoke."""
+    last_user_index = -1
+    last_user = ""
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        if message.role == "user" and message.content:
+            last_user_index = index
+            last_user = message.content
+            break
+
+    marker_patterns = (
+        ("E2E_HISTORY_MARKER", "E2E_HISTORY_SEEDED"),
+        ("E2E_STREAM_TURN", "E2E_STREAM_ACK"),
+        ("E2E_ABORT_TURN", "E2E_ABORT_ACK"),
+    )
+    for request_marker, response_marker in marker_patterns:
+        match = re.search(rf"{request_marker}:([A-Za-z0-9_-]+)", last_user)
+        if match:
+            return f"{response_marker}:{match.group(1)}"
+
+    probe = re.search(r"E2E_HISTORY_PROBE:([A-Za-z0-9_-]+)", last_user)
+    if probe:
+        run_id = probe.group(1)
+        expected = f"E2E_HISTORY_MARKER:{run_id}"
+        prior_contents = [
+            message.content or ""
+            for message in messages[:last_user_index]
+            if message.role in {"user", "assistant"}
+        ]
+        outcome = "OK" if any(expected in value for value in prior_contents) else "NONE"
+        return f"E2E_HISTORY_{outcome}:{run_id}"
+
+    return None
+
+
+def _abort_delay_seconds() -> float:
+    raw = os.getenv("MOCK_LLM_ABORT_DELAY_SECONDS", "4")
+    try:
+        return max(0.0, min(float(raw), 30.0))
+    except ValueError:
+        return 4.0
+
+
+async def _stream_text_completion(
+    *,
+    completion_id: str,
+    created: int,
+    model: str,
+    response_text: str,
+) -> AsyncIterator[str]:
+    chunks = (
+        {
+            "id": completion_id,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model,
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {"role": "assistant", "content": response_text},
+                    "finish_reason": None,
+                }
+            ],
+        },
+        {
+            "id": completion_id,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model,
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {},
+                    "finish_reason": "stop",
+                }
+            ],
+        },
+    )
+    for chunk in chunks:
+        yield f"data: {json.dumps(chunk)}\n\n"
+        await asyncio.sleep(0)
+    yield "data: [DONE]\n\n"
+
+
 # ── Endpoints ────────────────────────────────────────────
 
 
@@ -151,6 +241,10 @@ async def chat_completions(req: ChatCompletionRequest):
 
     completion_id = f"chatcmpl-mock-{uuid.uuid4().hex[:8]}"
     created = int(time.time())
+    if "E2E_ABORT_TURN:" in user_message:
+        await asyncio.sleep(_abort_delay_seconds())
+
+    e2e_response = _e2e_text_response(req.messages)
 
     if tool_call:
         # Trả tool call response
@@ -184,7 +278,17 @@ async def chat_completions(req: ChatCompletionRequest):
         }
 
     # Trả text response
-    response_text = _generate_text_response(user_message)
+    response_text = e2e_response or _generate_text_response(user_message)
+    if req.stream:
+        return StreamingResponse(
+            _stream_text_completion(
+                completion_id=completion_id,
+                created=created,
+                model=req.model,
+                response_text=response_text,
+            ),
+            media_type="text/event-stream",
+        )
     return {
         "id": completion_id,
         "object": "chat.completion",

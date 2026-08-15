@@ -7,7 +7,10 @@ Deterministic (no Ollama). Runs in CI unit job.
 from __future__ import annotations
 
 import asyncio
+import io
+import subprocess
 import sys
+from dataclasses import FrozenInstanceError
 from pathlib import Path
 
 import pytest
@@ -22,6 +25,59 @@ from hagent.agent.harness.suite import run_harness_suite
 
 def run(coro):
     return asyncio.run(coro)
+
+
+def load_student_e2e_module():
+    """Nạp runner dưới tên ổn định để dataclass và monkeypatch hoạt động."""
+    import importlib.util
+
+    script = BACKEND / "scripts" / "run_student_performance_e2e.py"
+    spec = importlib.util.spec_from_file_location("student_e2e", script)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["student_e2e"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+class _FakeProcess:
+    """Process double tối thiểu cho contract lifecycle của mock server."""
+
+    def __init__(self, *, returncode=None):
+        self.returncode = returncode
+        self.events = []
+
+    def poll(self):
+        return self.returncode
+
+    def terminate(self):
+        self.events.append("terminate")
+        self.returncode = 0
+
+    def wait(self, timeout):
+        self.events.append(("wait", timeout))
+        return self.returncode
+
+    def kill(self):
+        self.events.append("kill")
+        self.returncode = -1
+
+
+class _HungProcess(_FakeProcess):
+    """Process double buộc cleanup đi qua nhánh kill có timeout."""
+
+    def terminate(self):
+        self.events.append("terminate")
+
+    def wait(self, timeout):
+        self.events.append(("wait", timeout))
+        if self.returncode is None:
+            raise subprocess.TimeoutExpired(cmd="student-mock", timeout=timeout)
+        return self.returncode
+
+    def kill(self):
+        self.events.append("kill")
+        self.returncode = -1
 
 
 class TestStudentFixture:
@@ -62,7 +118,12 @@ class TestStudentHarness:
         report = run(
             run_harness_suite(
                 layers=["offline", "graph"],
-                offline_modes=["single_shot", "plan_executor", "campaign", "hierarchical"],
+                offline_modes=[
+                    "single_shot",
+                    "plan_executor",
+                    "campaign",
+                    "hierarchical",
+                ],
                 tags=["student"],
             )
         )
@@ -81,33 +142,206 @@ class TestStudentHarness:
         row = report["results"][0]
         assert row["success"], row.get("reasons")
         # has_job signal via success + expect
-        assert row["tools_called"] >= 1 or "start_training" in (row.get("tool_names") or [])
+        assert row["tools_called"] >= 1 or "start_training" in (
+            row.get("tool_names") or []
+        )
 
 
 class TestStudentMockApiE2E:
     def test_mock_api_layer_assertions(self):
-        import importlib.util
-
-        script = BACKEND / "scripts" / "run_student_performance_e2e.py"
-        spec = importlib.util.spec_from_file_location("student_e2e", script)
-        assert spec and spec.loader
-        mod = importlib.util.module_from_spec(spec)
-        sys.modules["student_e2e"] = mod  # required for dataclasses on 3.12+
-        spec.loader.exec_module(mod)
+        mod = load_student_e2e_module()
 
         report = mod.run_mock_api_layer(
-            base_url="http://127.0.0.1:18585",
+            base_url=None,
             models=mod.STUDENT_MODELS,
             start_server=True,
-            port=18585,
+            port=0,
         )
         assert report.ok, [c.to_dict() for c in report.checks if not c.ok]
+        endpoint = (report.extra or {}).get("endpoint") or {}
+        assert endpoint.get("base_url", "").startswith("http://127.0.0.1:")
+        assert endpoint.get("port", 0) > 0
         job = (report.extra or {}).get("job") or {}
         assert job.get("best_model") == mod.EXPECTED_BEST_MODEL
         results = job.get("model_results") or []
         names = {r.get("model") for r in results if isinstance(r, dict)}
         for m in mod.STUDENT_MODELS:
             assert m in names
+
+
+class TestStudentMockServerLifecycle:
+    """Khóa port động, child encoding, retry và cleanup có giới hạn."""
+
+    def test_endpoint_is_immutable(self):
+        mod = load_student_e2e_module()
+        endpoint = mod.MockServerEndpoint(
+            base_url="http://127.0.0.1:54321",
+            port=54321,
+        )
+
+        with pytest.raises(FrozenInstanceError):
+            endpoint.port = 54322
+
+    def test_allocator_asks_os_for_dynamic_loopback_port(self, monkeypatch):
+        mod = load_student_e2e_module()
+        bind_calls = []
+
+        class FakeSocket:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def bind(self, address):
+                bind_calls.append(address)
+
+            def getsockname(self):
+                return (mod.LOOPBACK_HOST, 54321)
+
+        monkeypatch.setattr(mod.socket, "socket", lambda: FakeSocket())
+
+        assert mod._allocate_loopback_port() == 54321
+        assert bind_calls == [(mod.LOOPBACK_HOST, 0)]
+
+    def test_child_process_has_its_own_utf8_environment(self, monkeypatch):
+        mod = load_student_e2e_module()
+        process = _FakeProcess()
+        captured = {}
+        output = io.BytesIO()
+
+        def fake_popen(*args, **kwargs):
+            captured.update(kwargs)
+            return process
+
+        monkeypatch.setattr(mod.subprocess, "Popen", fake_popen)
+        monkeypatch.setattr(mod.tempfile, "TemporaryFile", lambda: output)
+        endpoint = mod.MockServerEndpoint(
+            base_url="http://127.0.0.1:54321",
+            port=54321,
+        )
+
+        handle = mod._spawn_mock_server(endpoint)
+
+        assert handle.process is process
+        assert captured["env"]["PYTHONUTF8"] == "1"
+        assert captured["env"]["PYTHONIOENCODING"] == "utf-8"
+        assert captured["stderr"] is subprocess.STDOUT
+
+    def test_failed_attempt_is_reaped_before_retry(self, monkeypatch):
+        mod = load_student_e2e_module()
+        first = mod.MockServerHandle(
+            process=_FakeProcess(),
+            endpoint=mod.MockServerEndpoint(
+                base_url="http://127.0.0.1:54321",
+                port=54321,
+            ),
+            output=io.BytesIO(b"bind failed"),
+        )
+        second = mod.MockServerHandle(
+            process=_FakeProcess(),
+            endpoint=mod.MockServerEndpoint(
+                base_url="http://127.0.0.1:54322",
+                port=54322,
+            ),
+            output=io.BytesIO(),
+        )
+        handles = iter([first, second])
+        readiness = iter([False, True])
+        monkeypatch.setattr(mod, "_allocate_loopback_port", lambda: 54321)
+        monkeypatch.setattr(
+            mod,
+            "_spawn_mock_server",
+            lambda endpoint: next(handles),
+        )
+        monkeypatch.setattr(
+            mod,
+            "_wait_until_ready",
+            lambda handle: next(readiness),
+        )
+
+        handle = mod._start_mock_server(port=0)
+
+        assert handle is second
+        assert first.process.events[:2] == [
+            "terminate",
+            ("wait", mod.MOCK_SERVER_STOP_TIMEOUT_SECONDS),
+        ]
+        assert first.output.closed is True
+        assert second.process.events == []
+
+    def test_readiness_exception_reaps_process(self, monkeypatch):
+        mod = load_student_e2e_module()
+        process = _FakeProcess()
+        handle = mod.MockServerHandle(
+            process=process,
+            endpoint=mod.MockServerEndpoint(
+                base_url="http://127.0.0.1:54321",
+                port=54321,
+            ),
+            output=io.BytesIO(),
+        )
+        monkeypatch.setattr(mod, "_allocate_loopback_port", lambda: 54321)
+        monkeypatch.setattr(mod, "_spawn_mock_server", lambda endpoint: handle)
+
+        def fail_readiness(current_handle):
+            del current_handle
+            raise RuntimeError("readiness lỗi")
+
+        monkeypatch.setattr(mod, "_wait_until_ready", fail_readiness)
+
+        with pytest.raises(RuntimeError, match="readiness lỗi"):
+            mod._start_mock_server(port=0)
+
+        assert process.events[:2] == [
+            "terminate",
+            ("wait", mod.MOCK_SERVER_STOP_TIMEOUT_SECONDS),
+        ]
+        assert handle.output.closed is True
+
+    def test_process_creation_error_uses_bounded_retry(self, monkeypatch):
+        mod = load_student_e2e_module()
+        calls = 0
+
+        def fail_to_spawn(endpoint):
+            nonlocal calls
+            calls += 1
+            del endpoint
+            raise OSError("PRIVATE_PROCESS_DETAIL")
+
+        monkeypatch.setattr(mod, "_allocate_loopback_port", lambda: 54321)
+        monkeypatch.setattr(mod, "_spawn_mock_server", fail_to_spawn)
+
+        with pytest.raises(RuntimeError, match="3 lần thử") as exc_info:
+            mod._start_mock_server(port=0)
+
+        assert calls == mod.MOCK_SERVER_START_ATTEMPTS
+        assert "PRIVATE_PROCESS_DETAIL" not in str(exc_info.value)
+
+    def test_stop_kills_hung_process_and_limits_diagnostic(self):
+        mod = load_student_e2e_module()
+        process = _HungProcess()
+        output = io.BytesIO(b"x" * (mod.MOCK_SERVER_DIAGNOSTIC_LIMIT + 100))
+        handle = mod.MockServerHandle(
+            process=process,
+            endpoint=mod.MockServerEndpoint(
+                base_url="http://127.0.0.1:54321",
+                port=54321,
+            ),
+            output=output,
+        )
+
+        diagnostic = mod._stop_mock_server(handle)
+
+        timeout = mod.MOCK_SERVER_STOP_TIMEOUT_SECONDS
+        assert process.events == [
+            "terminate",
+            ("wait", timeout),
+            "kill",
+            ("wait", timeout),
+        ]
+        assert len(diagnostic) == mod.MOCK_SERVER_DIAGNOSTIC_LIMIT
+        assert output.closed is True
 
 
 class TestStudentMockEnv:

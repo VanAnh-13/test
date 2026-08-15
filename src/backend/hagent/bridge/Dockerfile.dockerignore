@@ -1,0 +1,37 @@
+# Build context chỉ mở package runtime và loại lại mọi test/debug/cache.
+**
+
+!hagent/
+!hagent/__init__.py
+!hagent/bridge/
+!hagent/bridge/*.py
+!hagent/bridge/requirements.txt
+!hagent/bridge/routes/
+!hagent/bridge/routes/*.py
+
+!hagent/config/
+!hagent/config/*.py
+!hagent/config/*.yaml
+
+!hagent/core/
+!hagent/core/*.py
+
+!hagent/observability/
+!hagent/observability/*.py
+
+!hagent/run/
+!hagent/run/*.py
+
+!hagent/world/
+!hagent/world/**/
+!hagent/world/**/*.py
+
+# Loại lại bytecode vì việc mở parent directory có thể đưa cache vào context.
+**/__pycache__/
+**/*.py[co]
+**/tests/
+**/test_*.py
+**/*_test.py
+**/conftest.py
+**/debug*.py
+**/*debug*.py

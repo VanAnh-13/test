@@ -3,23 +3,20 @@ HAgent — Memory Storage (Phase 3).
 
 Lưu trữ facts (kiến thức rút trích từ conversations).
 Config-driven: backend type + TTL đọc từ YAML.
-
-SOLID:
-  S — Chỉ làm lưu trữ/truy xuất facts
-  O — Thêm backend mới (Redis, MongoDB) qua kế thừa
-  D — Backend inject qua factory, không hardcode
 """
 
 from __future__ import annotations
 
 import json
-import logging
 import os
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import Any
 
-logger = logging.getLogger(__name__)
+import structlog
+
+logger = structlog.get_logger(__name__)
 
 
 # ── Fact schema ──────────────────────────────────────────
@@ -28,14 +25,15 @@ logger = logging.getLogger(__name__)
 @dataclass
 class Fact:
     """Một fact rút trích từ conversation."""
-    key: str                    # Unique identifier
-    content: str                # Nội dung fact
-    category: str = "general"   # general | dataset | model | preference | workflow
-    confidence: float = 1.0     # 0.0 → 1.0
-    source: str = ""            # Conversation/tool mà fact được rút trích từ
+
+    key: str  # Unique identifier
+    content: str  # Nội dung fact
+    category: str = "general"  # general | dataset | model | preference | workflow
+    confidence: float = 1.0  # 0.0 → 1.0
+    source: str = ""  # Conversation/tool mà fact được rút trích từ
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
-    access_count: int = 0       # Số lần fact được truy cập
+    access_count: int = 0  # Số lần fact được truy cập
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -102,7 +100,7 @@ class LocalFactStore(FactStore):
         if fpath.exists():
             try:
                 return json.loads(fpath.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, IOError):
+            except (OSError, json.JSONDecodeError):
                 return {}
         return {}
 
@@ -183,7 +181,7 @@ def create_fact_store() -> FactStore:
 
         cfg = load_config()
         memory_cfg = cfg.get("memory", {}) or {}
-    except Exception:
+    except Exception:  # noqa: BLE001
         memory_cfg = {}
 
     configured_backend = str(memory_cfg.get("backend", "auto")).lower()
@@ -215,3 +213,90 @@ def create_fact_store() -> FactStore:
         )
 
     raise ValueError(f"Unsupported memory backend: {configured_backend!r}")
+
+
+# ── Episodic & Semantic Memory Factories ─────────────────
+
+
+from hagent.agent.memory.episodic import (
+    DEFAULT_EPISODIC_MAX_ENTRIES,
+    EpisodicMemory,
+    EpisodicRecord,
+)
+from hagent.agent.memory.semantic import (
+    DEFAULT_SEMANTIC_MAX_ENTRIES,
+    SemanticMemory,
+    SemanticRecord,
+)
+
+
+def create_episodic_memory(
+    storage_dir: str | Path | None = None,
+    max_entries: int | None = None,
+) -> EpisodicMemory:
+    """Tạo EpisodicMemory từ cấu hình hagent.yaml hoặc tham số."""
+    try:
+        from hagent.bridge.config import load_config
+
+        cfg = load_config()
+        episodic_cfg = (cfg.get("memory", {}) or {}).get("episodic", {}) or {}
+    except Exception:  # noqa: BLE001
+        episodic_cfg = {}
+
+    limit = (
+        max_entries
+        if max_entries is not None
+        else int(episodic_cfg.get("max_entries", DEFAULT_EPISODIC_MAX_ENTRIES))
+    )
+    s_dir = storage_dir or episodic_cfg.get("storage_dir", "./data/memory")
+    return EpisodicMemory(storage_dir=s_dir, max_entries=limit)
+
+
+def create_semantic_memory(
+    storage_dir: str | Path | None = None,
+    max_entries: int | None = None,
+    embedder_factory: Any = None,
+    lazy_load: bool | None = None,
+) -> SemanticMemory:
+    """Tạo SemanticMemory từ cấu hình hagent.yaml hoặc tham số."""
+    try:
+        from hagent.bridge.config import load_config
+
+        cfg = load_config()
+        semantic_cfg = (cfg.get("memory", {}) or {}).get("semantic", {}) or {}
+    except Exception:  # noqa: BLE001
+        semantic_cfg = {}
+
+    limit = (
+        max_entries
+        if max_entries is not None
+        else int(semantic_cfg.get("max_entries", DEFAULT_SEMANTIC_MAX_ENTRIES))
+    )
+    lazy = (
+        lazy_load
+        if lazy_load is not None
+        else bool(semantic_cfg.get("lazy_load", True))
+    )
+    s_dir = storage_dir or semantic_cfg.get("storage_dir", "./data/memory")
+    return SemanticMemory(
+        storage_dir=s_dir,
+        embedder_factory=embedder_factory,
+        max_entries=limit,
+        lazy_load=lazy,
+    )
+
+
+__all__ = [
+    "DEFAULT_EPISODIC_MAX_ENTRIES",
+    "DEFAULT_SEMANTIC_MAX_ENTRIES",
+    "EpisodicMemory",
+    "EpisodicRecord",
+    "Fact",
+    "FactStore",
+    "LocalFactStore",
+    "SemanticMemory",
+    "SemanticRecord",
+    "create_episodic_memory",
+    "create_fact_store",
+    "create_semantic_memory",
+]

@@ -1,6 +1,6 @@
-// useUsers gọi api lấy dữ liệu trả về
+// Cung cấp danh sách người dùng và thao tác tải lại theo yêu cầu.
 
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useApi } from "./useApi";
 
 export type User = {
@@ -19,18 +19,18 @@ export default function useUsers() {
   const { get } = useApi();
   const [users, setUsers] = useState<User[]>([]);
 
-  const fetchUsers = async () => {
+  const fetchUsers = useCallback(async () => {
     try {
       const data = await get(`${process.env.NEXT_PUBLIC_BASE_API}/users`);
       setUsers(data);
     } catch (error) {
-      console.error("Failed to fetch users:", error);
+      console.error("Không thể tải danh sách người dùng:", error);
     }
-  };
+  }, [get]);
 
   useEffect(() => {
-    fetchUsers();
-  }, []);
+    void fetchUsers();
+  }, [fetchUsers]);
 
   return { users, fetchUsers };
 }

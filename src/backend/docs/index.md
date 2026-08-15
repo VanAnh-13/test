@@ -33,9 +33,9 @@ pip install -r requirements.txt
 ### Chạy server
 
 ```bash
-python app.py
+python -m server.application
 # hoặc
-uvicorn app:app --host 0.0.0.0 --port 9999 --reload
+uvicorn server.application:app --host 0.0.0.0 --port 9999 --reload
 ```
 
 ### Sử dụng Search Strategy
@@ -95,9 +95,16 @@ curl -X POST http://localhost:9999/v2/auto/jobs/training \
 ## Cấu trúc dự án
 
 ```
-├── app.py                         # FastAPI entry point + lifespan management
-├── experiment.py                  # V2 API router (/v2/auto/*)
-├── kafka_consumer.py              # Kafka consumer + producer cho async jobs
+├── server/application.py          # Composition root FastAPI và quản lý vòng đời
+├── api/
+│   ├── experiment.py              # Router API V2 (/v2/auto/*)
+│   └── v1/                        # Các router API V1 theo miền
+├── infrastructure/messaging/kafka.py  # Kafka consumer + producer cho job bất đồng bộ
+├── scripts/                        # Entrypoint vận hành và công cụ hỗ trợ
+│   ├── run-toolkit.sh              # Chạy FastAPI toolkit cục bộ
+│   ├── run-worker.sh               # Chạy worker profile bằng Docker Compose
+│   ├── run-hautoml-toolkit-docker.sh
+│   └── run-hautoml-nano-docker.sh
 │
 ├── automl/                        # Core AutoML engine
 │   ├── engine.py                  # Training orchestration (classification + regression)

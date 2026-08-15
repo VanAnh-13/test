@@ -11,11 +11,13 @@ Modes:
 from __future__ import annotations
 
 import asyncio
-import logging
 import re
 import threading
 import time
-from typing import Any, Callable, Dict, List
+from collections.abc import Callable
+from typing import Any
+
+import structlog
 
 from hagent.agent.eval.metrics import (
     ScenarioResult,
@@ -34,7 +36,7 @@ from hagent.agent.execution import tool_runner as tool_runner_module
 from hagent.agent.execution.tool_runner import set_tool_invoker
 from hagent.agent.planning.goal_parser import parse_goal
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 _MUTATING_ACTIONS = frozenset(
     {
@@ -86,7 +88,7 @@ def _is_sensitive_trace_key(key: Any) -> bool:
 
 def _redact_trace_value(value: Any) -> Any:
     if isinstance(value, dict):
-        redacted: Dict[str, Any] = {}
+        redacted: dict[str, Any] = {}
         for key, item in value.items():
             if _is_sensitive_trace_key(key):
                 redacted[str(key)] = "[REDACTED]"
@@ -127,7 +129,7 @@ def _default_mock_tool_factory(scenario: EvalScenario) -> Callable:
     job_n = {"i": 0}
     scores = [0.71, 0.88, 0.80, 0.76]
 
-    async def invoker(action_type: str, params: Dict[str, Any]) -> Dict[str, Any]:
+    async def invoker(action_type: str, params: dict[str, Any]) -> dict[str, Any]:
         failure_code = scenario.mock_failures.get(action_type)
         if failure_code:
             return {"error": failure_code}
@@ -194,7 +196,7 @@ async def run_single_shot(
     scenario: EvalScenario,
     *,
     user_id: str = "eval_user",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Baseline: one start_training call."""
     from hagent.agent.execution.tool_runner import enrich_params, invoke_tool
 
@@ -257,7 +259,7 @@ async def run_plan_executor_mode(
     scenario: EvalScenario,
     *,
     user_id: str = "eval_user",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Sequential plan via WorldModelService + plan_executor node."""
     from hagent.agent.execution.plan_executor import plan_executor_node
     from hagent.agent.planning.plan_adapter import plan_results_to_state_update
@@ -284,7 +286,7 @@ async def run_plan_executor_mode(
     plans = wm.plan(obs, goal)
     update = plan_results_to_state_update(plans, select_best=True)
 
-    state: Dict[str, Any] = {
+    state: dict[str, Any] = {
         "messages": [],
         "user_id": user_id,
         "goal": goal,
@@ -346,11 +348,11 @@ async def run_campaign_mode(
     scenario: EvalScenario,
     *,
     user_id: str = "eval_user",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     from hagent.agent.campaign.nodes import campaign_node, campaign_route
 
     goal = dict(scenario.goal)
-    state: Dict[str, Any] = {
+    state: dict[str, Any] = {
         "messages": [],
         "user_id": user_id,
         "goal": goal,
@@ -390,7 +392,7 @@ async def run_hierarchical_mode(
     scenario: EvalScenario,
     *,
     user_id: str = "eval_user",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Live hierarchy controller (smart-skip + campaign train leaf).
     """
@@ -401,7 +403,7 @@ async def run_hierarchical_mode(
     apply_smart_skips(hier, world_model=scenario.world_model)
     depth = len(hier.subgoals)
 
-    state: Dict[str, Any] = {
+    state: dict[str, Any] = {
         "messages": [],
         "user_id": user_id,
         "goal": dict(scenario.goal),
@@ -456,7 +458,7 @@ _MODE_RUNNERS = {
 }
 
 
-def _token_count(cost: Dict[str, Any]) -> int:
+def _token_count(cost: dict[str, Any]) -> int:
     for key in ("total_tokens", "token_count", "tokens"):
         value = cost.get(key)
         if isinstance(value, (int, float)) and not isinstance(value, bool):
@@ -493,12 +495,12 @@ async def run_scenario(
         raise ValueError(f"Unknown mode {mode}. Choose from {list(_MODE_RUNNERS)}")
 
     invoker = tool_invoker or _default_mock_tool_factory(scenario)
-    invocations: List[ToolCallTrace] = []
+    invocations: list[ToolCallTrace] = []
 
     async def observed_invoker(
         action_type: str,
-        params: Dict[str, Any],
-    ) -> Dict[str, Any]:
+        params: dict[str, Any],
+    ) -> dict[str, Any]:
         started = time.perf_counter()
         effect = "mutation" if action_type in _MUTATING_ACTIONS else "read"
         try:
@@ -644,15 +646,15 @@ async def run_scenario(
 
 async def run_eval_suite(
     *,
-    modes: List[str] | None = None,
-    tags: List[str] | None = None,
-    scenario_ids: List[str] | None = None,
+    modes: list[str] | None = None,
+    tags: list[str] | None = None,
+    scenario_ids: list[str] | None = None,
     user_id: str = "eval_user",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Run all scenarios × modes and return report dict."""
     modes = modes or ["single_shot", "plan_executor", "campaign", "hierarchical"]
     scenarios = scenarios_by_tags(tags=tags, scenario_ids=scenario_ids)
-    results: List[ScenarioResult] = []
+    results: list[ScenarioResult] = []
 
     for scenario in scenarios:
         for mode in modes:
@@ -688,7 +690,7 @@ async def run_baseline_suite(
     *,
     mode: str = "single_shot",
     user_id: str = "eval_user",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Run the frozen v1 matrix and verify the recorded legacy pass/fail profile."""
     scenarios = baseline_scenarios()
     results = [
@@ -711,7 +713,7 @@ async def run_baseline_suite(
     }
 
 
-def report_markdown(report: Dict[str, Any]) -> str:
+def report_markdown(report: dict[str, Any]) -> str:
     lines = [
         "# HAgent Eval Report (Phase 7)",
         "",

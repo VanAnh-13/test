@@ -1,14 +1,14 @@
 """
-NL → GoalSpec (structured). Uses lightweight rules + optional LLM.
+Chuyển ngôn ngữ tự nhiên thành GoalSpec có cấu trúc bằng luật gọn và LLM tùy chọn.
 
-Primary path is rule-based so tests and offline use need no LLM.
+Luồng chính dựa trên luật để kiểm thử và chế độ ngoại tuyến không cần LLM.
 """
 
 from __future__ import annotations
 
 import re
 import uuid
-from typing import Any, Dict, Optional
+from typing import Any
 
 from hagent.world.schema import GoalSpec
 
@@ -59,7 +59,7 @@ def _detect_goal_type(text: str) -> str:
     return "respond"
 
 
-def _detect_problem_type(text: str) -> Optional[str]:
+def _detect_problem_type(text: str) -> str | None:
     lower = text.lower()
     if "regress" in lower or "hồi quy" in lower or "hoi quy" in lower:
         return "regression"
@@ -68,7 +68,7 @@ def _detect_problem_type(text: str) -> Optional[str]:
     return None
 
 
-def _detect_metric(text: str) -> Optional[str]:
+def _detect_metric(text: str) -> str | None:
     lower = text.lower()
     for m in (
         "f1",
@@ -87,7 +87,7 @@ def _detect_metric(text: str) -> Optional[str]:
     return None
 
 
-# Words that must never be treated as a target column name
+# Các từ tuyệt đối không được coi là tên cột mục tiêu.
 _TARGET_STOPWORDS = frozenset(
     {
         "column",
@@ -116,18 +116,18 @@ _TARGET_STOPWORDS = frozenset(
 )
 
 
-def _detect_target_column(text: str) -> Optional[str]:
+def _detect_target_column(text: str) -> str | None:
     """
-    Extract target/label column from natural language.
+    Trích xuất cột mục tiêu hoặc nhãn từ ngôn ngữ tự nhiên.
 
-    Supports CI/E2E prompts like:
+    Hỗ trợ các prompt CI/E2E như:
       - target column là 'Revenue'
       - target column is Revenue
       - target_column=Revenue
       - cột mục tiêu Revenue
     """
     patterns = [
-        # target column là/is/=/: Name  (must come before bare "target X")
+        # Mẫu "target column là/is/=/: Name" phải đứng trước mẫu trần "target X".
         r"target\s*[_ ]?\s*column\s*(?:là|is|=|:)?\s*['\"]?([A-Za-z_][A-Za-z0-9_]*)['\"]?",
         r"target(?:_column)?\s*[:=]\s*['\"]?([A-Za-z_][A-Za-z0-9_]*)['\"]?",
         r"cột\s+mục\s+tiêu\s*(?:là|is|=|:)?\s*['\"]?([A-Za-z_][A-Za-z0-9_]*)['\"]?",
@@ -146,14 +146,14 @@ def _detect_target_column(text: str) -> Optional[str]:
     return None
 
 
-def _detect_dataset_id(text: str, known_ids: Optional[list[str]] = None) -> Optional[str]:
+def _detect_dataset_id(text: str, known_ids: list[str] | None = None) -> str | None:
     """
-    Extract dataset id from NL.
+    Trích xuất ID tập dữ liệu từ ngôn ngữ tự nhiên.
 
-    Supports:
-      - known ids present in text
-      - dataset ID <id> / dataset_id=<id>
-      - Mongo ObjectId (24 hex chars)
+    Hỗ trợ:
+      - ID đã biết xuất hiện trong văn bản;
+      - dataset ID <id> hoặc dataset_id=<id>;
+      - Mongo ObjectId gồm 24 ký tự hex.
     """
     if known_ids:
         for did in known_ids:
@@ -181,7 +181,7 @@ def _detect_dataset_id(text: str, known_ids: Optional[list[str]] = None) -> Opti
 
 
 def _detect_models(text: str) -> list[str]:
-    """Extract ML model names mentioned in the prompt (order-preserving, unique)."""
+    """Trích xuất tên model ML trong prompt, giữ thứ tự và loại trùng."""
     # Prefer explicit CamelCase *Classifier/*Regressor and common short names
     found: list[str] = []
     patterns = [
@@ -211,7 +211,7 @@ _SEARCH_ALGO_PATTERNS: list[tuple[str, str]] = [
 ]
 
 
-def _detect_search_algorithm(text: str) -> Optional[str]:
+def _detect_search_algorithm(text: str) -> str | None:
     lowered = text.lower()
     for pattern, algo in _SEARCH_ALGO_PATTERNS:
         if re.search(pattern, lowered, re.IGNORECASE):
@@ -219,7 +219,7 @@ def _detect_search_algorithm(text: str) -> Optional[str]:
     return None
 
 
-def _detect_time_limit(text: str) -> Optional[int]:
+def _detect_time_limit(text: str) -> int | None:
     m = re.search(r"(\d+)\s*(?:giây|seconds?|s)\b", text, re.IGNORECASE)
     if m:
         return int(m.group(1))
@@ -232,13 +232,13 @@ def _detect_time_limit(text: str) -> Optional[int]:
 def parse_goal(
     message: str,
     *,
-    known_dataset_ids: Optional[list[str]] = None,
-    default_user_constraints: Optional[Dict[str, Any]] = None,
+    known_dataset_ids: list[str] | None = None,
+    default_user_constraints: dict[str, Any] | None = None,
 ) -> GoalSpec:
-    """Parse natural language into GoalSpec (deterministic rules)."""
+    """Phân tích ngôn ngữ tự nhiên thành GoalSpec bằng các luật xác định."""
     text = (message or "").strip()
     goal_type = _detect_goal_type(text)
-    constraints: Dict[str, Any] = dict(default_user_constraints or {})
+    constraints: dict[str, Any] = dict(default_user_constraints or {})
     time_limit = _detect_time_limit(text)
     if time_limit is not None:
         constraints["time_limit"] = time_limit
@@ -261,12 +261,12 @@ def parse_goal(
         "constraints": constraints,
         "goal_id": str(uuid.uuid4()),  # type: ignore[typeddict-unknown-key]
     }
-    # Clean Nones for cleaner state
+    # Loại các giá trị None để trạng thái gọn hơn.
     return {k: v for k, v in goal.items() if v is not None}  # type: ignore[return-value]
 
 
-def is_simple_query(message: str, simple_keywords: Optional[list[str]] = None) -> bool:
-    """True when planner should be skipped (greeting / chitchat)."""
+def is_simple_query(message: str, simple_keywords: list[str] | None = None) -> bool:
+    """Trả về True khi nên bỏ qua bộ lập kế hoạch cho lời chào hoặc trò chuyện ngắn."""
     lower = (message or "").strip().lower()
     if not lower:
         return True
@@ -274,8 +274,6 @@ def is_simple_query(message: str, simple_keywords: Optional[list[str]] = None) -
     if any(k in lower for k in keywords):
         return True
     # Very short non-task messages
-    if len(lower) < 12 and not any(
+    return len(lower) < 12 and not any(
         k in lower for k in ("train", "dataset", "job", "model", "data")
-    ):
-        return True
-    return False
+    )

@@ -32,7 +32,7 @@ services:
       FRONTEND_URL: "http://hautoml-frontend:3000"
     ports:
       - "9996:9996"
-    command: python app.py
+    command: python -m server.application
     networks:
       - hautoml-network
       - kafka-network
